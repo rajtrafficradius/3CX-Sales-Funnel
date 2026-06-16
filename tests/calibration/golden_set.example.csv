@@ -1,0 +1,5 @@
+call_id,human_rpc,human_pitch,human_lead,human_qualified
+example-call-0001,1,1,1,0
+example-call-0002,1,0,0,0
+example-call-0003,0,0,0,0
+example-call-0004,1,1,1,1
