@@ -1,15 +1,18 @@
 """DEV-ONLY: seed the analytics DB with realistic synthetic data.
 
-Lets you run the dashboard / report live without a 3CX connection or an LLM key.
-It writes BDEs, calls, transcripts, classifications (some flagged for review), then
-recomputes daily_funnel via the real aggregation. NOT for production.
+Lets you run the dashboard / report live without a 3CX DB connection or an LLM
+key. If a live roster has already been synced (bde_agents has in-scope reps),
+it attributes the sample calls to your REAL BDE names; otherwise it falls back
+to fictional names. It writes calls, transcripts, classifications (some flagged
+for review), then recomputes daily_funnel via the real aggregation.
+
+NOT for production — these are synthetic numbers for visual/demo purposes only.
 
     ANALYTICS_DB_DSN=postgresql://... python scripts/seed_demo.py
 """
 
 from __future__ import annotations
 
-import os
 import random
 from datetime import date, datetime, time, timedelta
 
@@ -22,7 +25,7 @@ from funnel_agent.db.migrate import apply_schema
 
 RNG = random.Random(42)
 DAYS = 21
-BDES = [
+FALLBACK_BDES = [
     ("101", "Priya Sharma"),
     ("105", "Daniel Cohen"),
     ("108", "Aisha Khan"),
@@ -47,6 +50,15 @@ def _evidence(rpc, pitch, lead, qual, booked, outcome):
     }
 
 
+def _load_inscope_bdes(pool) -> list[tuple[str, str]]:
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT extension, COALESCE(bde_name, extension) AS name FROM bde_agents "
+            "WHERE in_scope AND active ORDER BY extension"
+        )
+        return [(str(r["extension"]), str(r["name"])) for r in cur.fetchall()]
+
+
 def main() -> int:
     settings = get_settings()
     if not settings.analytics_db_dsn:
@@ -56,30 +68,36 @@ def main() -> int:
     pool.open()
     apply_schema(pool)
 
+    real = _load_inscope_bdes(pool)
+    bdes = real or FALLBACK_BDES
+    using_real = bool(real)
+
     threshold = settings.confidence_threshold
     today = date(2026, 6, 16)  # fixed for reproducibility
     start = today - timedelta(days=DAYS)
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            for t in ("daily_funnel", "classifications", "transcripts", "calls", "bde_agents"):
+            # Clear demo facts. Keep a live roster if one exists.
+            for t in ("daily_funnel", "classifications", "transcripts", "calls"):
                 cur.execute(f"DELETE FROM {t}")
-            for ext, name in BDES:
+            if not using_real:
+                cur.execute("DELETE FROM bde_agents")
+                for ext, name in bdes:
+                    cur.execute(
+                        "INSERT INTO bde_agents (extension, bde_name, group_name, role_name, "
+                        "in_scope, active, synced_at) VALUES (%s,%s,'Sales','Agent',true,true,%s)",
+                        (ext, name, datetime.now()),
+                    )
                 cur.execute(
-                    "INSERT INTO bde_agents (extension, bde_name, group_name, role_name, "
-                    "in_scope, active, synced_at) VALUES (%s,%s,'Sales','Agent',true,true,%s)",
-                    (ext, name, datetime.now()),
-                )
-            # one out-of-scope admin extension
-            cur.execute(
-                "INSERT INTO bde_agents (extension, bde_name, group_name, in_scope, active, synced_at)"
-                " VALUES ('900','Reception','Admin',false,true,%s)", (datetime.now(),))
+                    "INSERT INTO bde_agents (extension, bde_name, group_name, in_scope, active, synced_at)"
+                    " VALUES ('900','Reception','Admin',false,true,%s)", (datetime.now(),))
 
             call_seq = 0
             seen_numbers: dict[str, datetime] = {}
             for d in range(DAYS):
                 day = start + timedelta(days=d)
-                for ext, name in BDES:
+                for ext, name in bdes:
                     n_calls = RNG.randint(25, 55)
                     for _ in range(n_calls):
                         call_seq += 1
@@ -87,7 +105,6 @@ def main() -> int:
                         hour = RNG.randint(9, 17)
                         started = datetime.combine(day, time(hour, RNG.randint(0, 59), RNG.randint(0, 59)))
                         number = f"04{RNG.randint(10000000, 99999999)}"
-                        # ~25% are repeat numbers -> followup
                         if seen_numbers and RNG.random() < 0.25:
                             number = RNG.choice(list(seen_numbers.keys()))
                         first = seen_numbers.setdefault(number, started)
@@ -119,13 +136,11 @@ def main() -> int:
                              RNG.choice(["positive", "neutral", "negative"]),
                              "Outbound prospecting call."),
                         )
-                        # Funnel with monotonicity.
                         rpc = connected and not is_vm
                         pitch = rpc and RNG.random() < 0.45
                         lead = pitch and RNG.random() < 0.35
                         qual = lead and RNG.random() < 0.45
                         booked = qual and RNG.random() < 0.5
-                        model = "demo-cheap"
                         ev = _evidence(rpc, pitch, lead, qual, booked, outcome)
                         min_q = min(ev["full_pitch"]["confidence"], ev["is_lead"]["confidence"],
                                     ev["qualified"]["confidence"])
@@ -139,11 +154,10 @@ def main() -> int:
                             (cid, rpc, ev["rpc_connect"]["confidence"], pitch,
                              ev["full_pitch"]["confidence"], lead, ev["is_lead"]["confidence"],
                              qual, ev["qualified"]["confidence"], booked, outcome, Json(ev),
-                             model, started + timedelta(minutes=20), needs_review),
+                             "demo-cheap", started + timedelta(minutes=20), needs_review),
                         )
         conn.commit()
 
-    # Recompute daily_funnel with the real aggregator.
     for d in range(DAYS):
         aggregate_day(pool, settings, start + timedelta(days=d))
 
@@ -153,8 +167,9 @@ def main() -> int:
         cur.execute("SELECT count(*) AS n FROM classifications WHERE needs_human_review")
         review = cur.fetchone()["n"]
     pool.close()
-    print(f"Seeded {calls} calls across {DAYS} days for {len(BDES)} BDEs; "
-          f"{review} flagged for review. Latest day: {today}.")
+    src = "your live in-scope roster" if using_real else "fictional sample names"
+    print(f"Seeded {calls} synthetic calls across {DAYS} days for {len(bdes)} BDEs "
+          f"({src}); {review} flagged for review. Open the dashboard to view.")
     return 0
 
 
