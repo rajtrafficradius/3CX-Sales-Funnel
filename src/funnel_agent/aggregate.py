@@ -20,7 +20,7 @@ log = get_logger(__name__)
 TRACKS = ("fresh", "followup", "combined")
 _ZERO = {
     "calls_made": 0, "connected": 0, "transcribed": 0, "rpc_connect": 0,
-    "full_pitch": 0, "leads": 0, "qualified": 0, "meetings_done": 0,
+    "full_pitch": 0, "leads": 0, "qualified": 0, "meetings_booked": 0, "meetings_done": 0,
 }
 
 # Per-(scope, track) aggregation via GROUPING SETS:
@@ -38,6 +38,9 @@ WITH base AS (
         (CASE WHEN cl.full_pitch  THEN 1 ELSE 0 END) AS full_pitch,
         (CASE WHEN cl.is_lead     THEN 1 ELSE 0 END) AS leads,
         (CASE WHEN cl.qualified   THEN 1 ELSE 0 END) AS qualified,
+        -- "Booked" comes from the call transcript (classifier); no calendar needed.
+        (CASE WHEN cl.meeting_booked THEN 1 ELSE 0 END) AS meetings_booked,
+        -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.
         (CASE WHEN EXISTS (SELECT 1 FROM meetings m
                            WHERE m.call_id = c.call_id AND m.meeting_done)
               THEN 1 ELSE 0 END) AS meetings_done
@@ -57,7 +60,8 @@ SELECT
     SUM(full_pitch)   AS full_pitch,
     SUM(leads)        AS leads,
     SUM(qualified)    AS qualified,
-    SUM(meetings_done) AS meetings_done
+    SUM(meetings_booked) AS meetings_booked,
+    SUM(meetings_done)   AS meetings_done
 FROM base
 GROUP BY GROUPING SETS ((bde, ff), (bde), (ff), ())
 """
@@ -99,9 +103,10 @@ def aggregate_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:
             src = computed.get((bde, track))
             # SUM over an empty grouping set yields NULL -> coalesce to 0.
             vals = {k: int(src[k] or 0) for k in _ZERO} if src else dict(_ZERO)
-            # qualified + meetings_done are reported on the combined track only.
+            # qualified + meetings are reported on the combined track only.
             if track != "combined":
                 vals["qualified"] = 0
+                vals["meetings_booked"] = 0
                 vals["meetings_done"] = 0
             rows_to_write.append({"report_date": day, "bde_name": bde, "track": track, **vals})
 
@@ -113,11 +118,11 @@ def aggregate_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:
                 """
                 INSERT INTO daily_funnel (
                     report_date, bde_name, track, calls_made, connected, transcribed,
-                    rpc_connect, full_pitch, leads, qualified, meetings_done)
+                    rpc_connect, full_pitch, leads, qualified, meetings_booked, meetings_done)
                 VALUES (
                     %(report_date)s, %(bde_name)s, %(track)s, %(calls_made)s, %(connected)s,
                     %(transcribed)s, %(rpc_connect)s, %(full_pitch)s, %(leads)s,
-                    %(qualified)s, %(meetings_done)s)
+                    %(qualified)s, %(meetings_booked)s, %(meetings_done)s)
                 """,
                 rows_to_write,
             )

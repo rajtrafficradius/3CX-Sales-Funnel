@@ -80,6 +80,20 @@ funnel-agent daily
 funnel-agent report --date 2026-06-15            # per BDE + overall
 funnel-agent report --date 2026-06-15 --all      # overall only
 funnel-agent report --date 2026-06-15 --bde 105  # one BDE
+
+# Live dashboard + review queue
+funnel-agent dashboard --host 0.0.0.0 --port 8080   # open http://localhost:8080
+funnel-agent review-queue --limit 50                # terminal view of flagged calls
+```
+
+### Try the dashboard with no 3CX / no LLM
+
+A demo seeder fills the analytics DB with realistic synthetic data so you can see
+the whole UI immediately:
+
+```bash
+ANALYTICS_DB_DSN=postgresql://... python scripts/seed_demo.py
+ANALYTICS_DB_DSN=postgresql://... funnel-agent dashboard
 ```
 
 ---
@@ -98,6 +112,8 @@ funnel-agent report --date 2026-06-15 --bde 105  # one BDE
 | `backfill` | H | One-time all-history run (resumable from watermark) |
 | `daily` | H | Previous day + look-back sweep + report |
 | `report --date [--bde EXT \| --all]` | I | Render the funnel report |
+| `review-queue [--limit N]` | — | List low-confidence / guardrail-flagged calls awaiting human review |
+| `dashboard [--host --port]` | — | Serve the live web dashboard (FastAPI + ECharts) |
 
 ---
 
@@ -115,6 +131,27 @@ funnel-agent report --date 2026-06-15 --bde 105  # one BDE
 - **J** `pytest` idempotency passes; `run_calibration.py` reports agreement per stage.
 
 ---
+
+## Dashboard & human-review queue
+
+**Dashboard** (`funnel-agent dashboard`) — a self-contained FastAPI + ECharts web
+app over the analytics Postgres. No separate BI tool, no Node build. It shows:
+the funnel for the selected BDE **or** overall (Fresh/Followup/Total), a per-BDE
+**leaderboard** with stage-by-stage conversion, **trend** lines, a transcript-
+**coverage** indicator, the **review queue**, and **drill-down**: click any flagged
+call to see the transcript + the AI's per-stage evidence and confidence.
+
+**Human-review queue** — when the classifier is unsure (a quality-stage confidence
+below `CONFIDENCE_THRESHOLD`) or a guardrail trips (funnel monotonicity violated),
+the call is flagged `needs_human_review = true`. The queue is simply *those calls*:
+the ones a human should eyeball because the AI's label may be wrong. A manager opens
+each in the dashboard, reads the transcript + evidence, and confirms/corrects it —
+and those corrections become the **calibration data** that tunes the rubric over
+time. Surface it via `funnel-agent review-queue` or the dashboard panel.
+
+**Meeting Booked** is taken straight from the **call transcript** (the classifier's
+`meeting_booked`) — no calendar integration required. "Meeting Done" (calendar/CRM)
+remains an optional future signal and shows only if you ever wire that adapter.
 
 ## Configuration
 

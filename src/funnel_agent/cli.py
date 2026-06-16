@@ -308,5 +308,57 @@ def _emit_report(ana, settings, day, out, *, only_bde, only_all, email) -> None:
         typer.echo("[emailed]")
 
 
+# --------------------------------------------------------------------------- #
+# Human-review queue (low-confidence / guardrail-flagged calls)
+# --------------------------------------------------------------------------- #
+@app.command(name="review-queue")
+def review_queue(limit: int = typer.Option(50, help="max rows")) -> None:
+    """List calls the classifier flagged for human review (low confidence or
+    a funnel-monotonicity violation). Manager corrections become calibration data."""
+    settings = _settings()
+    with _analytics_pool(settings) as ana, ana.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT cl.call_id, c.bde_name, c.dest_number, c.started_at, cl.call_outcome,
+                   LEAST(cl.pitch_confidence, cl.lead_confidence, cl.qual_confidence) AS min_conf,
+                   cl.model
+            FROM classifications cl JOIN calls c ON c.call_id = cl.call_id
+            WHERE cl.needs_human_review
+            ORDER BY min_conf ASC NULLS FIRST LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    if not rows:
+        typer.echo("review-queue: empty — nothing flagged.")
+        return
+    typer.echo(f"{'call_id':<22}{'BDE':<16}{'number':<16}{'min_conf':>9}  outcome")
+    for r in rows:
+        mc = f"{float(r['min_conf']):.2f}" if r["min_conf"] is not None else "—"
+        typer.echo(
+            f"{str(r['call_id'])[:21]:<22}{(r['bde_name'] or '?')[:15]:<16}"
+            f"{(r['dest_number'] or '')[:15]:<16}{mc:>9}  {r['call_outcome'] or ''}"
+        )
+    typer.echo(f"\n{len(rows)} call(s) awaiting review. Open them in the dashboard for transcript + evidence.")
+
+
+# --------------------------------------------------------------------------- #
+# Dashboard (live web UI)
+# --------------------------------------------------------------------------- #
+@app.command()
+def dashboard(
+    host: str = typer.Option("127.0.0.1", help="bind host (0.0.0.0 to expose)"),
+    port: int = typer.Option(8080, help="bind port"),
+) -> None:
+    """Serve the live funnel dashboard (FastAPI + ECharts) over the analytics DB."""
+    import uvicorn
+
+    from .dashboard.app import create_app
+
+    settings = _settings()
+    typer.echo(f"dashboard: http://{host}:{port}")
+    uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()

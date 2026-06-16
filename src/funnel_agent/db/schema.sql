@@ -77,10 +77,13 @@ CREATE TABLE IF NOT EXISTS daily_funnel (
   rpc_connect   int,
   full_pitch    int,
   leads         int,
-  qualified     int,                -- combined track only
-  meetings_done int,                -- combined track only
+  qualified       int,              -- combined track only
+  meetings_booked int,              -- combined track only; from the call transcript
+  meetings_done   int,              -- combined track only; from calendar/CRM (optional, future)
   PRIMARY KEY (report_date, bde_name, track)
 );
+-- Forward-compatible: add the transcript-derived "booked" column on existing DBs.
+ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS meetings_booked int;
 
 CREATE TABLE IF NOT EXISTS processing_state (
   job                 text PRIMARY KEY,   -- 'funnel_agent'

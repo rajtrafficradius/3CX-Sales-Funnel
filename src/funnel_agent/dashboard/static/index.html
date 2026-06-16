@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>3CX Sales-Funnel Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --line:#2a3240;
+    --txt:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --good:#22c55e;
+    --warn:#f59e0b; --bad:#ef4444; --chip:#21304a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:16px;padding:14px 22px;background:linear-gradient(180deg,#11161f,#0d1117);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+  header h1 small{color:var(--muted);font-weight:400;margin-left:8px}
+  .spacer{flex:1}
+  select,button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
+  select:focus{outline:1px solid var(--accent)}
+  .badge{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:6px 12px;color:var(--txt);font-size:13px}
+  .badge b{color:var(--warn)}
+  main{padding:18px 22px;max-width:1500px;margin:0 auto}
+  .grid{display:grid;gap:16px}
+  .cols-2{grid-template-columns:1.1fr .9fr}
+  .cols-kpi{grid-template-columns:repeat(5,1fr)}
+  @media(max-width:980px){.cols-2{grid-template-columns:1fr}.cols-kpi{grid-template-columns:repeat(2,1fr)}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px}
+  .kpi .v{font-size:26px;font-weight:700}
+  .kpi .l{color:var(--muted);font-size:12px;margin-top:2px}
+  .kpi .sub{font-size:12px;margin-top:6px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;cursor:default}
+  tbody tr:hover{background:#1a2230}
+  .funnelrow td:first-child{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600}
+  .p-good{background:rgba(34,197,94,.15);color:#4ade80}
+  .p-mid{background:rgba(245,158,11,.15);color:#fbbf24}
+  .p-bad{background:rgba(239,68,68,.15);color:#f87171}
+  .chart{width:100%;height:320px}
+  .chart.sm{height:300px}
+  .clickable{cursor:pointer}
+  .clickable:hover{color:var(--accent)}
+  /* drawer */
+  .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:50}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(560px,94vw);background:var(--panel);border-left:1px solid var(--line);box-shadow:-10px 0 40px rgba(0,0,0,.5);transform:translateX(100%);transition:.22s;z-index:51;display:flex;flex-direction:column}
+  .drawer.open{transform:translateX(0)}
+  .drawer header{position:static;background:none;border-bottom:1px solid var(--line)}
+  .drawer .body{padding:16px 18px;overflow:auto}
+  .ev{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}
+  .ev .s{display:flex;justify-content:space-between;font-weight:600}
+  .ev .q{color:var(--muted);margin-top:4px;font-size:13px}
+  .transcript{white-space:pre-wrap;background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:12px;max-height:42vh;overflow:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cbd5e1}
+  .muted{color:var(--muted)}
+  .x{cursor:pointer;color:var(--muted);font-size:20px;border:none;background:none}
+  .empty{color:var(--muted);padding:20px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>3CX Sales-Funnel <small>per BDE &amp; overall</small></h1>
+  <div class="spacer"></div>
+  <label class="muted" for="bde">BDE</label>
+  <select id="bde"></select>
+  <label class="muted" for="date">Date</label>
+  <select id="date"></select>
+  <span class="badge clickable" id="reviewBadge" onclick="scrollToReview()">Review queue: <b id="reviewN">0</b></span>
+</header>
+
+<main>
+  <div class="grid cols-kpi" id="kpis"></div>
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card">
+      <h2>Funnel — <span id="funnelScope">ALL</span></h2>
+      <div id="funnelChart" class="chart"></div>
+    </div>
+    <div class="card">
+      <h2>Stages — Fresh / Followup / Total</h2>
+      <table id="funnelTable"><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Leaderboard — per-BDE conversion (selected date)</h2>
+    <div style="overflow:auto"><table id="leaderboard"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Trend — last 30 days (<span id="trendScope">ALL</span>)</h2>
+    <div id="trendChart" class="chart sm"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px" id="reviewCard">
+    <h2>Human-review queue — low-confidence / guardrail-flagged calls</h2>
+    <div style="overflow:auto"><table id="reviewTable"><thead></thead><tbody></tbody></table></div>
+  </div>
+</main>
+
+<div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer">
+  <header><strong id="dTitle">Call</strong><div class="spacer"></div><button class="x" onclick="closeDrawer()">&times;</button></header>
+  <div class="body" id="dBody"></div>
+</aside>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = n => (n==null?'—':n);
+const pillClass = (v,a,b) => v==null?'':v>=a?'p-good':v>=b?'p-mid':'p-bad';
+const pct = v => v==null?'—':v+'%';
+let funnelChart, trendChart;
+
+async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
+
+async function boot(){
+  const s = await jget('/api/summary');
+  $('#bde').innerHTML = s.bdes.map(b=>`<option>${b}</option>`).join('');
+  $('#date').innerHTML = s.dates.map(d=>`<option>${d}</option>`).join('');
+  $('#reviewN').textContent = s.review_count;
+  funnelChart = echarts.init($('#funnelChart'),'dark',{renderer:'canvas'});
+  trendChart = echarts.init($('#trendChart'),'dark');
+  funnelChart.getZr().setCursorStyle('default');
+  $('#bde').onchange = refresh; $('#date').onchange = refresh;
+  window.addEventListener('resize',()=>{funnelChart.resize();trendChart.resize();});
+  if(!s.dates.length){ $('main').innerHTML='<div class="empty">No data yet. Run the pipeline (ingest → classify → aggregate) and refresh.</div>'; return; }
+  await refresh();
+  await loadReview();
+}
+
+async function refresh(){
+  const date=$('#date').value, bde=$('#bde').value;
+  $('#funnelScope').textContent=bde; $('#trendScope').textContent=bde;
+  const f = await jget(`/api/funnel?date=${date}&bde=${encodeURIComponent(bde)}`);
+  renderKpis(f); renderFunnel(f); renderFunnelTable(f);
+  renderLeaderboard(await jget(`/api/leaderboard?date=${date}`));
+  renderTrend(await jget(`/api/trend?bde=${encodeURIComponent(bde)}&days=30`));
+}
+
+function renderKpis(f){
+  const k=[
+    ['Calls Made', f.calls_made, ''],
+    ['Transcribed', f.transcribed, (f.coverage!=null?f.coverage+'% coverage':'')],
+    ['Connect rate', pct(f.conversion?.connect), 'RPC / transcribed'],
+    ['Pitch rate', pct(f.conversion?.pitch), 'Pitch / RPC'],
+    ['Qualified rate', pct(f.conversion?.qualified), 'Qual / Lead'],
+  ];
+  $('#kpis').innerHTML = k.map(([l,v,sub])=>`
+    <div class="card kpi"><div class="v">${fmt(v)}</div><div class="l">${l}</div><div class="sub">${sub||'&nbsp;'}</div></div>`).join('');
+}
+
+function renderFunnel(f){
+  if(!f.found){funnelChart.clear();return;}
+  const data = f.stages.map(s=>({name:s.stage,value:s.total}));
+  funnelChart.setOption({
+    tooltip:{trigger:'item',formatter:p=>`${p.name}<br/><b>${p.value}</b>`},
+    color:['#60a5fa','#38bdf8','#34d399','#a3e635','#fbbf24','#fb923c','#f472b6'],
+    series:[{type:'funnel',sort:'none',gap:2,left:'6%',right:'6%',top:6,bottom:6,
+      minSize:'14%',label:{position:'inside',formatter:'{b}: {c}',color:'#0b0f15',fontWeight:600},
+      data}]
+  },true);
+}
+
+function renderFunnelTable(f){
+  const tb=$('#funnelTable tbody');
+  if(!f.found){tb.innerHTML='<tr><td class="empty" colspan=4>No data for this BDE/date</td></tr>';return;}
+  const head=`<tr class="funnelrow"><td></td><th>Fresh</th><th>Followup</th><th>Total</th></tr>`;
+  tb.innerHTML = head + f.stages.map(s=>`
+    <tr class="funnelrow"><td>${s.stage}</td><td>${s.fresh}</td><td>${s.followup}</td><td><b>${s.total}</b></td></tr>`).join('');
+}
+
+function renderLeaderboard(d){
+  const cols=[['BDE','bde_name'],['Calls','calls_made'],['Transcribed','transcribed'],
+    ['RPC','rpc_connect'],['Pitch','full_pitch'],['Lead','leads'],['Qual','qualified'],['Booked','meetings_booked'],
+    ['Connect%','conv_connect'],['Pitch%','conv_pitch'],['Lead%','conv_lead'],['Qual%','conv_qual']];
+  $('#leaderboard thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
+  const body=$('#leaderboard tbody');
+  if(!d.rows.length){body.innerHTML='<tr><td class="empty" colspan="12">No BDE activity for this date</td></tr>';return;}
+  body.innerHTML=d.rows.map(r=>'<tr>'+cols.map(([_,k])=>{
+    if(k==='bde_name')return `<td>${r[k]}</td>`;
+    if(k.startsWith('conv_')){const v=r[k];return `<td><span class="pill ${pillClass(v,50,20)}">${pct(v)}</span></td>`;}
+    return `<td>${r[k]}</td>`;
+  }).join('')+'</tr>').join('');
+}
+
+function renderTrend(t){
+  const mk=(name,key,color)=>({name,type:'line',smooth:true,symbol:'none',data:t.series[key],lineStyle:{width:2},itemStyle:{color}});
+  trendChart.setOption({
+    tooltip:{trigger:'axis'},legend:{top:0,textStyle:{color:'#8b949e'}},
+    grid:{left:38,right:14,top:34,bottom:26},
+    xAxis:{type:'category',data:t.dates,axisLabel:{color:'#8b949e'}},
+    yAxis:{type:'value',axisLabel:{color:'#8b949e'},splitLine:{lineStyle:{color:'#222b38'}}},
+    series:[mk('Calls','calls_made','#60a5fa'),mk('RPC','rpc_connect','#34d399'),
+      mk('Pitch','full_pitch','#fbbf24'),mk('Lead','leads','#fb923c'),
+      mk('Qualified','qualified','#f472b6')]
+  },true);
+}
+
+async function loadReview(){
+  const d = await jget('/api/review-queue?limit=100');
+  const cols=[['BDE','bde_name'],['Number','dest_number'],['When','started_at'],
+    ['Outcome','call_outcome'],['Min conf','min_conf'],['Model','model']];
+  $('#reviewTable thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
+  const body=$('#reviewTable tbody');
+  if(!d.rows.length){body.innerHTML='<tr><td class="empty" colspan="6">Nothing awaiting review 🎉</td></tr>';return;}
+  body.innerHTML=d.rows.map(r=>`<tr class="clickable" onclick="openCall('${r.call_id}')">`+
+    cols.map(([_,k])=>{
+      if(k==='min_conf')return `<td><span class="pill ${pillClass(r[k]==null?null:Math.round(r[k]*100),70,50)}">${r[k]==null?'—':Math.round(r[k]*100)+'%'}</span></td>`;
+      return `<td>${r[k]??'—'}</td>`;
+    }).join('')+'</tr>').join('');
+}
+
+async function openCall(id){
+  const d = await jget('/api/call/'+encodeURIComponent(id));
+  $('#dTitle').textContent = (d.call.bde_name||'?')+'  •  '+(d.call.dest_number||'');
+  const cl=d.classification||{}, ev=(cl.evidence)||{};
+  const stage=(label,vkey,ckey)=>{
+    const v=ev[vkey]; if(!v)return '';
+    return `<div class="ev"><div class="s"><span>${label}</span><span class="pill ${v.value?'p-good':'p-bad'}">${v.value?'YES':'no'} · ${(v.confidence*100|0)}%</span></div><div class="q">${v.evidence||''}</div></div>`;
+  };
+  $('#dBody').innerHTML = `
+    <div class="muted" style="margin-bottom:8px">${d.call.started_at||''} · ${d.call.fresh_or_followup||''} · talk ${d.call.talk_seconds||0}s · outcome: <b>${cl.call_outcome||'—'}</b> · model: ${cl.model||'—'}</div>
+    ${stage('RPC Connect','rpc_connect')}
+    ${stage('Full Pitch','full_pitch')}
+    ${stage('Lead','is_lead')}
+    ${stage('Qualified','qualified')}
+    ${stage('Meeting Booked','meeting_booked')}
+    ${ev.overall_notes?`<div class="ev"><div class="s"><span>Notes</span></div><div class="q">${ev.overall_notes}</div></div>`:''}
+    <h2 style="margin-top:16px">Transcript</h2>
+    <div class="transcript">${d.transcript? (d.transcript.text||'').replace(/</g,'&lt;') : '(no transcript)'}</div>`;
+  $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
+}
+function closeDrawer(){$('#drawer').classList.remove('open');$('#drawerBg').style.display='none';}
+function scrollToReview(){$('#reviewCard').scrollIntoView({behavior:'smooth'});}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+boot().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">Error: '+e.message+'</div>';});
+</script>
+</body>
+</html>
