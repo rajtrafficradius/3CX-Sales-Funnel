@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BASIS — System Proof</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0a2540;            /* Stripe navy */
+    --slate:#425466;          /* Stripe body grey */
+    --blurple:#635bff;        /* Stripe accent */
+    --blurple-2:#7a73ff;
+    --line:#e6e9f0;
+    --bg:#ffffff;
+    --soft:#f6f9fc;
+    --good:#15803d; --good-bg:#e7f6ec;
+    --amber:#b45309; --amber-bg:#fdf3e3;
+    --radius:18px;
+    --shadow:0 50px 100px -20px rgba(50,50,93,.18), 0 30px 60px -30px rgba(0,0,0,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  .eyebrow{font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--blurple)}
+
+  /* ---------- HERO with the Stripe signature gradient ---------- */
+  .hero{position:relative;overflow:hidden;padding:104px 0 120px;background:#0a2540}
+  .hero::before{content:"";position:absolute;inset:-40% -10% auto -10%;height:150%;
+    background:
+      radial-gradient(closest-side at 20% 20%, #00d4ff66, transparent 70%),
+      radial-gradient(closest-side at 70% 10%, #7a73ff88, transparent 70%),
+      radial-gradient(closest-side at 90% 60%, #ff80b577, transparent 70%),
+      linear-gradient(115deg,#11efe3 0%,#635bff 45%,#ff5b94 100%);
+    transform:skewY(-7deg);filter:saturate(1.1)}
+  .hero::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:140px;
+    background:linear-gradient(to bottom, transparent, #fff);}
+  .hero .wrap{position:relative;z-index:2}
+  .hero .eyebrow{color:#0a254099;background:#ffffffcc;display:inline-block;padding:7px 14px;border-radius:999px;backdrop-filter:blur(4px)}
+  .hero h1{margin:22px 0 0;font-size:clamp(40px,6vw,68px);line-height:1.02;font-weight:800;letter-spacing:-.02em;color:#fff;max-width:14ch}
+  .hero p.lede{margin:24px 0 0;max-width:60ch;font-size:21px;color:#eaf0ffd9;font-weight:400}
+  .hero .stats{display:flex;gap:40px;margin-top:40px;flex-wrap:wrap}
+  .hero .stats div{color:#fff}
+  .hero .stats b{display:block;font-size:34px;font-weight:800;letter-spacing:-.02em}
+  .hero .stats span{font-size:14px;color:#dfe7ffcc}
+
+  /* ---------- "from one dashboard" split ---------- */
+  .section{padding:96px 0}
+  .split{display:grid;grid-template-columns:1fr 1.05fr;gap:64px;align-items:center}
+  @media(max-width:900px){.split{grid-template-columns:1fr;gap:40px}}
+  h2{font-size:clamp(30px,4vw,44px);line-height:1.08;font-weight:800;letter-spacing:-.02em;max-width:16ch}
+  .sub{margin-top:18px;color:var(--slate);font-size:18px;max-width:48ch}
+  ul.feat{list-style:none;margin:30px 0 0;display:grid;gap:18px}
+  ul.feat li{display:flex;gap:14px;align-items:flex-start}
+  ul.feat .tick{flex:0 0 22px;height:22px;border-radius:50%;background:var(--blurple);color:#fff;
+    display:grid;place-items:center;font-size:13px;margin-top:2px}
+  ul.feat b{font-weight:600}
+  ul.feat p{color:var(--slate);font-size:15px;margin-top:2px}
+
+  /* ---------- dashboard mockup card ---------- */
+  .device{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .device .bar{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--soft)}
+  .device .bar i{width:11px;height:11px;border-radius:50%;background:#cfd6e4;display:inline-block}
+  .device .bar .ttl{margin-left:10px;font-size:13px;font-weight:600;color:var(--slate)}
+  .device .body{padding:22px}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+  .kpi{border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .kpi b{font-size:22px;font-weight:800}.kpi span{display:block;font-size:11px;color:var(--slate);margin-top:2px}
+  .funnel{display:grid;gap:7px}
+  .frow{display:grid;grid-template-columns:130px 1fr 46px;align-items:center;gap:12px;font-size:13px}
+  .frow .lbl{color:var(--slate)}
+  .frow .track{height:16px;border-radius:6px;background:linear-gradient(90deg,var(--blurple),var(--blurple-2))}
+  .frow .val{text-align:right;font-weight:700}
+  .leak{margin-left:8px;font-size:11px;font-weight:700;color:var(--amber);background:var(--amber-bg);padding:2px 7px;border-radius:999px}
+
+  /* ---------- proof grid ---------- */
+  .band{background:var(--soft);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
+  @media(max-width:900px){.grid3{grid-template-columns:1fr}}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:26px}
+  .card .ic{width:42px;height:42px;border-radius:11px;background:#efefff;color:var(--blurple);display:grid;place-items:center;font-size:20px;font-weight:800}
+  .card h3{margin:16px 0 8px;font-size:18px;font-weight:700}
+  .card p{color:var(--slate);font-size:15px}
+  .center{text-align:center;max-width:62ch;margin:0 auto}
+  footer{padding:48px 0;color:var(--slate);font-size:14px;text-align:center}
+  footer b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<!-- ============================ HERO ============================ -->
+<!-- Title text is fixed per request; edit the body copy freely.   -->
+<section class="hero">
+  <div class="wrap">
+    <span class="eyebrow">SYSTEM PROOF</span>
+    <h1>How BASIS Prevents Revenue Leakage</h1>
+    <p class="lede">Every outbound call, scored against your sales funnel and attributed to the
+      rep — so the deals that quietly slip between stages become impossible to miss.</p>
+    <div class="stats">
+      <div><b>100%</b><span>of calls counted — not a sample</span></div>
+      <div><b>6 stages</b><span>tracked per rep &amp; overall</span></div>
+      <div><b>1 dashboard</b><span>from dial to booked meeting</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FROM ONE DASHBOARD ===================== -->
+<section class="section">
+  <div class="wrap split">
+    <div>
+      <span class="eyebrow">One dashboard</span>
+      <h2>See every call, every stage, every rep — and exactly where revenue leaks.</h2>
+      <p class="sub">BASIS reads your phone system end-to-end and turns raw calls into a funnel
+        you can act on. No spreadsheets, no manual logging, no blind spots.</p>
+      <ul class="feat">
+        <li><span class="tick">✓</span><div><b>Every dial is counted.</b><p>Activity comes straight from the phone system — so under-dialing and inflated activity both surface instantly.</p></div></li>
+        <li><span class="tick">✓</span><div><b>Real conversations, not voicemails.</b><p>Right-Party-Contact detection separates live decision-maker talks from gatekeepers and dead air.</p></div></li>
+        <li><span class="tick">✓</span><div><b>The pitch is graded, with evidence.</b><p>AI labels Pitch / Lead / Qualified on the transcript and shows the exact quote behind each call.</p></div></li>
+        <li><span class="tick">✓</span><div><b>You see where each rep leaks.</b><p>Per-stage conversion, Fresh vs Followup, and a leaderboard pinpoint the leak — not just the symptom.</p></div></li>
+      </ul>
+    </div>
+
+    <!-- product visual: a faithful mock of the live BASIS dashboard -->
+    <div class="device" aria-label="BASIS funnel dashboard">
+      <div class="bar"><i></i><i></i><i></i><span class="ttl">BASIS · Sales-Funnel Dashboard — Overall</span></div>
+      <div class="body">
+        <div class="kpis">
+          <div class="kpi"><b>739</b><span>Calls Made</span></div>
+          <div class="kpi"><b>85%</b><span>Transcript coverage</span></div>
+          <div class="kpi"><b>62%</b><span>Connect rate</span></div>
+        </div>
+        <div class="funnel">
+          <div class="frow"><span class="lbl">Calls Made</span><span class="track" style="width:100%"></span><span class="val">739</span></div>
+          <div class="frow"><span class="lbl">Connected</span><span class="track" style="width:62%"></span><span class="val">457</span></div>
+          <div class="frow"><span class="lbl">RPC Connect</span><span class="track" style="width:52%"></span><span class="val">387</span></div>
+          <div class="frow"><span class="lbl">Full Pitch <span class="leak">−53% leak</span></span><span class="track" style="width:25%"></span><span class="val">182</span></div>
+          <div class="frow"><span class="lbl">Lead</span><span class="track" style="width:9%"></span><span class="val">65</span></div>
+          <div class="frow"><span class="lbl">Qualified</span><span class="track" style="width:5%"></span><span class="val">34</span></div>
+          <div class="frow"><span class="lbl">Meeting Booked</span><span class="track" style="width:2%"></span><span class="val">13</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PROOF POINTS ===================== -->
+<section class="band">
+  <div class="wrap section">
+    <div class="center">
+      <span class="eyebrow">Why leakage stops</span>
+      <h2 style="margin:14px auto 0;max-width:20ch">Four places revenue leaks — closed by design.</h2>
+    </div>
+    <div class="grid3">
+      <div class="card"><div class="ic">①</div><h3>Invisible activity</h3><p>If you can't see who's actually dialing, you can't fix it. BASIS counts 100% of calls per BDE — transcript or not — so effort is never guesswork.</p></div>
+      <div class="card"><div class="ic">②</div><h3>“Connected” that isn’t</h3><p>A long call to a voicemail isn’t a conversation. BASIS only credits a Right-Party Contact when a real decision-maker is reached.</p></div>
+      <div class="card"><div class="ic">③</div><h3>Pitches that drift</h3><p>The AI checks every transcript for the full pitch, genuine interest, and your qualification bar — and flags low-confidence calls for review.</p></div>
+      <div class="card"><div class="ic">④</div><h3>Outcomes lost to admin</h3><p>Booked meetings are detected from the call itself — no manual CRM entry — so won commitments are never dropped on the floor.</p></div>
+      <div class="card"><div class="ic">⑤</div><h3>Blame without a cause</h3><p>The leaderboard shows each rep’s stage-by-stage conversion, so coaching targets the exact leak instead of the loudest number.</p></div>
+      <div class="card"><div class="ic">⑥</div><h3>Fresh vs Followup blur</h3><p>Every stage splits new outreach from nurture, revealing whether the leak is in prospecting or in the follow-through.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer><b>BASIS</b> — sales-funnel intelligence for outbound teams. <!-- replace with your real copy / logo --></footer>
+
+</body>
+</html>
