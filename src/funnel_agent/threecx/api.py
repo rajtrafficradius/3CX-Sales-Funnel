@@ -76,9 +76,11 @@ class ThreeCXClient:
             )
         payload = resp.json()
         self._token = payload["access_token"]
-        # Refresh 60s early to avoid edge-of-expiry failures.
-        self._token_expiry = time.monotonic() + int(payload.get("expires_in", 3600)) - 60
-        log.info("threecx_token_acquired", expires_in=payload.get("expires_in"))
+        # Refresh slightly early. Buffer is proportional so short-lived tokens
+        # (3CX issues ~60s) don't force a re-auth on every single request.
+        expires_in = int(payload.get("expires_in", 3600))
+        self._token_expiry = time.monotonic() + expires_in - min(30, expires_in * 0.2)
+        log.info("threecx_token_acquired", expires_in=expires_in)
 
     def _auth_header(self) -> dict[str, str]:
         if self._token is None or time.monotonic() >= self._token_expiry:
