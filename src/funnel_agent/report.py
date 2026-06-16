@@ -67,12 +67,12 @@ def render_block(bde_name: str, ext: str | None, tracks: dict[str, dict], day: d
         _row("Full Pitch", g(f, "full_pitch"), g(u, "full_pitch"), g(c, "full_pitch")),
         _row("Lead", g(f, "leads"), g(u, "leads"), g(c, "leads")),
         "-" * (_LABEL_W + _NUM_W * 3),
-        _row("Qualified Lead", "", "", g(c, "qualified")),
-        _row("Meeting Booked", "", "", g(c, "meetings_booked")),
+        _row("Qualified Lead", g(f, "qualified"), g(u, "qualified"), g(c, "qualified")),
+        _row("Meeting Booked", g(f, "meetings_booked"), g(u, "meetings_booked"), g(c, "meetings_booked")),
     ]
     # "Meeting Done" (calendar/CRM) is optional; only show it if that adapter is feeding data.
     if g(c, "meetings_done"):
-        lines.append(_row("Meeting Done (cal)", "", "", g(c, "meetings_done")))
+        lines.append(_row("Meeting Done (cal)", g(f, "meetings_done"), g(u, "meetings_done"), g(c, "meetings_done")))
 
     tr = g(c, "transcribed")
     conv = (

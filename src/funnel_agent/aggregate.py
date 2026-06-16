@@ -102,12 +102,9 @@ def aggregate_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:
         for track in TRACKS:
             src = computed.get((bde, track))
             # SUM over an empty grouping set yields NULL -> coalesce to 0.
+            # Every stage (incl. qualified/meetings) is split by track now:
+            # fresh + followup == combined for all additive stages.
             vals = {k: int(src[k] or 0) for k in _ZERO} if src else dict(_ZERO)
-            # qualified + meetings are reported on the combined track only.
-            if track != "combined":
-                vals["qualified"] = 0
-                vals["meetings_booked"] = 0
-                vals["meetings_done"] = 0
             rows_to_write.append({"report_date": day, "bde_name": bde, "track": track, **vals})
 
     # 4. Recompute-and-upsert: clear the day, then insert.
