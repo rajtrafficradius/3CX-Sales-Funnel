@@ -77,6 +77,7 @@ def to_canonical(row: dict) -> dict:
         "is_voicemail": False,  # refined by the classifier's call_outcome
         "disposition": row.get("Status"),
         "recording_present": bool(row.get("RecordingId")),
+        "recording_id": (str(row["RecordingId"]) if row.get("RecordingId") else None),
         "has_transcript": bool(text),
         "transcript": {
             "text": text,

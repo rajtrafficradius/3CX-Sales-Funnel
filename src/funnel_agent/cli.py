@@ -228,6 +228,28 @@ def classify(
             typer.echo(f"classify {d}: {classify_day(ana, settings, d, limit, workers)}")
 
 
+@app.command(name="transcribe-missing")
+def transcribe_missing_cmd(
+    date_: str = typer.Option(None, "--date", help="single day YYYY-MM-DD"),
+    start: str = typer.Option(None, help="range start YYYY-MM-DD"),
+    end: str = typer.Option(None, help="range end YYYY-MM-DD"),
+    limit: int = typer.Option(None, help="cap recordings per day"),
+    workers: int = typer.Option(None, help="parallel STT workers"),
+) -> None:
+    """Download + transcribe in-scope recordings that 3CX left untranscribed."""
+    settings = _settings()
+    from .transcribe import transcribe_missing_for_day
+
+    days = _resolve_days(date_, start, end)
+    with _source(settings) as src, _analytics_pool(settings) as ana:
+        if not hasattr(src, "client"):
+            typer.echo("transcribe-missing needs SOURCE_MODE=api")
+            raise typer.Exit(1)
+        for d in days:
+            res = transcribe_missing_for_day(src.client, ana, settings, d, limit, workers)
+            typer.echo(f"transcribe-missing {d}: {res}")
+
+
 @app.command()
 def aggregate(date_: str = typer.Option(..., "--date", help="YYYY-MM-DD")) -> None:
     """Recompute daily_funnel for a day."""

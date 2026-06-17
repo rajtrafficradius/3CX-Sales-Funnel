@@ -230,12 +230,12 @@ def ingest_day_api(
                     INSERT INTO calls (
                         call_id, bde_extension, bde_name, direction, dest_number,
                         started_at, ring_seconds, talk_seconds, answered, is_voicemail,
-                        call_type, recording_present, has_transcript, fresh_or_followup,
-                        in_scope, lead_id)
+                        call_type, recording_present, recording_id, has_transcript,
+                        fresh_or_followup, in_scope, lead_id)
                     VALUES (
                         %(call_id)s, %(ext)s, %(bde_name)s, %(direction)s, %(dest)s,
                         %(started)s, %(ring)s, %(talk)s, %(answered)s, %(voicemail)s,
-                        %(call_type)s, %(rec)s, %(has_t)s, 'fresh', %(in_scope)s, NULL)
+                        %(call_type)s, %(rec)s, %(rec_id)s, %(has_t)s, 'fresh', %(in_scope)s, NULL)
                     ON CONFLICT (call_id) DO UPDATE SET
                         bde_extension = EXCLUDED.bde_extension, bde_name = EXCLUDED.bde_name,
                         direction = EXCLUDED.direction, dest_number = EXCLUDED.dest_number,
@@ -243,7 +243,10 @@ def ingest_day_api(
                         talk_seconds = EXCLUDED.talk_seconds, answered = EXCLUDED.answered,
                         is_voicemail = EXCLUDED.is_voicemail, call_type = EXCLUDED.call_type,
                         recording_present = EXCLUDED.recording_present,
-                        has_transcript = EXCLUDED.has_transcript, in_scope = EXCLUDED.in_scope
+                        recording_id = COALESCE(EXCLUDED.recording_id, calls.recording_id),
+                        -- never downgrade: keep a transcript we already have (incl. our STT fallback)
+                        has_transcript = (calls.has_transcript OR EXCLUDED.has_transcript),
+                        in_scope = EXCLUDED.in_scope
                     """,
                     {
                         "call_id": r["call_id"], "ext": ext, "bde_name": bde_name,
@@ -252,6 +255,7 @@ def ingest_day_api(
                         "answered": r["answered"], "voicemail": r["is_voicemail"],
                         "call_type": r["disposition"], "has_t": has_t, "in_scope": in_scope,
                         "rec": r.get("recording_present", False),
+                        "rec_id": r.get("recording_id"),
                     },
                 )
                 if has_t and r["transcript"]:

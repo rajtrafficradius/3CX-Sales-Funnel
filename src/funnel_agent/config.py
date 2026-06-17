@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     llm_max_transcript_chars: int = 24000
     classify_workers: int = 8  # parallel LLM calls during classification
 
+    # Audio-transcription fallback: when 3CX has a recording but no transcript,
+    # download the WAV and transcribe it ourselves (closes 3CX's transcription gaps).
+    transcribe_missing: bool = True
+    transcribe_model: str = "gpt-4o-mini-transcribe"
+    transcribe_workers: int = 6
+
     # --- Behaviour ---
     backfill_start: str = ""  # 'YYYY-MM-DD' or blank => auto-detect
     daily_lookback_days: int = 3

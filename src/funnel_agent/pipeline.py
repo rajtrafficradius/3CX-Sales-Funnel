@@ -81,11 +81,13 @@ def classify_window(
 ) -> dict:
     """Process every day in [start, end] in `order`, advancing the watermark."""
     days = _days(start, end, order)
-    totals = {"days": 0, "calls": 0, "transcribed": 0, "classified": 0, "needs_review": 0}
+    totals = {"days": 0, "calls": 0, "transcribed": 0, "stt_transcribed": 0,
+              "classified": 0, "needs_review": 0}
     log.info("window_start", start=str(start), end=str(end), order=order, days=len(days))
 
     for day in days:
         ing = source.ingest_day(analytics_pool, settings, day)
+        stt = source.transcribe_missing(analytics_pool, settings, day)  # fill 3CX gaps
         cls = classify_day(analytics_pool, settings, day)
         aggregate_day(analytics_pool, settings, day)
         set_state(analytics_pool, day)
@@ -93,9 +95,12 @@ def classify_window(
         totals["days"] += 1
         totals["calls"] += ing["calls"]
         totals["transcribed"] += ing["transcribed"]
+        totals["stt_transcribed"] += stt["transcribed"]
         totals["classified"] += cls["classified"]
         totals["needs_review"] += cls["needs_review"]
-        log.info("window_day_done", day=str(day), **ing, **cls)
+        log.info("window_day_done", day=str(day), calls=ing["calls"],
+                 transcribed=ing["transcribed"], stt=stt["transcribed"],
+                 classified=cls["classified"], needs_review=cls["needs_review"])
 
     log.info("window_done", **totals)
     return totals

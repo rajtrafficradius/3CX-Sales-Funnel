@@ -1,0 +1,109 @@
+"""Audio-transcription fallback.
+
+When 3CX has a call recording but never produced a transcript, download the WAV
+from 3CX (Pbx.DownloadRecording) and transcribe it ourselves with the configured
+OpenAI speech-to-text model. This closes 3CX's transcription gaps so connected
+calls get analysed. Cheap (a few tenths of a cent per minute) and idempotent —
+once a call has a transcript it is skipped.
+"""
+
+from __future__ import annotations
+
+import io
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, time, timedelta
+
+from psycopg_pool import ConnectionPool
+
+from .config import Settings
+from .logging import get_logger
+from .threecx.api import ThreeCXClient
+
+log = get_logger(__name__)
+
+_MAX_BYTES = 25 * 1024 * 1024  # OpenAI transcription upload limit
+
+
+def _openai(settings: Settings):
+    from openai import OpenAI
+
+    return OpenAI(api_key=settings.llm_api_key)
+
+
+def transcribe_wav(oai, settings: Settings, wav: bytes) -> str:
+    bio = io.BytesIO(wav)
+    bio.name = "recording.wav"
+    resp = oai.audio.transcriptions.create(model=settings.transcribe_model, file=bio)
+    return (resp.text or "").strip()
+
+
+def _pending(pool: ConnectionPool, day: date, limit: int | None) -> list[dict]:
+    """In-scope calls that have a recording but no transcript, for one day."""
+    start = datetime.combine(day, time.min)
+    end = start + timedelta(days=1)
+    sql = (
+        "SELECT call_id, recording_id FROM calls "
+        "WHERE started_at >= %(s)s AND started_at < %(e)s AND in_scope "
+        "AND recording_id IS NOT NULL AND NOT has_transcript ORDER BY started_at"
+    )
+    params: dict = {"s": start, "e": end}
+    if limit:
+        sql += " LIMIT %(lim)s"
+        params["lim"] = limit
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
+def transcribe_missing_for_day(
+    client: ThreeCXClient,
+    pool: ConnectionPool,
+    settings: Settings,
+    day: date,
+    limit: int | None = None,
+    workers: int | None = None,
+) -> dict:
+    """Download + transcribe recordings missing a transcript for a day. Idempotent."""
+    pending = _pending(pool, day, limit)
+    if not pending:
+        return {"transcribed": 0, "skipped": 0, "errors": 0}
+
+    workers = workers or settings.transcribe_workers
+    oai = _openai(settings)
+    client._auth_header()  # warm the token before fanning out across threads
+
+    def work(row: dict) -> str:
+        try:
+            wav = client.download_recording(row["recording_id"])
+            if not wav or len(wav) > _MAX_BYTES:
+                return "skip"
+            text = transcribe_wav(oai, settings, wav)
+            if not text:
+                return "skip"
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO transcripts (call_id, source, diarized, text, sentiment, summary) "
+                    "VALUES (%s, 'openai-stt', false, %s, NULL, NULL) "
+                    "ON CONFLICT (call_id) DO UPDATE SET text = EXCLUDED.text, source = EXCLUDED.source",
+                    (row["call_id"], text),
+                )
+                cur.execute("UPDATE calls SET has_transcript = true WHERE call_id = %s", (row["call_id"],))
+                conn.commit()
+            return "ok"
+        except Exception as exc:
+            log.warning("transcribe_failed", call_id=row.get("call_id"), error=str(exc)[:200])
+            return "err"
+
+    transcribed = skipped = errors = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for status in ex.map(work, pending):
+            if status == "ok":
+                transcribed += 1
+            elif status == "skip":
+                skipped += 1
+            else:
+                errors += 1
+
+    log.info("transcribe_day_done", day=str(day), transcribed=transcribed,
+             skipped=skipped, errors=errors)
+    return {"transcribed": transcribed, "skipped": skipped, "errors": errors}

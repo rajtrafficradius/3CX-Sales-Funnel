@@ -108,6 +108,11 @@ class ThreeCXClient:
         """GET an OData collection (or report function) and return its `value` list."""
         return self._get(path, params=params).json().get("value", [])
 
+    def download_recording(self, rec_id: int | str) -> bytes:
+        """Download a call recording's WAV bytes via Pbx.DownloadRecording(recId)."""
+        resp = self._get(f"/xapi/v1/Recordings/Pbx.DownloadRecording(recId={int(rec_id)})")
+        return resp.content
+
     def iter_query(self, path: str, params: dict, page_size: int = 100) -> Iterator[dict]:
         """Page through any OData collection (`$top`/`$skip`), robust to server caps.
 

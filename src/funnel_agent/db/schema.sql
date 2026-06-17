@@ -26,11 +26,13 @@ CREATE TABLE IF NOT EXISTS calls (
   is_voicemail      boolean,
   call_type         text,
   recording_present boolean,
+  recording_id      text,            -- 3CX RecordingId, for downloading the audio
   has_transcript    boolean NOT NULL DEFAULT false,
   fresh_or_followup text,            -- 'fresh' | 'followup'
   in_scope          boolean NOT NULL DEFAULT false,
   lead_id           text
 );
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_id text;
 CREATE INDEX IF NOT EXISTS idx_calls_day ON calls (started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_dest ON calls (dest_number, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_ext_day ON calls (bde_extension, started_at);

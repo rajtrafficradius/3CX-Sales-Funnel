@@ -24,6 +24,10 @@ class Source:
     def min_call_date(self, settings: Settings) -> date | None:
         raise NotImplementedError
 
+    def transcribe_missing(self, analytics_pool, settings: Settings, day: date) -> dict:
+        """Fill transcripts 3CX didn't produce (API source only). No-op by default."""
+        return {"transcribed": 0, "skipped": 0, "errors": 0}
+
     def close(self) -> None:
         pass
 
@@ -43,6 +47,13 @@ class ApiSource(Source):
         from .threecx.recordings import earliest_recording_date
 
         return earliest_recording_date(self.client, settings.tz)
+
+    def transcribe_missing(self, analytics_pool, settings, day):
+        if not settings.transcribe_missing:
+            return {"transcribed": 0, "skipped": 0, "errors": 0}
+        from .transcribe import transcribe_missing_for_day
+
+        return transcribe_missing_for_day(self.client, analytics_pool, settings, day)
 
     def close(self):
         self.client.close()
