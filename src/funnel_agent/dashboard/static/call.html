@@ -87,7 +87,11 @@ async function load(){
   const reasoning = ev.analysis ? `<div class="card full"><h2>AI reasoning (why these verdicts)</h2><div class="analysis">${esc(ev.analysis)}</div></div>`:'';
   const summary = t.summary ? `<div class="card full"><h2>3CX call summary</h2><div>${esc(t.summary)}</div></div>`:'';
   const notes = ev.overall_notes ? `<div class="card full"><h2>Notes</h2><div>${esc(ev.overall_notes)}</div></div>`:'';
-  const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${esc(t.text)||'(no transcript)'}</div></div>`;
+  let txBody;
+  if (t && (t.text||'').trim()) txBody = esc(t.text);
+  else if (c.recording_present) txBody = '<span class="muted">⚠ No transcript available. The call was recorded, but 3CX has not returned a transcript (it is either still processing — connected calls are re-checked on the nightly sweep — or this recording was not transcribed by 3CX).</span>';
+  else txBody = '<span class="muted">⚠ No transcript — this call was not recorded.</span>';
+  const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${txBody}</div></div>`;
 
   document.getElementById('main').innerHTML = meta+verdicts+prospect+bde+reasoning+summary+notes+transcript;
 }

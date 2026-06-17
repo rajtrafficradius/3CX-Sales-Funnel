@@ -235,7 +235,7 @@ def ingest_day_api(
                     VALUES (
                         %(call_id)s, %(ext)s, %(bde_name)s, %(direction)s, %(dest)s,
                         %(started)s, %(ring)s, %(talk)s, %(answered)s, %(voicemail)s,
-                        %(call_type)s, true, %(has_t)s, 'fresh', %(in_scope)s, NULL)
+                        %(call_type)s, %(rec)s, %(has_t)s, 'fresh', %(in_scope)s, NULL)
                     ON CONFLICT (call_id) DO UPDATE SET
                         bde_extension = EXCLUDED.bde_extension, bde_name = EXCLUDED.bde_name,
                         direction = EXCLUDED.direction, dest_number = EXCLUDED.dest_number,
@@ -251,6 +251,7 @@ def ingest_day_api(
                         "ring": r["ring_seconds"], "talk": r["talk_seconds"],
                         "answered": r["answered"], "voicemail": r["is_voicemail"],
                         "call_type": r["disposition"], "has_t": has_t, "in_scope": in_scope,
+                        "rec": r.get("recording_present", False),
                     },
                 )
                 if has_t and r["transcript"]:

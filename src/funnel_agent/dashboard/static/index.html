@@ -199,7 +199,7 @@ async function openStageList(stage,label,bdeOverride){
   $('#dBody').innerHTML = toggle + (d.rows.length ? d.rows.map(r=>`
     <a class="stageitem" href="/call/${encodeURIComponent(r.call_id)}" target="_blank">
       <div><b>${r.bde_name||'?'}</b> → ${r.dest_number||''}</div>
-      <div class="muted">${(r.started_at||'').replace('T',' ').slice(0,16)} · ${r.who_answered||r.call_outcome||(r.answered?'answered':'no answer')} · ${r.talk_seconds||0}s ${r.has_transcript?'· 📄':''}</div>
+      <div class="muted">${(r.started_at||'').replace('T',' ').slice(0,16)} · ${r.who_answered||r.call_outcome||(r.answered?'answered':'no answer')} · ${r.talk_seconds||0}s ${r.has_transcript?'· 📄 transcript':'· ⚠ no transcript'}</div>
     </a>`).join('') : '<div class="muted">No calls.</div>');
   $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
