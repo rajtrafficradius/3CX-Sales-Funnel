@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     llm_model_strong: str = ""
     confidence_threshold: float = Field(default=0.7, ge=0, le=1)
     llm_max_transcript_chars: int = 24000
+    classify_workers: int = 8  # parallel LLM calls during classification
 
     # --- Behaviour ---
     backfill_start: str = ""  # 'YYYY-MM-DD' or blank => auto-detect

@@ -8,6 +8,7 @@ monotonicity. Results upsert into `classifications` (PK call_id) -> idempotent.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta, timezone
 
 from psycopg.types.json import Json
@@ -241,25 +242,46 @@ def _pending_calls_for_day(pool: ConnectionPool, day: date, limit: int | None = 
 
 
 def classify_day(
-    pool: ConnectionPool, settings: Settings, day: date, limit: int | None = None
+    pool: ConnectionPool,
+    settings: Settings,
+    day: date,
+    limit: int | None = None,
+    workers: int | None = None,
 ) -> dict:
-    """Classify pending transcribed in-scope calls for a day. Idempotent."""
+    """Classify pending transcribed in-scope calls for a day, in parallel. Idempotent."""
     pending = _pending_calls_for_day(pool, day, limit)
     if not pending:
-        return {"classified": 0, "skipped": 0, "needs_review": 0}
+        return {"classified": 0, "errors": 0, "needs_review": 0}
 
+    workers = workers or settings.classify_workers
     clf = Classifier(settings)
-    classified = needs_review = 0
-    for row in pending:
-        transcript_row = {
-            "text": row.get("text"),
-            "sentiment": row.get("sentiment"),
-            "summary": row.get("summary"),
-        }
-        rec = clf.classify_one(row, transcript_row)
-        upsert_classification(pool, rec)
-        classified += 1
-        needs_review += int(rec["needs_human_review"])
+    clf._llm()  # warm the backend before fanning out across threads
 
-    log.info("classify_day_done", day=str(day), classified=classified, needs_review=needs_review)
-    return {"classified": classified, "skipped": 0, "needs_review": needs_review}
+    def work(row: dict) -> tuple[str, bool]:
+        try:
+            rec = clf.classify_one(row, {
+                "text": row.get("text"), "sentiment": row.get("sentiment"),
+                "summary": row.get("summary"),
+            })
+            upsert_classification(pool, rec)
+            return ("ok", bool(rec["needs_human_review"]))
+        except Exception as exc:  # one bad call must not abort the batch
+            log.warning("classify_call_failed", call_id=row.get("call_id"), error=str(exc)[:200])
+            return ("err", False)
+
+    classified = errors = needs_review = 0
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            outcomes = ex.map(work, pending)
+    else:
+        outcomes = (work(r) for r in pending)
+    for status, nr in outcomes:
+        if status == "ok":
+            classified += 1
+            needs_review += int(nr)
+        else:
+            errors += 1
+
+    log.info("classify_day_done", day=str(day), classified=classified,
+             errors=errors, needs_review=needs_review)
+    return {"classified": classified, "errors": errors, "needs_review": needs_review}

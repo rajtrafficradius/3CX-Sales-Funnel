@@ -211,15 +211,20 @@ def ingest(
 
 @app.command()
 def classify(
-    date_: str = typer.Option(..., "--date", help="YYYY-MM-DD"),
-    limit: int = typer.Option(None, help="cap number of calls (cost/time control)"),
+    date_: str = typer.Option(None, "--date", help="single day YYYY-MM-DD"),
+    start: str = typer.Option(None, help="range start YYYY-MM-DD"),
+    end: str = typer.Option(None, help="range end YYYY-MM-DD"),
+    limit: int = typer.Option(None, help="cap calls per day (cost/time control)"),
+    workers: int = typer.Option(None, help="parallel LLM workers (default from config)"),
 ) -> None:
-    """Classify transcribed in-scope calls for a day."""
+    """Classify transcribed in-scope calls for a day or an inclusive range."""
     settings = _settings()
     from .classify.classifier import classify_day
 
+    days = _resolve_days(date_, start, end)
     with _analytics_pool(settings) as ana:
-        typer.echo(f"classify {date_}: {classify_day(ana, settings, _parse_date(date_), limit)}")
+        for d in days:
+            typer.echo(f"classify {d}: {classify_day(ana, settings, d, limit, workers)}")
 
 
 @app.command()
