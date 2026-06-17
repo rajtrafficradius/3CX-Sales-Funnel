@@ -196,8 +196,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"rows": rows})
 
     # Stage filters mirror the STRICTLY-NESTED aggregation so drill-down counts
-    # equal the funnel counts: each stage is gated on the Connected threshold + RPC.
-    _CONN = "c.answered AND c.talk_seconds >= %(thr)s"
+    # equal the funnel counts: Connected = answered + real talk + NOT a voicemail.
+    _CONN = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'"
     _STAGE_COND = {
         "calls_made": "TRUE",
         "connected": _CONN,
