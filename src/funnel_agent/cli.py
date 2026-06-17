@@ -51,6 +51,7 @@ def _source_pool(settings: Settings):
 def _analytics_pool(settings: Settings):
     from .db.analytics import make_analytics_pool
 
+    # Bucket days in the PBX's local timezone so day boundaries match 3CX reports.
     pool = make_analytics_pool(settings.analytics_db_dsn, session_timezone=settings.tz)
     pool.open()
     try:

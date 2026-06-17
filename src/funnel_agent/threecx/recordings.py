@@ -49,6 +49,10 @@ def _duration_seconds(value) -> int:
 
 
 def _day_window_utc(day: date, tz: str) -> tuple[str, str]:
+    # The 3CX server buckets report days in its OWN local timezone (this PBX is
+    # set to Australia/Melbourne). So a "day" = local midnight -> next local
+    # midnight, expressed as UTC instants. Verified: this makes Connected/Answered
+    # match 3CX's Extension Statistics report exactly.
     zone = ZoneInfo(tz)
     start = datetime(day.year, day.month, day.day, tzinfo=zone)
     return _iso_utc(start), _iso_utc(start + timedelta(days=1))

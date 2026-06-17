@@ -187,10 +187,10 @@ function renderFunnelTable(f){
     <td>${s.conv==null?'—':'<span class="pill '+pillClass(s.conv,50,20)+'">'+s.conv+'%</span>'}</td></tr>`).join('');
 }
 
-async function openStageList(stage,label){
-  const date=$('#date').value, bde=$('#bde').value;
+async function openStageList(stage,label,bdeOverride){
+  const date=$('#date').value, bde=bdeOverride||$('#bde').value;
   const d=await jget(`/api/stage-calls?date=${date}&bde=${encodeURIComponent(bde)}&track=combined&stage=${stage}`);
-  $('#dTitle').textContent=`${label} — ${d.count} call(s)`;
+  $('#dTitle').textContent=`${label}${bde&&bde!=='ALL'?' · '+bde:''} — ${d.count} call(s)`;
   $('#dBody').innerHTML = d.rows.length ? d.rows.map(r=>`
     <a class="stageitem" href="/call/${encodeURIComponent(r.call_id)}" target="_blank">
       <div><b>${r.bde_name||'?'}</b> → ${r.dest_number||''}</div>
@@ -200,15 +200,17 @@ async function openStageList(stage,label){
 }
 
 function renderLeaderboard(d){
-  const cols=[['BDE','bde_name'],['Calls','calls_made'],['Transcribed','transcribed'],
-    ['RPC','rpc_connect'],['Pitch','full_pitch'],['Lead','leads'],['Qual','qualified'],['Booked','meetings_booked'],
-    ['Connect%','conv_connect'],['Pitch%','conv_pitch'],['Lead%','conv_lead'],['Qual%','conv_qual']];
+  // [header, dataKey, drillStageKey|null]
+  const cols=[['BDE','bde_name',null],['Calls','calls_made','calls_made'],['Connected','connected','connected'],
+    ['RPC','rpc_connect','rpc_connect'],['Pitch','full_pitch','full_pitch'],['Lead (Booked)','meetings_booked','meetings_booked'],
+    ['Conn%','conv_connect',null],['RPC%','conv_rpc',null],['Pitch%','conv_pitch',null],['Book%','conv_booked',null]];
   $('#leaderboard thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
   const body=$('#leaderboard tbody');
-  if(!d.rows.length){body.innerHTML='<tr><td class="empty" colspan="12">No BDE activity for this date</td></tr>';return;}
-  body.innerHTML=d.rows.map(r=>'<tr>'+cols.map(([_,k])=>{
+  if(!d.rows.length){body.innerHTML='<tr><td class="empty" colspan="10">No BDE activity for this date</td></tr>';return;}
+  body.innerHTML=d.rows.map(r=>'<tr>'+cols.map(([label,k,stage])=>{
     if(k==='bde_name')return `<td>${r[k]}</td>`;
     if(k.startsWith('conv_')){const v=r[k];return `<td><span class="pill ${pillClass(v,50,20)}">${pct(v)}</span></td>`;}
+    if(stage && r[k]>0)return `<td><span class="drill" onclick="openStageList('${stage}','${label}',${JSON.stringify(r.bde_name)})">${r[k]}</span></td>`;
     return `<td>${r[k]}</td>`;
   }).join('')+'</tr>').join('');
 }

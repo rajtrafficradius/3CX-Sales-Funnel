@@ -143,10 +143,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    ("calls_made", "connected", "transcribed", "rpc_connect",
                     "full_pitch", "leads", "qualified", "meetings_booked")},
                 "bde_name": r["bde_name"],
-                "conv_connect": _pct(r["rpc_connect"] or 0, r["transcribed"] or 0),
+                "conv_connect": _pct(r["connected"] or 0, r["calls_made"] or 0),
+                "conv_rpc": _pct(r["rpc_connect"] or 0, r["connected"] or 0),
                 "conv_pitch": _pct(r["full_pitch"] or 0, r["rpc_connect"] or 0),
-                "conv_lead": _pct(r["leads"] or 0, r["full_pitch"] or 0),
-                "conv_qual": _pct(r["qualified"] or 0, r["leads"] or 0),
+                "conv_booked": _pct(r["meetings_booked"] or 0, r["full_pitch"] or 0),
             })
         return JSONResponse({"rows": out})
 
