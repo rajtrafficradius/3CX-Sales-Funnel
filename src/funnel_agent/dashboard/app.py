@@ -56,8 +56,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict:
-        q("SELECT 1")
+        # Liveness only (no DB) so the Railway healthcheck passes as soon as the
+        # web process is up, decoupled from database availability.
         return {"ok": True}
+
+    @app.get("/readyz")
+    def readyz() -> JSONResponse:
+        # Readiness: confirms the analytics DB is reachable.
+        try:
+            q("SELECT 1")
+            return JSONResponse({"ready": True})
+        except Exception as exc:
+            return JSONResponse({"ready": False, "error": str(exc)[:200]}, status_code=503)
 
     # ---- api ------------------------------------------------------------ #
     @app.get("/api/classification-progress")
