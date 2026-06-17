@@ -34,12 +34,20 @@ WITH base AS (
         1 AS calls_made,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s THEN 1 ELSE 0 END) AS connected,
         (CASE WHEN c.has_transcript THEN 1 ELSE 0 END) AS transcribed,
-        (CASE WHEN cl.rpc_connect THEN 1 ELSE 0 END) AS rpc_connect,
-        (CASE WHEN cl.full_pitch  THEN 1 ELSE 0 END) AS full_pitch,
-        (CASE WHEN cl.is_lead     THEN 1 ELSE 0 END) AS leads,
-        (CASE WHEN cl.qualified   THEN 1 ELSE 0 END) AS qualified,
-        -- "Booked" comes from the call transcript (classifier); no calendar needed.
-        (CASE WHEN cl.meeting_booked THEN 1 ELSE 0 END) AS meetings_booked,
+        -- Funnel stages are STRICTLY NESTED: each counts only within the prior.
+        -- "conn" = the deterministic Connected gate (answered AND real talk time).
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s
+                   AND cl.rpc_connect THEN 1 ELSE 0 END) AS rpc_connect,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s
+                   AND cl.rpc_connect AND cl.full_pitch THEN 1 ELSE 0 END) AS full_pitch,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s
+                   AND cl.rpc_connect AND cl.is_lead THEN 1 ELSE 0 END) AS leads,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s
+                   AND cl.rpc_connect AND cl.is_lead AND cl.qualified THEN 1 ELSE 0 END) AS qualified,
+        -- Booked requires reaching the decision-maker (RPC); a real booking can come
+        -- from a warm callback without a fresh full pitch, so it nests under RPC.
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s
+                   AND cl.rpc_connect AND cl.meeting_booked THEN 1 ELSE 0 END) AS meetings_booked,
         -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.
         (CASE WHEN EXISTS (SELECT 1 FROM meetings m
                            WHERE m.call_id = c.call_id AND m.meeting_done)

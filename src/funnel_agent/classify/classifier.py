@@ -98,8 +98,17 @@ def make_backend(settings: Settings) -> LLMBackend:
 # Guardrails
 # --------------------------------------------------------------------------- #
 def monotonicity_violation(v: CallClassification) -> bool:
-    """True if the funnel ordering is violated (Lead w/o RPC, or Qualified w/o Lead)."""
+    """True if the funnel ordering is violated — a self-contradictory flag combo.
+
+    Each downstream stage requires reaching the decision-maker (RPC). A booking can
+    legitimately happen on a warm callback without a fresh full pitch, so we do NOT
+    require full_pitch for meeting_booked — only RPC.
+    """
+    if v.full_pitch.value and not v.rpc_connect.value:
+        return True
     if v.is_lead.value and not v.rpc_connect.value:
+        return True
+    if v.meeting_booked.value and not v.rpc_connect.value:
         return True
     if v.qualified.value and not v.is_lead.value:
         return True

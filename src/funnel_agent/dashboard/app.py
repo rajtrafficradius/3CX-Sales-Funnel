@@ -195,15 +195,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             r["min_conf"] = float(r["min_conf"]) if r["min_conf"] is not None else None
         return JSONResponse({"rows": rows})
 
+    # Stage filters mirror the STRICTLY-NESTED aggregation so drill-down counts
+    # equal the funnel counts: each stage is gated on the Connected threshold + RPC.
+    _CONN = "c.answered AND c.talk_seconds >= %(thr)s"
     _STAGE_COND = {
         "calls_made": "TRUE",
-        "connected": "c.answered AND c.talk_seconds >= %(thr)s",
-        "unconnected": "NOT (c.answered AND c.talk_seconds >= %(thr)s)",
-        "rpc_connect": "cl.rpc_connect",
-        "full_pitch": "cl.full_pitch",
-        "meetings_booked": "cl.meeting_booked",
-        "lead": "cl.is_lead",
-        "qualified": "cl.qualified",
+        "connected": _CONN,
+        "unconnected": f"NOT ({_CONN})",
+        "rpc_connect": f"{_CONN} AND cl.rpc_connect",
+        "full_pitch": f"{_CONN} AND cl.rpc_connect AND cl.full_pitch",
+        "meetings_booked": f"{_CONN} AND cl.rpc_connect AND cl.meeting_booked",
+        "lead": f"{_CONN} AND cl.rpc_connect AND cl.is_lead",
+        "qualified": f"{_CONN} AND cl.rpc_connect AND cl.is_lead AND cl.qualified",
     }
 
     @app.get("/api/stage-calls")
