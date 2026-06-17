@@ -63,6 +63,8 @@ class _FakeBackend:
     def classify(self, system, user, model):
         is_fresh = "c-fresh-conv" in user
         return CallClassification(
+            analysis="fixture analysis",
+            who_answered="decision-maker",
             rpc_connect=StageVerdict(value=True, confidence=0.98, evidence="two-way convo"),
             full_pitch=StageVerdict(value=True, confidence=0.9, evidence="all components"),
             is_lead=StageVerdict(value=is_fresh, confidence=0.88, evidence="interest"),

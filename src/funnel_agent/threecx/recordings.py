@@ -1,92 +1,109 @@
 """Read outbound calls + transcripts from the 3CX Configuration API.
 
-The `Recordings` entity is a single queryable source that carries everything the
-funnel needs per recorded outbound call: FromDn (BDE extension), the dialled
-number, timing, the transcript text, an AI summary, and a sentiment score — no
-database access and no joins required.
+Source: the `ReportOutboundCalls` report function `Pbx.GetOutboundCalls`, invoked
+via GET with a date range. It returns EVERY outbound call (answered AND
+unanswered) in one row each, with timing, the transcript text, an AI summary, and
+a sentiment score — so "Calls Made" matches 3CX's own Extension Statistics
+(unlike the Recordings entity, which only covers connected/recorded calls).
 
-A recorded outbound call = one funnel call. (Unanswered dials that produce no
-recording are not counted here; "Calls Made" therefore means recorded outbound
-calls. If full dial attempts are needed later, CallHistoryView can augment this.)
+Day windows are computed in the configured local timezone so per-day counts line
+up with 3CX's "Yesterday"/calendar-day reports.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from .api import ThreeCXClient
 
-_OUTBOUND_FILTER = "CallType eq 'OutboundExternal'"
-_SELECT = (
-    "Id,StartTime,EndTime,CallType,FromDn,ToDn,ToCallerNumber,ToDidNumber,"
-    "IsTranscribed,Transcription,Summary,SentimentScore,RecordingUrl"
-)
+_REPORT = "/xapi/v1/ReportOutboundCalls/Pbx.GetOutboundCalls"
+_DUR = re.compile(r"P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?")
 
 
-def _iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+def _iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
 
 
-def _duration_seconds(start: str | None, end: str | None) -> int:
-    a, b = _parse_dt(start), _parse_dt(end)
-    return int((b - a).total_seconds()) if a and b and b >= a else 0
+def _duration_seconds(value) -> int:
+    """Parse an ISO-8601 duration ('PT13.46S') or a numeric value to whole seconds."""
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    m = _DUR.fullmatch(str(value).strip())
+    if not m:
+        return 0
+    h, mi, s = m.groups()
+    return int(int(h or 0) * 3600 + int(mi or 0) * 60 + float(s or 0))
 
 
-def to_canonical(rec: dict) -> dict:
-    """Map a 3CX Recording row to the canonical call shape used by ingestion."""
-    start = rec.get("StartTime")
-    talk = _duration_seconds(start, rec.get("EndTime"))
-    text = (rec.get("Transcription") or "").strip()
-    dest = str(rec.get("ToCallerNumber") or rec.get("ToDn") or rec.get("ToDidNumber") or "")
+def _day_window_utc(day: date, tz: str) -> tuple[str, str]:
+    zone = ZoneInfo(tz)
+    start = datetime(day.year, day.month, day.day, tzinfo=zone)
+    return _iso_utc(start), _iso_utc(start + timedelta(days=1))
+
+
+def to_canonical(row: dict) -> dict:
+    """Map a GetOutboundCalls row to the canonical call shape used by ingestion."""
+    text = (row.get("Transcription") or "").strip()
+    answered = bool(row.get("Answered"))
+    talk = _duration_seconds(row.get("TalkingDuration"))
+    dest = str(row.get("DestinationCalleeId") or row.get("DestinationDn") or "")
+    cid = row.get("CdrId") or row.get("CallHistoryId")
     return {
-        "call_id": str(rec.get("Id")),
-        "bde_extension": str(rec.get("FromDn") or "") or None,
+        "call_id": str(cid),
+        "bde_extension": str(row.get("SourceDn") or "") or None,
         "direction": "Outbound",
         "dest_number": dest or None,
-        "started_at": _parse_dt(start),
-        "ring_seconds": 0,
+        "started_at": _parse_dt(row.get("StartTime")),
+        "ring_seconds": _duration_seconds(row.get("RingingDuration")),
         "talk_seconds": talk,
-        "answered": True,          # a recording exists -> the call connected
-        "is_voicemail": False,
-        "disposition": rec.get("CallType"),
-        "has_transcript": bool(rec.get("IsTranscribed") and text),
+        "answered": answered,
+        "is_voicemail": False,  # refined by the classifier's call_outcome
+        "disposition": row.get("Status"),
+        "has_transcript": bool(text),
         "transcript": {
             "text": text,
-            "sentiment": (str(rec["SentimentScore"]) if rec.get("SentimentScore") is not None else None),
-            "summary": rec.get("Summary"),
+            "sentiment": (str(row["SentimentScore"]) if row.get("SentimentScore") is not None else None),
+            "summary": row.get("Summary"),
             "diarized": False,
-        } if (rec.get("IsTranscribed") and text) else None,
+        } if text else None,
     }
 
 
-def fetch_outbound_calls_for_day(client: ThreeCXClient, day: date) -> list[dict]:
-    """Return canonical outbound-call dicts for one day from the Recordings API."""
-    start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-    end = start + timedelta(days=1)
-    flt = f"{_OUTBOUND_FILTER} and StartTime ge {_iso(start)} and StartTime lt {_iso(end)}"
-    rows = client.iter_query(
-        "/xapi/v1/Recordings",
-        {"$filter": flt, "$select": _SELECT, "$orderby": "StartTime"},
+def fetch_outbound_calls_for_day(client: ThreeCXClient, day: date, tz: str = "UTC") -> list[dict]:
+    """Return canonical outbound-call dicts for one local day (answered + unanswered)."""
+    pf, pt = _day_window_utc(day, tz)
+    path = (
+        f"{_REPORT}(periodFrom={pf},periodTo={pt},trunkDns='',callsType=0)"
     )
-    return [to_canonical(r) for r in rows]
+    return [to_canonical(r) for r in client.get_value(path)]
 
 
-def earliest_recording_date(client: ThreeCXClient) -> date | None:
-    """Earliest outbound recording date — used to auto-detect the backfill start."""
-    resp = client._get(  # noqa: SLF001 (intentional internal use)
+def earliest_call_date(client: ThreeCXClient, tz: str = "UTC") -> date | None:
+    """Earliest outbound call date — used to auto-detect the backfill start."""
+    # Probe the first outbound recording (cheap, ordered) for a history floor.
+    rows = client.get_value(
         "/xapi/v1/Recordings",
-        params={"$filter": _OUTBOUND_FILTER, "$orderby": "StartTime", "$top": 1,
-                "$select": "Id,StartTime"},
+        {"$filter": "CallType eq 'OutboundExternal'", "$orderby": "StartTime",
+         "$top": 1, "$select": "Id,StartTime"},
     )
-    val = resp.json().get("value", [])
-    dt = _parse_dt(val[0].get("StartTime")) if val else None
-    return dt.date() if dt else None
+    dt = _parse_dt(rows[0].get("StartTime")) if rows else None
+    if not dt:
+        return None
+    return dt.astimezone(ZoneInfo(tz)).date()
+
+
+# Back-compat alias (sources.py imports this name).
+earliest_recording_date = earliest_call_date

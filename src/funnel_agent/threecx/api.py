@@ -104,6 +104,10 @@ class ThreeCXClient:
         resp = self._get("/xapi/v1/Defs")
         return resp.headers.get("X-3CX-Version", "unknown")
 
+    def get_value(self, path: str, params: dict | None = None) -> list[dict]:
+        """GET an OData collection (or report function) and return its `value` list."""
+        return self._get(path, params=params).json().get("value", [])
+
     def iter_query(self, path: str, params: dict, page_size: int = 100) -> Iterator[dict]:
         """Page through any OData collection (`$top`/`$skip`), robust to server caps.
 

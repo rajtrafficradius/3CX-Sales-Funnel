@@ -20,8 +20,9 @@ _LABEL_W = 22
 _NUM_W = 9
 
 
-def _row(label: str, fresh: int | str, followup: int | str, total: int | str) -> str:
-    return f"{label:<{_LABEL_W}}{str(fresh):>{_NUM_W}}{str(followup):>{_NUM_W}}{str(total):>{_NUM_W}}"
+def _row(label: str, fresh, followup, total, conv: str = "") -> str:
+    return (f"{label:<{_LABEL_W}}{str(fresh):>{_NUM_W}}{str(followup):>{_NUM_W}}"
+            f"{str(total):>{_NUM_W}}{str(conv):>{_NUM_W}}")
 
 
 def _pct(num: int, den: int) -> str:
@@ -57,32 +58,28 @@ def render_block(bde_name: str, ext: str | None, tracks: dict[str, dict], day: d
     if ext and bde_name != "ALL":
         header_name += f"  (ext {ext})"
 
-    lines = [
-        f"{header_name:<{_LABEL_W + _NUM_W}}{str(day):>{_NUM_W * 2}}",
-        _row("", "FRESH", "FOLLOWUP", "TOTAL"),
-        _row("Calls Made", g(f, "calls_made"), g(u, "calls_made"), g(c, "calls_made")),
-        _row("  (connected, CDR)", g(f, "connected"), g(u, "connected"), g(c, "connected")),
-        _row("  (transcribed)", g(f, "transcribed"), g(u, "transcribed"), g(c, "transcribed")),
-        _row("RPC Connect", g(f, "rpc_connect"), g(u, "rpc_connect"), g(c, "rpc_connect")),
-        _row("Full Pitch", g(f, "full_pitch"), g(u, "full_pitch"), g(c, "full_pitch")),
-        _row("Lead", g(f, "leads"), g(u, "leads"), g(c, "leads")),
-        "-" * (_LABEL_W + _NUM_W * 3),
-        _row("Qualified Lead", g(f, "qualified"), g(u, "qualified"), g(c, "qualified")),
-        _row("Meeting Booked", g(f, "meetings_booked"), g(u, "meetings_booked"), g(c, "meetings_booked")),
+    # Funnel stages; CONV% is each stage over the PREVIOUS stage (drop-off).
+    stages = [
+        ("Calls Made", "calls_made"),
+        ("Connected", "connected"),
+        ("RPC Connect", "rpc_connect"),
+        ("Full Pitch", "full_pitch"),
+        ("Lead (Meeting Booked)", "meetings_booked"),
     ]
-    # "Meeting Done" (calendar/CRM) is optional; only show it if that adapter is feeding data.
-    if g(c, "meetings_done"):
-        lines.append(_row("Meeting Done (cal)", g(f, "meetings_done"), g(u, "meetings_done"), g(c, "meetings_done")))
-
-    tr = g(c, "transcribed")
-    conv = (
-        f"Conversion (Total, over transcribed): "
-        f"Connect {_pct(g(c, 'rpc_connect'), tr)} | "
-        f"Pitch {_pct(g(c, 'full_pitch'), g(c, 'rpc_connect'))} | "
-        f"Lead {_pct(g(c, 'leads'), g(c, 'full_pitch'))} | "
-        f"Qual {_pct(g(c, 'qualified'), g(c, 'leads'))}"
-    )
-    lines += ["", conv]
+    lines = [
+        f"{header_name:<{_LABEL_W + _NUM_W}}{str(day):>{_NUM_W * 3}}",
+        _row("", "FRESH", "FOLLOWUP", "TOTAL", "CONV%"),
+    ]
+    prev = None
+    for i, (label, key) in enumerate(stages):
+        tot = g(c, key)
+        conv = "" if i == 0 else _pct(tot, prev)
+        lines.append(_row(label, g(f, key), g(u, key), tot, conv))
+        if key == "calls_made":
+            cov = _pct(g(c, "transcribed"), g(c, "calls_made"))
+            lines.append(_row("  (transcribed)", g(f, "transcribed"),
+                              g(u, "transcribed"), g(c, "transcribed"), cov))
+        prev = tot
     return "\n".join(lines)
 
 

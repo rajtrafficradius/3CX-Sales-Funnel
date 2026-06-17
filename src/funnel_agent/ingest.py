@@ -201,7 +201,7 @@ def ingest_day_api(
 ) -> dict:
     """Ingest one day of outbound calls + transcripts from the 3CX API. Idempotent."""
     roster = _load_roster(analytics_pool)
-    rows = fetch_outbound_calls_for_day(client, day)
+    rows = fetch_outbound_calls_for_day(client, day, settings.tz)
     if not rows:
         log.info("ingest_api_empty", day=str(day))
         return {"calls": 0, "transcribed": 0, "in_scope": 0}

@@ -14,6 +14,12 @@ class StageVerdict(BaseModel):
 
 
 class CallClassification(BaseModel):
+    # `analysis` is generated FIRST so the model reasons through the transcript
+    # (who answered, was it the decision-maker, what was pitched, any commitment)
+    # before committing to the per-stage verdicts below. This materially improves
+    # accuracy on the judgement stages.
+    analysis: str
+    who_answered: str  # e.g. "owner/decision-maker", "gatekeeper/receptionist", "voicemail", "wrong number"
     rpc_connect: StageVerdict
     full_pitch: StageVerdict
     is_lead: StageVerdict

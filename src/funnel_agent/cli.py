@@ -51,7 +51,7 @@ def _source_pool(settings: Settings):
 def _analytics_pool(settings: Settings):
     from .db.analytics import make_analytics_pool
 
-    pool = make_analytics_pool(settings.analytics_db_dsn)
+    pool = make_analytics_pool(settings.analytics_db_dsn, session_timezone=settings.tz)
     pool.open()
     try:
         yield pool

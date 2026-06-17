@@ -113,6 +113,8 @@ def min_quality_confidence(v: CallClassification) -> float:
 def _all_false_verdict(outcome: str, note: str) -> CallClassification:
     sv = lambda: StageVerdict(value=False, confidence=1.0, evidence=note)  # noqa: E731
     return CallClassification(
+        analysis=note,
+        who_answered="n/a",
         rpc_connect=sv(),
         full_pitch=sv(),
         is_lead=sv(),

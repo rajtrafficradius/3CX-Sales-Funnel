@@ -42,7 +42,7 @@ class ApiSource(Source):
     def min_call_date(self, settings):
         from .threecx.recordings import earliest_recording_date
 
-        return earliest_recording_date(self.client)
+        return earliest_recording_date(self.client, settings.tz)
 
     def close(self):
         self.client.close()

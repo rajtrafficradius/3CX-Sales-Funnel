@@ -58,6 +58,10 @@
   .muted{color:var(--muted)}
   .x{cursor:pointer;color:var(--muted);font-size:20px;border:none;background:none}
   .empty{color:var(--muted);padding:20px;text-align:center}
+  .drill{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+  .drill:hover{color:var(--accent)}
+  .stageitem{display:block;padding:10px 12px;margin:6px 0;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--txt);text-decoration:none}
+  .stageitem:hover{border-color:var(--accent)}
   .clsbar{padding:9px 22px;background:#11161f;border-bottom:1px solid var(--line)}
   .clslabel{font-size:12px;color:var(--muted);margin-bottom:6px}
   .clstrack{height:7px;background:#0b0f15;border:1px solid var(--line);border-radius:6px;overflow:hidden}
@@ -153,9 +157,9 @@ function renderKpis(f){
   const k=[
     ['Calls Made', f.calls_made, ''],
     ['Transcribed', f.transcribed, (f.coverage!=null?f.coverage+'% coverage':'')],
-    ['Connect rate', pct(f.conversion?.connect), 'RPC / transcribed'],
-    ['Pitch rate', pct(f.conversion?.pitch), 'Pitch / RPC'],
-    ['Qualified rate', pct(f.conversion?.qualified), 'Qual / Lead'],
+    ['Connect rate', pct(f.conversion?.connect), 'Connected / Calls Made'],
+    ['RPC rate', pct(f.conversion?.rpc), 'RPC / Connected'],
+    ['Booked rate', pct(f.conversion?.booked), 'Booked / Full Pitch'],
   ];
   $('#kpis').innerHTML = k.map(([l,v,sub])=>`
     <div class="card kpi"><div class="v">${fmt(v)}</div><div class="l">${l}</div><div class="sub">${sub||'&nbsp;'}</div></div>`).join('');
@@ -175,10 +179,24 @@ function renderFunnel(f){
 
 function renderFunnelTable(f){
   const tb=$('#funnelTable tbody');
-  if(!f.found){tb.innerHTML='<tr><td class="empty" colspan=4>No data for this BDE/date</td></tr>';return;}
-  const head=`<tr class="funnelrow"><td></td><th>Fresh</th><th>Followup</th><th>Total</th></tr>`;
+  if(!f.found){tb.innerHTML='<tr><td class="empty" colspan=5>No data for this BDE/date</td></tr>';return;}
+  const head=`<tr class="funnelrow"><td></td><th>Fresh</th><th>Followup</th><th>Total</th><th>Conv%</th></tr>`;
   tb.innerHTML = head + f.stages.map(s=>`
-    <tr class="funnelrow"><td>${s.stage}</td><td>${s.fresh}</td><td>${s.followup}</td><td><b>${s.total}</b></td></tr>`).join('');
+    <tr class="funnelrow"><td>${s.stage}</td><td>${s.fresh}</td><td>${s.followup}</td>
+    <td><b class="${s.total>0?'drill':''}" ${s.total>0?`onclick="openStageList('${s.key}','${s.stage.replace(/'/g,"")}')"`:''}>${s.total}</b></td>
+    <td>${s.conv==null?'—':'<span class="pill '+pillClass(s.conv,50,20)+'">'+s.conv+'%</span>'}</td></tr>`).join('');
+}
+
+async function openStageList(stage,label){
+  const date=$('#date').value, bde=$('#bde').value;
+  const d=await jget(`/api/stage-calls?date=${date}&bde=${encodeURIComponent(bde)}&track=combined&stage=${stage}`);
+  $('#dTitle').textContent=`${label} — ${d.count} call(s)`;
+  $('#dBody').innerHTML = d.rows.length ? d.rows.map(r=>`
+    <a class="stageitem" href="/call/${encodeURIComponent(r.call_id)}" target="_blank">
+      <div><b>${r.bde_name||'?'}</b> → ${r.dest_number||''}</div>
+      <div class="muted">${(r.started_at||'').replace('T',' ').slice(0,16)} · ${r.who_answered||r.call_outcome||''} · ${r.talk_seconds||0}s ${r.has_transcript?'· 📄 transcript':''}</div>
+    </a>`).join('') : '<div class="muted">No calls.</div>';
+  $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
 
 function renderLeaderboard(d){

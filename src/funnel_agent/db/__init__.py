@@ -23,6 +23,7 @@ def build_pool(
     read_only: bool,
     min_size: int = 1,
     max_size: int = 4,
+    session_timezone: str | None = None,
 ) -> ConnectionPool:
     """Build a lazily-opened connection pool.
 
@@ -34,6 +35,11 @@ def build_pool(
 
     def _configure(conn: psycopg.Connection) -> None:
         conn.row_factory = dict_row
+        if session_timezone:
+            with conn.cursor() as cur:
+                # SET TIME ZONE can't take a bind param; set_config() can.
+                cur.execute("SELECT set_config('TimeZone', %s, false)", (session_timezone,))
+            conn.commit()
         if read_only:
             with conn.cursor() as cur:
                 cur.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")

@@ -15,12 +15,10 @@ from ..db.analytics import make_analytics_pool
 # Funnel stages in order, with the daily_funnel column each maps to.
 STAGES = [
     ("Calls Made", "calls_made"),
-    ("Connected (CDR)", "connected"),
+    ("Connected", "connected"),
     ("RPC Connect", "rpc_connect"),
     ("Full Pitch", "full_pitch"),
-    ("Lead", "leads"),
-    ("Qualified", "qualified"),
-    ("Meeting Booked", "meetings_booked"),
+    ("Lead (Meeting Booked)", "meetings_booked"),
 ]
 
 
@@ -36,7 +34,7 @@ def _index_html() -> str:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    pool = make_analytics_pool(settings.analytics_db_dsn)
+    pool = make_analytics_pool(settings.analytics_db_dsn, session_timezone=settings.tz)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -105,23 +103,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def col(t: str, key: str) -> int:
             return int((tracks.get(t) or {}).get(key) or 0)
 
-        stage_rows = [
-            {"stage": label,
-             "fresh": col("fresh", key), "followup": col("followup", key),
-             "total": col("combined", key)}
-            for label, key in STAGES
-        ]
+        # Each stage carries its conversion from the PREVIOUS stage (funnel drop-off).
+        stage_rows = []
+        prev = None
+        for label, key in STAGES:
+            tot = col("combined", key)
+            stage_rows.append({
+                "stage": label, "key": key, "fresh": col("fresh", key),
+                "followup": col("followup", key), "total": tot,
+                "conv": (_pct(tot, prev) if prev else None),
+            })
+            prev = tot
+        cm = c.get("calls_made") or 0
         conv = {
-            "connect": _pct(c.get("rpc_connect") or 0, c.get("transcribed") or 0),
+            "connect": _pct(c.get("connected") or 0, cm),
+            "rpc": _pct(c.get("rpc_connect") or 0, c.get("connected") or 0),
             "pitch": _pct(c.get("full_pitch") or 0, c.get("rpc_connect") or 0),
-            "lead": _pct(c.get("leads") or 0, c.get("full_pitch") or 0),
-            "qualified": _pct(c.get("qualified") or 0, c.get("leads") or 0),
+            "booked": _pct(c.get("meetings_booked") or 0, c.get("full_pitch") or 0),
         }
-        coverage = _pct(c.get("transcribed") or 0, c.get("calls_made") or 0)
+        coverage = _pct(c.get("transcribed") or 0, cm)
         return JSONResponse({
             "found": True, "stages": stage_rows, "conversion": conv, "coverage": coverage,
-            "calls_made": int(c.get("calls_made") or 0),
-            "transcribed": int(c.get("transcribed") or 0),
+            "calls_made": int(cm), "transcribed": int(c.get("transcribed") or 0),
         })
 
     @app.get("/api/leaderboard")
@@ -181,6 +184,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
             r["min_conf"] = float(r["min_conf"]) if r["min_conf"] is not None else None
         return JSONResponse({"rows": rows})
+
+    _STAGE_COND = {
+        "calls_made": "TRUE",
+        "connected": "c.answered AND c.talk_seconds >= %(thr)s",
+        "rpc_connect": "cl.rpc_connect",
+        "full_pitch": "cl.full_pitch",
+        "meetings_booked": "cl.meeting_booked",
+        "lead": "cl.is_lead",
+        "qualified": "cl.qualified",
+    }
+
+    @app.get("/api/stage-calls")
+    def stage_calls(date: str, stage: str, bde: str = "ALL",
+                    track: str = "combined", limit: int = 300) -> JSONResponse:
+        """List the individual calls behind a funnel-stage count (for validation)."""
+        cond = _STAGE_COND.get(stage, "TRUE")
+        where = ["c.in_scope", "c.started_at >= %(d)s::date",
+                 "c.started_at < (%(d)s::date + 1)", f"({cond})"]
+        params: dict = {"d": date, "thr": settings.rpc_min_talk_seconds, "lim": limit}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        if track in ("fresh", "followup"):
+            where.append("c.fresh_or_followup = %(track)s")
+            params["track"] = track
+        rows = q(
+            "SELECT c.call_id, c.bde_name, c.dest_number, c.started_at, c.talk_seconds, "
+            "c.has_transcript, cl.call_outcome, cl.rpc_connect, cl.full_pitch, "
+            "cl.meeting_booked, cl.evidence->>'who_answered' AS who_answered "
+            "FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id "
+            "WHERE " + " AND ".join(where) + " ORDER BY c.started_at DESC LIMIT %(lim)s",
+            params,
+        )
+        for r in rows:
+            r["started_at"] = str(r["started_at"]) if r["started_at"] else None
+        return JSONResponse({"stage": stage, "count": len(rows), "rows": rows})
+
+    @app.get("/call/{call_id}", response_class=HTMLResponse)
+    def call_page(call_id: str) -> str:
+        return resources.files("funnel_agent.dashboard").joinpath(
+            "static/call.html").read_text(encoding="utf-8")
 
     @app.get("/api/call/{call_id}")
     def call_detail(call_id: str) -> JSONResponse:

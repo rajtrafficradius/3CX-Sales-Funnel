@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Call detail — 3CX Funnel</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0}
+  header a{color:var(--accent);text-decoration:none;font-size:13px}
+  header h1{font-size:16px;margin:0;font-weight:650}
+  main{max-width:1100px;margin:0 auto;padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{font-size:12px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:13px}
+  .kv div:nth-child(odd){color:var(--muted)}
+  .stage{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .stage:last-child{border-bottom:none}
+  .stage .nm{font-weight:600}
+  .stage .ev{color:var(--muted);font-size:12.5px;margin-top:3px;max-width:62ch}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
+  .yes{background:rgba(34,197,94,.16);color:#4ade80}
+  .no{background:rgba(239,68,68,.14);color:#f87171}
+  .analysis{white-space:pre-wrap;font-size:13.5px;line-height:1.6}
+  .transcript{white-space:pre-wrap;background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:60vh;overflow:auto;font:13px/1.65 ui-monospace,Menlo,monospace;color:#cbd5e1}
+  .muted{color:var(--muted)}
+  .big{font-size:20px;font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; Dashboard</a>
+  <h1 id="title">Call detail</h1>
+  <span class="muted" id="subtitle"></span>
+</header>
+<main id="main"><div class="card full muted">Loading…</div></main>
+
+<script>
+const pill=(v)=>`<span class="pill ${v?'yes':'no'}">${v?'YES':'NO'}</span>`;
+const esc=s=>(s==null?'':String(s)).replace(/[&<]/g,c=>({'&':'&amp;','<':'&lt;'}[c]));
+const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
+
+function stageRow(name, v){
+  if(!v) return '';
+  const conf=v.confidence!=null?` · ${Math.round(v.confidence*100)}% conf`:'';
+  return `<div class="stage"><div><div class="nm">${name}</div><div class="ev">${esc(v.evidence)}</div></div>
+    <div style="text-align:right">${pill(v.value)}<div class="muted" style="font-size:11px;margin-top:3px">${conf}</div></div></div>`;
+}
+
+async function load(){
+  let d;
+  try{ const r=await fetch('/api/call/'+encodeURIComponent(id)); if(!r.ok)throw new Error(r.status); d=await r.json(); }
+  catch(e){ document.getElementById('main').innerHTML='<div class="card full">Could not load call '+esc(id)+' ('+e.message+')</div>'; return; }
+  const c=d.call||{}, t=d.transcript||{}, cl=d.classification||{}, ev=cl.evidence||{};
+  document.getElementById('title').textContent = (c.bde_name||'?')+'  →  '+(c.dest_number||'');
+  document.getElementById('subtitle').textContent = (c.started_at||'')+'  ·  '+(c.fresh_or_followup||'');
+
+  const meta=`<div class="card"><h2>Call</h2><div class="kv">
+    <div>BDE</div><div>${esc(c.bde_name)} (ext ${esc(c.bde_extension)})</div>
+    <div>Number</div><div>${esc(c.dest_number)}</div>
+    <div>Started</div><div>${esc(c.started_at)}</div>
+    <div>Fresh/Followup</div><div>${esc(c.fresh_or_followup)}</div>
+    <div>Answered</div><div>${c.answered?'Yes':'No'}</div>
+    <div>Talk time</div><div>${esc(c.talk_seconds)} s</div>
+    <div>Who answered</div><div>${esc(ev.who_answered)||'—'}</div>
+    <div>Outcome</div><div>${esc(cl.call_outcome)||'—'}</div>
+    <div>Sentiment</div><div>${esc(t.sentiment)||'—'}</div>
+    <div>Model</div><div>${esc(cl.model)||'—'}</div>
+    <div>Needs review</div><div>${cl.needs_human_review?'Yes':'No'}</div>
+  </div></div>`;
+
+  const verdicts=`<div class="card"><h2>Funnel verdicts (AI)</h2>
+    ${stageRow('RPC Connect (decision-maker)', ev.rpc_connect)}
+    ${stageRow('Full Pitch', ev.full_pitch)}
+    ${stageRow('Lead (interest)', ev.is_lead)}
+    ${stageRow('Qualified', ev.qualified)}
+    ${stageRow('Lead — Meeting Booked', ev.meeting_booked)}
+  </div>`;
+
+  const summary = t.summary ? `<div class="card full"><h2>AI summary</h2><div>${esc(t.summary)}</div></div>`:'';
+  const analysis = ev.analysis ? `<div class="card full"><h2>AI analysis</h2><div class="analysis">${esc(ev.analysis)}</div></div>`:'';
+  const notes = ev.overall_notes ? `<div class="card full"><h2>Notes</h2><div>${esc(ev.overall_notes)}</div></div>`:'';
+  const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${esc(t.text)||'(no transcript)'}</div></div>`;
+
+  document.getElementById('main').innerHTML = meta+verdicts+summary+analysis+notes+transcript;
+}
+load();
+</script>
+</body>
+</html>
