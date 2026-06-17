@@ -123,6 +123,8 @@
 
 <script>
 const $ = s => document.querySelector(s);
+// Single-quote a value for safe inlining in an onclick="" (double-quoted) attribute.
+const jsq = s => "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'";
 const fmt = n => (n==null?'—':n);
 const pillClass = (v,a,b) => v==null?'':v>=a?'p-good':v>=b?'p-mid':'p-bad';
 const pct = v => v==null?'—':v+'%';
@@ -193,8 +195,8 @@ async function openStageList(stage,label,bdeOverride){
   const d=await jget(`/api/stage-calls?date=${date}&bde=${encodeURIComponent(bde)}&track=combined&stage=${stage}`);
   const more = d.shown < d.count ? ` <span class="muted">(showing first ${d.shown})</span>` : '';
   let toggle='';
-  if(stage==='connected') toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('unconnected','Unconnected',${JSON.stringify(bde)})">→ view unconnected calls</span></div>`;
-  else if(stage==='unconnected') toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('connected','Connected',${JSON.stringify(bde)})">→ back to connected calls</span></div>`;
+  if(stage==='connected') toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('unconnected','Unconnected',${jsq(bde)})">→ view unconnected calls</span></div>`;
+  else if(stage==='unconnected') toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('connected','Connected',${jsq(bde)})">→ back to connected calls</span></div>`;
   $('#dTitle').innerHTML=`${label}${bde&&bde!=='ALL'?' · '+bde:''} — ${d.count} call(s)${more}`;
   $('#dBody').innerHTML = toggle + (d.rows.length ? d.rows.map(r=>`
     <a class="stageitem" href="/call/${encodeURIComponent(r.call_id)}" target="_blank">
@@ -215,7 +217,7 @@ function renderLeaderboard(d){
   body.innerHTML=d.rows.map(r=>'<tr>'+cols.map(([label,k,stage])=>{
     if(k==='bde_name')return `<td>${r[k]}</td>`;
     if(k.startsWith('conv_')){const v=r[k];return `<td><span class="pill ${pillClass(v,50,20)}">${pct(v)}</span></td>`;}
-    if(stage && r[k]>0)return `<td><span class="drill" onclick="openStageList('${stage}','${label}',${JSON.stringify(r.bde_name)})">${r[k]}</span></td>`;
+    if(stage && r[k]>0)return `<td><span class="drill" onclick="openStageList('${stage}','${label}',${jsq(r.bde_name)})">${r[k]}</span></td>`;
     return `<td>${r[k]}</td>`;
   }).join('')+'</tr>').join('');
 }
