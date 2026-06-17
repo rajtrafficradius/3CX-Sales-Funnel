@@ -271,7 +271,9 @@ async function pollProgress(){
     $('#clsLabel').innerHTML = p.pending>0
       ? `Classifying transcripts… <b>${p.pct}%</b> <span class="muted">(${p.done.toLocaleString()} / ${p.total.toLocaleString()} calls — ${p.pending.toLocaleString()} pending)</span>`
       : `Classification complete — <b>${p.total.toLocaleString()}</b> calls ✓`;
-  }catch(e){}
+  }catch(e){
+    $('#clsLabel').textContent='Classification status unavailable — restart the dashboard (run-dashboard.command) to enable it.';
+  }
 }
 setInterval(pollProgress, 4000);
 
