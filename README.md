@@ -216,10 +216,11 @@ cron — each just runs `python -m funnel_agent.cli daily` nightly. Reporting em
 
 **Setup (anywhere):**
 1. Provision the analytics Postgres → set `ANALYTICS_DB_DSN`.
-2. Set the 3CX read-only DB DSN, Configuration API creds, and LLM key
-   (`SOURCE_DB_DSN`, `THREECX_*`, `LLM_*`), plus the `CDR_*`/`TRANSCRIPT_*` values
-   discovered in Phase B. Never bake secrets into the image — read them from env.
-3. One-time: `python -m funnel_agent.cli backfill`.
+2. Set the 3CX Configuration API creds and the LLM key (`THREECX_*`, `LLM_*`) plus
+   the in-scope rules (`ROSTER_*`). The default `SOURCE_MODE=api` reads CDR +
+   transcripts from the 3CX API, so **no `SOURCE_DB_DSN` is needed.** Never bake
+   secrets into the image — read them from env.
+3. One-time: `funnel-agent roster-sync` then `funnel-agent backfill`.
 
 **Schedule the nightly run** (pick one; runs after midnight Australia/Melbourne):
 
@@ -248,9 +249,40 @@ WorkingDirectory=/opt/funnel-agent
 ExecStart=/opt/funnel-agent/.venv/bin/python -m funnel_agent.cli daily --email
 ```
 
-**Railway** (if deployed there): deploy from the `Dockerfile`, run `backfill` once as
-a one-off job, then add a Railway cron service whose command is
-`python -m funnel_agent.cli daily` (secrets from Railway env).
+### Railway (step by step)
+
+The repo is Railway-ready: a `Dockerfile` + `railway.json` (healthcheck `/healthz`).
+The container auto-applies the DB schema on boot (`init-db`) and binds the dashboard
+to Railway's `$PORT`.
+
+1. **New Project → Deploy from GitHub repo** (this repo).
+2. **Add a PostgreSQL** plugin (this is the analytics DB).
+3. On the app service, set **Variables**:
+   - `ANALYTICS_DB_DSN` = `${{Postgres.DATABASE_URL}}`  *(reference the Postgres plugin)*
+   - `THREECX_API_BASE` = `https://dotmappers.3cx.in:5001`
+   - `THREECX_CLIENT_ID` = `vysakhapi`
+   - `THREECX_CLIENT_SECRET` = *(your 3CX API key)*
+   - `LLM_PROVIDER` = `openai`, `LLM_API_KEY` = *(your key)*,
+     `LLM_MODEL_CHEAP` = `gpt-4o`, `LLM_MODEL_STRONG` = `gpt-4o`
+   - `ROSTER_INSCOPE_GROUPS` = `Ben,Alfred,DNC,DEFAULT`
+   - `ROSTER_EXCLUDE_EXTENSIONS` = `101,104,998`
+   - `BACKFILL_START` = `2026-06-15`, `TZ` = `Australia/Melbourne`
+   - *(No `SOURCE_DB_DSN` needed — `SOURCE_MODE=api` is the default.)*
+4. Deploy. The web service comes up serving the dashboard at the Railway URL.
+5. **One-time populate** — open the service **Shell** (or a one-off command) and run:
+   ```
+   funnel-agent roster-sync
+   funnel-agent backfill          # or: funnel-agent daily
+   ```
+6. **Nightly automation** — add a **Cron** service (same repo/image) with schedule
+   `30 18 * * *` (≈ 04:30 Australia/Melbourne) and **Custom Start Command**:
+   ```
+   sh -c "funnel-agent roster-sync && funnel-agent daily"
+   ```
+
+> If your Postgres requires SSL over the public network, append `?sslmode=require`
+> to `ANALYTICS_DB_DSN`. Using the internal `${{Postgres.DATABASE_URL}}` reference,
+> no SSL flag is needed.
 
 ---
 

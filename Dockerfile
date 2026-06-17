@@ -11,6 +11,12 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install .
 
-# Runtime config comes from env (Railway secrets); never bake secrets in.
-ENTRYPOINT ["funnel-agent"]
-CMD ["--help"]
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Railway injects $PORT; the entrypoint binds the dashboard to it.
+EXPOSE 8080
+
+# Runtime config comes from env (Railway variables); never bake secrets in.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["dashboard"]
