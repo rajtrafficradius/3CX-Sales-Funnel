@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     # --- Roster in-scope rule ---
     roster_inscope_groups: str = ""
     roster_inscope_extensions: str = ""
+    roster_exclude_extensions: str = ""  # always out-of-scope, overrides groups (e.g. admins)
 
     # --- Report email (optional) ---
     smtp_host: str = ""
@@ -117,6 +118,10 @@ class Settings(BaseSettings):
     @property
     def inscope_extensions(self) -> list[str]:
         return _csv(self.roster_inscope_extensions)
+
+    @property
+    def exclude_extensions(self) -> list[str]:
+        return _csv(self.roster_exclude_extensions)
 
     @property
     def cdr(self) -> CdrSchema:

@@ -47,6 +47,8 @@ def _role_name(user: dict) -> str:
 def decide_in_scope(user: dict, settings: Settings) -> bool:
     """Apply the configured in-scope rule to a single user."""
     ext = str(user.get("Number") or "").strip()
+    if ext in settings.exclude_extensions:
+        return False  # explicit exclude (e.g. admins) overrides group membership
     if settings.inscope_extensions:
         return ext in settings.inscope_extensions
     if settings.inscope_groups:

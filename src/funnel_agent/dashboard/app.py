@@ -62,6 +62,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     # ---- api ------------------------------------------------------------ #
+    @app.get("/api/classification-progress")
+    def classification_progress() -> JSONResponse:
+        rows = q(
+            "SELECT count(*) AS total, count(cl.call_id) AS done "
+            "FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id "
+            "WHERE c.in_scope AND c.has_transcript"
+        )
+        total = int(rows[0]["total"] or 0)
+        done = int(rows[0]["done"] or 0)
+        return JSONResponse({
+            "total": total, "done": done, "pending": total - done,
+            "pct": round(100 * done / total, 1) if total else 100.0,
+        })
+
     @app.get("/api/summary")
     def summary() -> JSONResponse:
         dates = [str(r["report_date"]) for r in q(
