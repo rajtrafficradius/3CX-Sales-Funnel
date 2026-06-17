@@ -217,29 +217,34 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
         conn.commit()
 
 
-def _pending_calls_for_day(pool: ConnectionPool, day: date) -> list[dict]:
+def _pending_calls_for_day(pool: ConnectionPool, day: date, limit: int | None = None) -> list[dict]:
     """In-scope, transcribed, not-yet-classified calls for one day, with transcript."""
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
+    sql = """
+        SELECT c.call_id, c.answered, c.is_voicemail,
+               t.text, t.sentiment, t.summary, t.diarized
+        FROM calls c
+        JOIN transcripts t ON t.call_id = c.call_id
+        LEFT JOIN classifications cl ON cl.call_id = c.call_id
+        WHERE c.started_at >= %(start)s AND c.started_at < %(end)s
+          AND c.has_transcript AND c.in_scope AND cl.call_id IS NULL
+        ORDER BY c.started_at
+    """
+    params: dict = {"start": start, "end": end}
+    if limit:
+        sql += " LIMIT %(limit)s"
+        params["limit"] = limit
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT c.call_id, c.answered, c.is_voicemail,
-                   t.text, t.sentiment, t.summary, t.diarized
-            FROM calls c
-            JOIN transcripts t ON t.call_id = c.call_id
-            LEFT JOIN classifications cl ON cl.call_id = c.call_id
-            WHERE c.started_at >= %(start)s AND c.started_at < %(end)s
-              AND c.has_transcript AND c.in_scope AND cl.call_id IS NULL
-            """,
-            {"start": start, "end": end},
-        )
+        cur.execute(sql, params)
         return cur.fetchall()
 
 
-def classify_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:
-    """Classify all pending transcribed in-scope calls for a day. Idempotent."""
-    pending = _pending_calls_for_day(pool, day)
+def classify_day(
+    pool: ConnectionPool, settings: Settings, day: date, limit: int | None = None
+) -> dict:
+    """Classify pending transcribed in-scope calls for a day. Idempotent."""
+    pending = _pending_calls_for_day(pool, day, limit)
     if not pending:
         return {"classified": 0, "skipped": 0, "needs_review": 0}
 

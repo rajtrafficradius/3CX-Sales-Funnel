@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     threecx_client_secret: str = ""
     threecx_verify_tls: bool = True
 
+    # --- Source of CDR + transcripts ---
+    # 'api' = read from the 3CX Configuration API (Recordings + call data) — no DB access needed.
+    # 'db'  = read from the 3CX PostgreSQL directly (original design; needs SOURCE_DB_DSN).
+    source_mode: str = "api"
+
     # --- Databases ---
     source_db_dsn: str = ""
     analytics_db_dsn: str = ""

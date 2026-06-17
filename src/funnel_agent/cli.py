@@ -59,6 +59,18 @@ def _analytics_pool(settings: Settings):
         pool.close()
 
 
+@contextmanager
+def _source(settings: Settings):
+    """Yield the ingestion source (3CX API or DB) per SOURCE_MODE."""
+    from .sources import make_source
+
+    src = make_source(settings)
+    try:
+        yield src
+    finally:
+        src.close()
+
+
 def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
@@ -88,23 +100,32 @@ def healthcheck() -> None:
         ok = False
         typer.echo(f"[FAIL] 3CX Configuration API: {exc}")
 
-    # 2. Source DB: a SELECT must work; a write must be rejected.
-    try:
-        with _source_pool(settings) as pool, pool.connection() as conn, conn.cursor() as cur:
-            cur.execute("SELECT 1 AS ok")
-            cur.fetchone()
-            typer.echo("[ok] Source 3CX DB: SELECT succeeded")
-            try:
-                cur.execute("CREATE TEMP TABLE _ro_probe (x int)")
-                conn.rollback()
-                ok = False
-                typer.echo("[FAIL] Source DB accepted a write — it is NOT read-only!")
-            except Exception:
-                conn.rollback()
-                typer.echo("[ok] Source 3CX DB rejects writes (read-only enforced)")
-    except Exception as exc:
-        ok = False
-        typer.echo(f"[FAIL] Source 3CX DB: {exc}")
+    # 2. Source of CDR + transcripts.
+    if settings.source_mode.lower() == "db":
+        try:
+            with _source_pool(settings) as pool, pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT 1 AS ok")
+                cur.fetchone()
+                typer.echo("[ok] Source 3CX DB: SELECT succeeded")
+                try:
+                    cur.execute("CREATE TEMP TABLE _ro_probe (x int)")
+                    conn.rollback()
+                    ok = False
+                    typer.echo("[FAIL] Source DB accepted a write — it is NOT read-only!")
+                except Exception:
+                    conn.rollback()
+                    typer.echo("[ok] Source 3CX DB rejects writes (read-only enforced)")
+        except Exception as exc:
+            ok = False
+            typer.echo(f"[FAIL] Source 3CX DB: {exc}")
+    else:
+        try:
+            with _source(settings) as src:
+                d = src.min_call_date(settings)  # exercises the Recordings API read
+            typer.echo(f"[ok] Source = 3CX API (Recordings); earliest outbound recording: {d}")
+        except Exception as exc:
+            ok = False
+            typer.echo(f"[FAIL] Source 3CX API (Recordings): {exc}")
 
     # 3. Analytics DB.
     try:
@@ -181,22 +202,24 @@ def ingest(
 ) -> None:
     """Ingest CDR + transcripts for a day (or an inclusive range)."""
     settings = _settings()
-    from .ingest import ingest_day
 
     days = _resolve_days(date_, start, end)
-    with _source_pool(settings) as src, _analytics_pool(settings) as ana:
+    with _source(settings) as src, _analytics_pool(settings) as ana:
         for d in days:
-            typer.echo(f"ingest {d}: {ingest_day(src, ana, settings, d)}")
+            typer.echo(f"ingest {d}: {src.ingest_day(ana, settings, d)}")
 
 
 @app.command()
-def classify(date_: str = typer.Option(..., "--date", help="YYYY-MM-DD")) -> None:
+def classify(
+    date_: str = typer.Option(..., "--date", help="YYYY-MM-DD"),
+    limit: int = typer.Option(None, help="cap number of calls (cost/time control)"),
+) -> None:
     """Classify transcribed in-scope calls for a day."""
     settings = _settings()
     from .classify.classifier import classify_day
 
     with _analytics_pool(settings) as ana:
-        typer.echo(f"classify {date_}: {classify_day(ana, settings, _parse_date(date_))}")
+        typer.echo(f"classify {date_}: {classify_day(ana, settings, _parse_date(date_), limit)}")
 
 
 @app.command()
@@ -228,17 +251,16 @@ def backfill(
 ) -> None:
     """One-time backfill over all history (classification-only). Resumable."""
     settings = _settings()
-    from .threecx.cdr import min_call_date
     from .pipeline import classify_window, get_state, set_state
 
-    with _source_pool(settings) as src, _analytics_pool(settings) as ana:
+    with _source(settings) as src, _analytics_pool(settings) as ana:
         # Resolve the window start.
         if start:
             start_d = _parse_date(start)
         elif settings.backfill_start:
             start_d = _parse_date(settings.backfill_start)
         else:
-            start_d = min_call_date(src, settings.cdr)
+            start_d = src.min_call_date(settings)
             if start_d is None:
                 typer.echo("backfill: no calls found in CDR — nothing to do")
                 return
@@ -273,7 +295,7 @@ def daily(
     end_d = _yesterday(settings)
     start_d = end_d - timedelta(days=settings.daily_lookback_days)
 
-    with _source_pool(settings) as src, _analytics_pool(settings) as ana:
+    with _source(settings) as src, _analytics_pool(settings) as ana:
         totals = classify_window(src, ana, settings, start_d, end_d, order="asc")
         typer.echo(f"daily done: {totals}")
         _emit_report(ana, settings, end_d, report_out, only_bde=None, only_all=False, email=email)

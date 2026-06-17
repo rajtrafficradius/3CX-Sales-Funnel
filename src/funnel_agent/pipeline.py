@@ -16,8 +16,8 @@ from psycopg_pool import ConnectionPool
 from .aggregate import aggregate_day
 from .classify.classifier import classify_day
 from .config import Settings
-from .ingest import ingest_day
 from .logging import get_logger
+from .sources import Source
 
 log = get_logger(__name__)
 
@@ -72,7 +72,7 @@ def _days(start: date, end: date, order: str) -> list[date]:
 
 
 def classify_window(
-    source_pool: ConnectionPool,
+    source: Source,
     analytics_pool: ConnectionPool,
     settings: Settings,
     start: date,
@@ -85,7 +85,7 @@ def classify_window(
     log.info("window_start", start=str(start), end=str(end), order=order, days=len(days))
 
     for day in days:
-        ing = ingest_day(source_pool, analytics_pool, settings, day)
+        ing = source.ingest_day(analytics_pool, settings, day)
         cls = classify_day(analytics_pool, settings, day)
         aggregate_day(analytics_pool, settings, day)
         set_state(analytics_pool, day)

@@ -13,7 +13,9 @@ from psycopg_pool import ConnectionPool
 
 from .config import Settings
 from .logging import get_logger
+from .threecx.api import ThreeCXClient
 from .threecx.cdr import earliest_outbound_times, fetch_calls_for_day
+from .threecx.recordings import fetch_outbound_calls_for_day
 from .threecx.transcripts import fetch_transcripts_for_calls
 
 log = get_logger(__name__)
@@ -162,4 +164,111 @@ def ingest_day(
         transcribed=n_transcribed,
         in_scope=n_in_scope,
     )
+    return {"calls": len(rows), "transcribed": n_transcribed, "in_scope": n_in_scope}
+
+
+def recompute_fresh_followup(analytics_pool: ConnectionPool, dest_numbers: list[str]) -> None:
+    """Deterministically label Fresh/Followup for the given numbers.
+
+    The earliest call to a number (across everything ingested) is Fresh; the rest
+    are Followup. Recomputed each run -> order-independent and idempotent.
+    """
+    nums = [n for n in dest_numbers if n]
+    if not nums:
+        return
+    with analytics_pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE calls c SET fresh_or_followup = sub.ff FROM (
+                SELECT call_id,
+                       CASE WHEN row_number() OVER (
+                           PARTITION BY dest_number ORDER BY started_at, call_id) = 1
+                            THEN 'fresh' ELSE 'followup' END AS ff
+                FROM calls WHERE dest_number = ANY(%s)
+            ) sub
+            WHERE c.call_id = sub.call_id AND c.fresh_or_followup IS DISTINCT FROM sub.ff
+            """,
+            (nums,),
+        )
+        conn.commit()
+
+
+def ingest_day_api(
+    client: ThreeCXClient,
+    analytics_pool: ConnectionPool,
+    settings: Settings,
+    day: date,
+) -> dict:
+    """Ingest one day of outbound calls + transcripts from the 3CX API. Idempotent."""
+    roster = _load_roster(analytics_pool)
+    rows = fetch_outbound_calls_for_day(client, day)
+    if not rows:
+        log.info("ingest_api_empty", day=str(day))
+        return {"calls": 0, "transcribed": 0, "in_scope": 0}
+
+    n_transcribed = n_in_scope = 0
+    numbers: set[str] = set()
+
+    with analytics_pool.connection() as conn:
+        with conn.cursor() as cur:
+            for r in rows:
+                ext = r["bde_extension"]
+                dest = r["dest_number"]
+                if dest:
+                    numbers.add(dest)
+                agent = roster.get(ext or "")
+                in_scope = bool(agent and agent["in_scope"] and agent["active"])
+                bde_name = agent["bde_name"] if agent else None
+                if in_scope:
+                    n_in_scope += 1
+                has_t = r["has_transcript"]
+                if has_t:
+                    n_transcribed += 1
+
+                cur.execute(
+                    """
+                    INSERT INTO calls (
+                        call_id, bde_extension, bde_name, direction, dest_number,
+                        started_at, ring_seconds, talk_seconds, answered, is_voicemail,
+                        call_type, recording_present, has_transcript, fresh_or_followup,
+                        in_scope, lead_id)
+                    VALUES (
+                        %(call_id)s, %(ext)s, %(bde_name)s, %(direction)s, %(dest)s,
+                        %(started)s, %(ring)s, %(talk)s, %(answered)s, %(voicemail)s,
+                        %(call_type)s, true, %(has_t)s, 'fresh', %(in_scope)s, NULL)
+                    ON CONFLICT (call_id) DO UPDATE SET
+                        bde_extension = EXCLUDED.bde_extension, bde_name = EXCLUDED.bde_name,
+                        direction = EXCLUDED.direction, dest_number = EXCLUDED.dest_number,
+                        started_at = EXCLUDED.started_at, ring_seconds = EXCLUDED.ring_seconds,
+                        talk_seconds = EXCLUDED.talk_seconds, answered = EXCLUDED.answered,
+                        is_voicemail = EXCLUDED.is_voicemail, call_type = EXCLUDED.call_type,
+                        recording_present = EXCLUDED.recording_present,
+                        has_transcript = EXCLUDED.has_transcript, in_scope = EXCLUDED.in_scope
+                    """,
+                    {
+                        "call_id": r["call_id"], "ext": ext, "bde_name": bde_name,
+                        "direction": r["direction"], "dest": dest, "started": r["started_at"],
+                        "ring": r["ring_seconds"], "talk": r["talk_seconds"],
+                        "answered": r["answered"], "voicemail": r["is_voicemail"],
+                        "call_type": r["disposition"], "has_t": has_t, "in_scope": in_scope,
+                    },
+                )
+                if has_t and r["transcript"]:
+                    t = r["transcript"]
+                    cur.execute(
+                        """
+                        INSERT INTO transcripts (call_id, source, diarized, text, sentiment, summary)
+                        VALUES (%(cid)s, '3cx', %(d)s, %(text)s, %(sent)s, %(sum)s)
+                        ON CONFLICT (call_id) DO UPDATE SET
+                            diarized = EXCLUDED.diarized, text = EXCLUDED.text,
+                            sentiment = EXCLUDED.sentiment, summary = EXCLUDED.summary
+                        """,
+                        {"cid": r["call_id"], "d": t["diarized"], "text": t["text"],
+                         "sent": t["sentiment"], "sum": t["summary"]},
+                    )
+        conn.commit()
+
+    recompute_fresh_followup(analytics_pool, list(numbers))
+    log.info("ingest_api_done", day=str(day), calls=len(rows),
+             transcribed=n_transcribed, in_scope=n_in_scope)
     return {"calls": len(rows), "transcribed": n_transcribed, "in_scope": n_in_scope}

@@ -104,6 +104,24 @@ class ThreeCXClient:
         resp = self._get("/xapi/v1/Defs")
         return resp.headers.get("X-3CX-Version", "unknown")
 
+    def iter_query(self, path: str, params: dict, page_size: int = 100) -> Iterator[dict]:
+        """Page through any OData collection (`$top`/`$skip`), robust to server caps.
+
+        Advances by the actual returned count and keeps going while the server
+        signals more (`@odata.nextLink`) or returns a full page.
+        """
+        skip = 0
+        while True:
+            body = self._get(path, params={**params, "$top": page_size, "$skip": skip}).json()
+            page = body.get("value", [])
+            if not page:
+                break
+            yield from page
+            if body.get("@odata.nextLink") or len(page) == page_size:
+                skip += len(page)
+                continue
+            break
+
     def iter_users(self) -> Iterator[dict]:
         """Yield every user from `/xapi/v1/Users`, paging through with $top/$skip."""
         skip = 0
