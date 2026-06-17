@@ -28,6 +28,15 @@ the call transcript; turns may be tagged [BDE] (the agent) and [Prospect]. If th
 tagged, infer the speakers from content (the BDE introduces themselves / pitches; the other
 party is the called number).
 
+Also produce TWO clearly-separated summaries:
+- prospect_summary: everything the PROSPECT (the person called) revealed — their business and
+  role, current situation, needs / pain points, objections or concerns, any budget / authority /
+  timeline signals, and exactly what (if anything) they committed to. Write it for a sales
+  manager asking "what did we learn about this prospect?".
+- bde_summary: what the BDE (our agent) actually did — how they opened / identified themselves,
+  what they pitched or offered, and the specific next step they proposed or secured.
+Keep each to a few tight sentences and never invent details that are not in the transcript.
+
 WORK THOROUGHLY. First fill `analysis`: read the WHOLE transcript and reason step by step —
 who actually answered (decision-maker vs gatekeeper/receptionist vs voicemail/IVR vs wrong
 number), what the BDE actually said and how far through the pitch they got, how the prospect
@@ -51,9 +60,13 @@ Stage definitions (in funnel order):
 - qualified: TRUE only if the conversation evidences the qualification bar:
   {QUALIFICATION_BAR}.
   If a criterion is neither confirmed nor contradicted, set value=false and lower confidence.
-- meeting_booked (the funnel's "Lead"): TRUE only if a SPECIFIC appointment / Strategy Session
-  was explicitly agreed on this call (a time/commitment, not a vague "maybe later"). "Booked",
-  not "held".
+- meeting_booked (the funnel's "Lead"): TRUE only if the prospect explicitly agreed to and
+  SCHEDULED the marketing AUDIT / STRATEGY SESSION itself — a real appointment for that session
+  (a specific day/time, the kind that warrants a calendar invite). It must be the audit /
+  strategy session, NOT just another phone call. A mere agreement to a follow-up or callback
+  ("call me back Monday", "ring me next week", "send me an email", "let's talk when I'm back")
+  is NOT a meeting booked — set FALSE even if the prospect was friendly and agreed to talk again.
+  "Booked", not "held".
 
 Also set call_outcome (voicemail | gatekeeper | wrong_number | conversation | other) and a
 one-line overall_notes.

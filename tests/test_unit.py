@@ -25,6 +25,8 @@ def _verdict(rpc=True, pitch=True, lead=True, qual=False, confs=(0.9, 0.9, 0.9, 
     return CallClassification(
         analysis="x",
         who_answered="x",
+        prospect_summary="x",
+        bde_summary="x",
         rpc_connect=StageVerdict(value=rpc, confidence=rc, evidence="x"),
         full_pitch=StageVerdict(value=pitch, confidence=pc, evidence="x"),
         is_lead=StageVerdict(value=lead, confidence=lc, evidence="x"),

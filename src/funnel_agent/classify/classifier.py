@@ -115,6 +115,8 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
     return CallClassification(
         analysis=note,
         who_answered="n/a",
+        prospect_summary="",
+        bde_summary="",
         rpc_connect=sv(),
         full_pitch=sv(),
         is_lead=sv(),

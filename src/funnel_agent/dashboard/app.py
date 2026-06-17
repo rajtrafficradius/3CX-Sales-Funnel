@@ -198,6 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _STAGE_COND = {
         "calls_made": "TRUE",
         "connected": "c.answered AND c.talk_seconds >= %(thr)s",
+        "unconnected": "NOT (c.answered AND c.talk_seconds >= %(thr)s)",
         "rpc_connect": "cl.rpc_connect",
         "full_pitch": "cl.full_pitch",
         "meetings_booked": "cl.meeting_booked",
@@ -207,7 +208,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/stage-calls")
     def stage_calls(date: str, stage: str, bde: str = "ALL",
-                    track: str = "combined", limit: int = 300) -> JSONResponse:
+                    track: str = "combined", limit: int = 500) -> JSONResponse:
         """List the individual calls behind a funnel-stage count (for validation)."""
         cond = _STAGE_COND.get(stage, "TRUE")
         where = ["c.in_scope", "c.started_at >= %(d)s::date",
@@ -219,17 +220,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if track in ("fresh", "followup"):
             where.append("c.fresh_or_followup = %(track)s")
             params["track"] = track
+        whereclause = " AND ".join(where)
+        # True total (uncapped) so the drawer header shows the real count.
+        total = q("SELECT count(*) AS n FROM calls c "
+                  "LEFT JOIN classifications cl ON cl.call_id = c.call_id "
+                  "WHERE " + whereclause, params)[0]["n"]
         rows = q(
             "SELECT c.call_id, c.bde_name, c.dest_number, c.started_at, c.talk_seconds, "
-            "c.has_transcript, cl.call_outcome, cl.rpc_connect, cl.full_pitch, "
+            "c.answered, c.has_transcript, cl.call_outcome, cl.rpc_connect, cl.full_pitch, "
             "cl.meeting_booked, cl.evidence->>'who_answered' AS who_answered "
             "FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id "
-            "WHERE " + " AND ".join(where) + " ORDER BY c.started_at DESC LIMIT %(lim)s",
+            "WHERE " + whereclause + " ORDER BY c.started_at DESC LIMIT %(lim)s",
             params,
         )
         for r in rows:
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
-        return JSONResponse({"stage": stage, "count": len(rows), "rows": rows})
+        return JSONResponse({"stage": stage, "count": int(total), "shown": len(rows), "rows": rows})
 
     @app.get("/call/{call_id}", response_class=HTMLResponse)
     def call_page(call_id: str) -> str:

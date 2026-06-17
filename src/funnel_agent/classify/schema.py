@@ -20,6 +20,8 @@ class CallClassification(BaseModel):
     # accuracy on the judgement stages.
     analysis: str
     who_answered: str  # e.g. "owner/decision-maker", "gatekeeper/receptionist", "voicemail", "wrong number"
+    prospect_summary: str  # what the PROSPECT said: their business, needs, objections, commitments
+    bde_summary: str       # what the BDE (our agent) said/did: intro, pitch, offer, next step secured
     rpc_connect: StageVerdict
     full_pitch: StageVerdict
     is_lead: StageVerdict

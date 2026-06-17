@@ -81,12 +81,15 @@ async function load(){
     ${stageRow('Lead — Meeting Booked', ev.meeting_booked)}
   </div>`;
 
-  const summary = t.summary ? `<div class="card full"><h2>AI summary</h2><div>${esc(t.summary)}</div></div>`:'';
-  const analysis = ev.analysis ? `<div class="card full"><h2>AI analysis</h2><div class="analysis">${esc(ev.analysis)}</div></div>`:'';
+  // The valuable two-way breakdown, side by side.
+  const prospect = `<div class="card"><h2>🗣️ What the prospect said</h2><div class="analysis">${esc(ev.prospect_summary)||'<span class="muted">—</span>'}</div></div>`;
+  const bde = `<div class="card"><h2>🎧 What our BDE said / did</h2><div class="analysis">${esc(ev.bde_summary)||'<span class="muted">—</span>'}</div></div>`;
+  const reasoning = ev.analysis ? `<div class="card full"><h2>AI reasoning (why these verdicts)</h2><div class="analysis">${esc(ev.analysis)}</div></div>`:'';
+  const summary = t.summary ? `<div class="card full"><h2>3CX call summary</h2><div>${esc(t.summary)}</div></div>`:'';
   const notes = ev.overall_notes ? `<div class="card full"><h2>Notes</h2><div>${esc(ev.overall_notes)}</div></div>`:'';
   const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${esc(t.text)||'(no transcript)'}</div></div>`;
 
-  document.getElementById('main').innerHTML = meta+verdicts+summary+analysis+notes+transcript;
+  document.getElementById('main').innerHTML = meta+verdicts+prospect+bde+reasoning+summary+notes+transcript;
 }
 load();
 </script>
