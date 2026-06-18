@@ -193,11 +193,16 @@ function renderFunnelTable(f){
 
 async function openStageList(stage,label,bdeOverride){
   const date=$('#date').value, bde=bdeOverride||$('#bde').value;
-  const d=await jget(`/api/stage-calls?date=${date}&bde=${encodeURIComponent(bde)}&track=combined&stage=${stage}`);
-  const more = d.shown < d.count ? ` <span class="muted">(showing first ${d.shown})</span>` : '';
+  const base=`/api/stage-calls?date=${date}&bde=${encodeURIComponent(bde)}&track=combined`;
+  const d=await jget(`${base}&stage=${stage}`);
   let toggle='';
-  if(stage==='connected') toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('unconnected','Unconnected',${jsq(bde)})">→ view unconnected calls</span></div>`;
-  else if(stage==='unconnected') toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('connected','Connected',${jsq(bde)})">→ back to connected calls</span></div>`;
+  if(stage==='connected'||stage==='unconnected'){
+    const other = stage==='connected' ? 'unconnected' : 'connected';
+    let oc='';
+    try{ const od=await jget(`${base}&stage=${other}&limit=1`); oc=` (${od.count})`; }catch(e){}
+    toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('${other}','${other.charAt(0).toUpperCase()+other.slice(1)}',${jsq(bde)})">→ view ${other} calls${oc}</span></div>`;
+  }
+  const more = d.shown < d.count ? ` <span class="muted">(showing ${d.shown} of ${d.count})</span>` : '';
   $('#dTitle').innerHTML=`${label}${bde&&bde!=='ALL'?' · '+bde:''} — ${d.count} call(s)${more}`;
   $('#dBody').innerHTML = toggle + (d.rows.length ? d.rows.map(r=>`
     <a class="stageitem" href="/call/${encodeURIComponent(r.call_id)}" target="_blank">

@@ -211,7 +211,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/stage-calls")
     def stage_calls(date: str, stage: str, bde: str = "ALL",
-                    track: str = "combined", limit: int = 500) -> JSONResponse:
+                    track: str = "combined", limit: int = 100000) -> JSONResponse:
         """List the individual calls behind a funnel-stage count (for validation)."""
         cond = _STAGE_COND.get(stage, "TRUE")
         where = ["c.in_scope", "c.started_at >= %(d)s::date",
