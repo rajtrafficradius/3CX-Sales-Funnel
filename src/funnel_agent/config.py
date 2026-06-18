@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     transcribe_missing: bool = True
     transcribe_model: str = "gpt-4o-mini-transcribe"
     transcribe_workers: int = 6
+    # Only STT recordings older than this — gives 3CX time to transcribe recent
+    # calls for free; we only pay to fill genuine gaps (and on intraday refreshes).
+    transcribe_min_age_minutes: int = 15
 
     # --- Behaviour ---
     backfill_start: str = ""  # 'YYYY-MM-DD' or blank => auto-detect

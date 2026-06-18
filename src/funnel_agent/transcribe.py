@@ -37,16 +37,22 @@ def transcribe_wav(oai, settings: Settings, wav: bytes) -> str:
     return (resp.text or "").strip()
 
 
-def _pending(pool: ConnectionPool, day: date, limit: int | None) -> list[dict]:
-    """In-scope calls that have a recording but no transcript, for one day."""
+def _pending(pool: ConnectionPool, day: date, limit: int | None, min_age_minutes: int) -> list[dict]:
+    """In-scope calls that have a recording but no transcript, for one day.
+
+    Skips calls younger than `min_age_minutes` so 3CX gets a chance to transcribe
+    recent calls for free (we only pay to fill genuine gaps / on intraday refresh).
+    """
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
     sql = (
         "SELECT call_id, recording_id FROM calls "
         "WHERE started_at >= %(s)s AND started_at < %(e)s AND in_scope "
-        "AND recording_id IS NOT NULL AND NOT has_transcript ORDER BY started_at"
+        "AND recording_id IS NOT NULL AND NOT has_transcript "
+        "AND started_at < now() - make_interval(mins => %(age)s) "
+        "ORDER BY started_at"
     )
-    params: dict = {"s": start, "e": end}
+    params: dict = {"s": start, "e": end, "age": min_age_minutes}
     if limit:
         sql += " LIMIT %(lim)s"
         params["lim"] = limit
@@ -64,7 +70,7 @@ def transcribe_missing_for_day(
     workers: int | None = None,
 ) -> dict:
     """Download + transcribe recordings missing a transcript for a day. Idempotent."""
-    pending = _pending(pool, day, limit)
+    pending = _pending(pool, day, limit, settings.transcribe_min_age_minutes)
     if not pending:
         return {"transcribed": 0, "skipped": 0, "errors": 0}
 

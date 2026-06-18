@@ -333,6 +333,22 @@ def daily(
 # Phase I — report
 # --------------------------------------------------------------------------- #
 @app.command()
+def refresh(
+    days: int = typer.Option(2, help="days back through today to refresh"),
+) -> None:
+    """Intraday refresh: ingest -> transcribe -> classify -> aggregate from
+    (today - days + 1) through TODAY. Run on a 5-minute schedule for a live dashboard."""
+    settings = _settings()
+    from .pipeline import classify_window
+
+    today = datetime.now(ZoneInfo(settings.tz)).date()
+    start = today - timedelta(days=max(1, days) - 1)
+    with _source(settings) as src, _analytics_pool(settings) as ana:
+        totals = classify_window(src, ana, settings, start, today, order="asc")
+    typer.echo(f"refresh {start}..{today}: {totals}")
+
+
+@app.command()
 def report(
     date_: str = typer.Option(..., "--date", help="YYYY-MM-DD"),
     bde: str = typer.Option(None, help="restrict to one BDE (extension or name)"),

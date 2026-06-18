@@ -78,6 +78,7 @@
   <label class="muted" for="date">Date</label>
   <select id="date"></select>
   <span class="badge clickable" id="reviewBadge" onclick="scrollToReview()">Review queue: <b id="reviewN">0</b></span>
+  <span class="muted" id="updated" style="font-size:11px;min-width:120px"></span>
 </header>
 
 <div id="clsBar" class="clsbar">
@@ -285,6 +286,28 @@ async function pollProgress(){
   }
 }
 setInterval(pollProgress, 4000);
+
+// Live auto-refresh: re-fetch data every 60s so the page stays current without a
+// manual reload. Preserves the user's selected date/BDE; picks up new dates.
+async function autoRefresh(){
+  try{
+    const s=await jget('/api/summary');
+    $('#reviewN').textContent = s.review_count;
+    const curD=$('#date').value, optD=[...$('#date').options].map(o=>o.value).join(',');
+    if(s.dates.join(',')!==optD){
+      $('#date').innerHTML = s.dates.map(d=>`<option>${d}</option>`).join('');
+      $('#date').value = s.dates.includes(curD) ? curD : (s.dates[0]||'');
+    }
+    const curB=$('#bde').value, optB=[...$('#bde').options].map(o=>o.value).join(',');
+    if(s.bdes.join(',')!==optB){
+      $('#bde').innerHTML = s.bdes.map(b=>`<option>${b}</option>`).join('');
+      $('#bde').value = s.bdes.includes(curB) ? curB : 'ALL';
+    }
+    await refresh();
+    $('#updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+  }catch(e){}
+}
+setInterval(autoRefresh, 60000);
 
 boot().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">Error: '+e.message+'</div>';});
 pollProgress();
