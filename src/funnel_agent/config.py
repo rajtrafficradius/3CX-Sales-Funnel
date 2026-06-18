@@ -121,6 +121,25 @@ class Settings(BaseSettings):
             raise ValueError("LLM_PROVIDER must be 'openai' or 'anthropic'")
         return v
 
+    @field_validator("threecx_api_base")
+    @classmethod
+    def _normalize_threecx_base(cls, v: str) -> str:
+        """Be forgiving about a mistyped base URL — a common deploy footgun.
+
+        Repairs a missing or garbled scheme (e.g. a dropped leading character
+        like 'ttps://host:5001', or no scheme at all like 'host:5001') to
+        'https://...'. The 3CX Configuration API is HTTPS-only, so coercing to
+        https is always correct here, and it prevents an obscure
+        `UnsupportedProtocol` failure deep in the HTTP client at runtime.
+        """
+        import re
+
+        v = (v or "").strip().rstrip("/")
+        if not v or v.startswith(("http://", "https://")):
+            return v
+        v = re.sub(r"^[a-zA-Z]+://", "", v)  # strip any malformed scheme prefix
+        return "https://" + v
+
     @property
     def inscope_groups(self) -> list[str]:
         return _csv(self.roster_inscope_groups)
