@@ -45,10 +45,13 @@ WITH base AS (
                    AND cl.rpc_connect AND cl.is_lead THEN 1 ELSE 0 END) AS leads,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.rpc_connect AND cl.is_lead AND cl.qualified THEN 1 ELSE 0 END) AS qualified,
-        -- Booked requires reaching the decision-maker (RPC); a real booking can come
-        -- from a warm callback without a fresh full pitch, so it nests under RPC.
+        -- A counted booking requires reaching the decision-maker (RPC) AND being a
+        -- GENUINELY NEW, QUALIFIED booking: it must be qualified (no "baby"/non-viable
+        -- prospects) and NOT a meeting_confirmation_only call (which just re-confirms a
+        -- booking made on an earlier call — that would double-count the same meeting).
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   AND cl.rpc_connect AND cl.meeting_booked THEN 1 ELSE 0 END) AS meetings_booked,
+                   AND cl.rpc_connect AND cl.meeting_booked AND cl.qualified
+                   AND NOT COALESCE(cl.meeting_confirmation, false) THEN 1 ELSE 0 END) AS meetings_booked,
         -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.
         (CASE WHEN EXISTS (SELECT 1 FROM meetings m
                            WHERE m.call_id = c.call_id AND m.meeting_done)

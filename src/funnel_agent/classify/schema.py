@@ -27,5 +27,10 @@ class CallClassification(BaseModel):
     is_lead: StageVerdict
     qualified: StageVerdict
     meeting_booked: StageVerdict
+    # TRUE only when this call merely CONFIRMS / reschedules a meeting that was
+    # already booked on an EARLIER call (no NEW booking happened here). A genuine
+    # new booking made during this call is FALSE. Used to keep confirmation calls
+    # out of the "Meeting Booked" funnel count (they would double-count a booking).
+    meeting_confirmation_only: StageVerdict
     call_outcome: Literal["voicemail", "gatekeeper", "wrong_number", "conversation", "other"]
     overall_notes: str

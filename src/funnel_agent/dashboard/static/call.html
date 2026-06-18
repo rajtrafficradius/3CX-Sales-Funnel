@@ -11,6 +11,8 @@
   header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0}
   header a{color:var(--accent);text-decoration:none;font-size:13px}
   header h1{font-size:16px;margin:0;font-weight:650}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .brand img{height:26px;display:block}
   main{max-width:1100px;margin:0 auto;padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:900px){main{grid-template-columns:1fr}}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
@@ -33,6 +35,7 @@
 </head>
 <body>
 <header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
   <a href="/">&larr; Dashboard</a>
   <h1 id="title">Call detail</h1>
   <span class="muted" id="subtitle"></span>
@@ -43,6 +46,18 @@
 const pill=(v)=>`<span class="pill ${v?'yes':'no'}">${v?'YES':'NO'}</span>`;
 const esc=s=>(s==null?'':String(s)).replace(/[&<]/g,c=>({'&':'&amp;','<':'&lt;'}[c]));
 const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
+
+// Final funnel verdict for a booking: counted vs confirmation vs baby-prospect.
+function bookingBanner(ev){
+  if(!(ev.meeting_booked && ev.meeting_booked.value)) return '';
+  const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
+  const qual = ev.qualified && ev.qualified.value;
+  let css, txt;
+  if(conf){ css='background:rgba(251,191,36,.16);color:#fbbf24'; txt='📞 Meeting Confirmation Call — confirms a meeting booked on an earlier call (NOT counted as a new booking)'; }
+  else if(!qual){ css='background:rgba(239,68,68,.16);color:#f87171'; txt='🚫 Booking cancelled — baby prospect / not qualified (NOT counted)'; }
+  else { css='background:rgba(34,197,94,.16);color:#4ade80'; txt='✅ Meeting Booked — genuine new qualified booking (counted)'; }
+  return `<div style="padding:10px 12px;border-radius:8px;font-weight:700;margin:0 0 12px;line-height:1.4;${css}">${txt}</div>`;
+}
 
 function stageRow(name, v){
   if(!v) return '';
@@ -74,11 +89,13 @@ async function load(){
   </div></div>`;
 
   const verdicts=`<div class="card"><h2>Funnel verdicts (AI)</h2>
-    ${stageRow('RPC Connect (decision-maker)', ev.rpc_connect)}
+    ${bookingBanner(ev)}
+    ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
     ${stageRow('Full Pitch', ev.full_pitch)}
     ${stageRow('Lead (interest)', ev.is_lead)}
     ${stageRow('Qualified', ev.qualified)}
-    ${stageRow('Lead — Meeting Booked', ev.meeting_booked)}
+    ${stageRow('Meeting Booked', ev.meeting_booked)}
+    ${ev.meeting_confirmation_only?stageRow('Meeting confirmation only (booked earlier)', ev.meeting_confirmation_only):''}
   </div>`;
 
   // The valuable two-way breakdown, side by side.

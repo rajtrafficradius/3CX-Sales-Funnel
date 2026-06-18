@@ -217,6 +217,7 @@ def classify(
     end: str = typer.Option(None, help="range end YYYY-MM-DD"),
     limit: int = typer.Option(None, help="cap calls per day (cost/time control)"),
     workers: int = typer.Option(None, help="parallel LLM workers (default from config)"),
+    force: bool = typer.Option(False, "--force", help="re-classify already-classified calls (after a rubric change)"),
 ) -> None:
     """Classify transcribed in-scope calls for a day or an inclusive range."""
     settings = _settings()
@@ -225,7 +226,7 @@ def classify(
     days = _resolve_days(date_, start, end)
     with _analytics_pool(settings) as ana:
         for d in days:
-            typer.echo(f"classify {d}: {classify_day(ana, settings, d, limit, workers)}")
+            typer.echo(f"classify {d}: {classify_day(ana, settings, d, limit, workers, force)}")
 
 
 @app.command(name="transcribe-missing")

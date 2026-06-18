@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS classifications (
   is_lead            boolean, lead_confidence  numeric,
   qualified          boolean, qual_confidence  numeric,
   meeting_booked     boolean,
+  meeting_confirmation boolean,  -- TRUE = only confirmed a meeting booked on an earlier call
   call_outcome       text,
   evidence           jsonb,
   model              text,
@@ -60,6 +61,8 @@ CREATE TABLE IF NOT EXISTS classifications (
   needs_human_review boolean NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_class_review ON classifications (needs_human_review);
+-- Forward-compatible: add the confirmation flag on existing DBs.
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS meeting_confirmation boolean;
 
 CREATE TABLE IF NOT EXISTS meetings (
   lead_id      text,

@@ -17,8 +17,13 @@ FULL_PITCH_DEFINITION = (
 
 # ---- PLACEHOLDER 2: the "Qualified" bar ------------------------------------
 QUALIFICATION_BAR = (
-    "business at/above the revenue floor, has a website, speaking to someone "
-    "with decision-making authority, and a plausible fit for SEO/GEO/paid"
+    "a real, viable business at/above the revenue floor, has a website, speaking to "
+    "someone with decision-making authority, AND able & willing to invest in marketing. "
+    'A "baby"/non-viable prospect is NOT qualified — e.g. a hobby or side business, a '
+    "very small marketing budget (a few hundred / ~$1,000 a year), someone who clearly "
+    "cannot afford the service or is unwilling to spend, or who is openly sceptical there "
+    "is enough market to justify spending. Disqualify these even if they are friendly or "
+    "agree to a meeting"
 )
 
 SYSTEM_PROMPT = f"""\
@@ -70,20 +75,26 @@ Stage definitions (in funnel order):
 - qualified: TRUE only if the conversation evidences the qualification bar:
   {QUALIFICATION_BAR}.
   If a criterion is neither confirmed nor contradicted, set value=false and lower confidence.
-- meeting_booked (the funnel's "Lead"): TRUE only if the prospect explicitly agreed to and
-  SCHEDULED the marketing AUDIT / STRATEGY SESSION itself — a real appointment for that session
-  (a specific day/time, the kind that warrants a calendar invite). It must be the audit /
-  strategy session, NOT just another phone call. A mere agreement to a follow-up or callback
-  ("call me back Monday", "ring me next week", "send me an email", "let's talk when I'm back")
-  is NOT a meeting booked — set FALSE even if the prospect was friendly and agreed to talk again.
-  "Booked", not "held".
+- meeting_booked (the funnel's "Lead"): TRUE only if there is a SCHEDULED marketing AUDIT /
+  STRATEGY SESSION for this prospect — a real appointment for that session (a specific day/time,
+  the kind that warrants a calendar invite). It must be the audit / strategy session, NOT just
+  another phone call. A mere agreement to a follow-up or callback ("call me back Monday", "ring
+  me next week", "send me an email", "let's talk when I'm back") is NOT a meeting booked — set
+  FALSE even if the prospect was friendly and agreed to talk again. "Booked", not "held".
+- meeting_confirmation_only: set TRUE only when meeting_booked is TRUE AND this call did NOT
+  create that booking — i.e. the appointment had ALREADY been agreed on an EARLIER call and the
+  purpose of THIS call was simply to confirm / re-confirm / reschedule it. Tell-tale signs: the
+  BDE says they "spoke yesterday / last week", references an appointment "we made / scheduled",
+  asks only to "confirm the time", and does NOT re-deliver the pitch. If the booking was created
+  DURING this call (the prospect agreed to schedule the session here for the first time), set
+  FALSE. When in doubt and a full pitch happened on THIS call, set FALSE.
 
 Also set call_outcome (voicemail | gatekeeper | wrong_number | conversation | other) and a
 one-line overall_notes.
 
 Funnel monotonicity (respect it): no Full Pitch without rpc_connect; no meeting_booked without a
-real conversation. When the transcript is too short or garbled to judge, prefer false + low
-confidence.
+real conversation; no meeting_confirmation_only without meeting_booked. When the transcript is
+too short or garbled to judge, prefer false + low confidence.
 """
 
 

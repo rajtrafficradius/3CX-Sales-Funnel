@@ -112,6 +112,8 @@ def monotonicity_violation(v: CallClassification) -> bool:
         return True
     if v.qualified.value and not v.is_lead.value:
         return True
+    if v.meeting_confirmation_only.value and not v.meeting_booked.value:
+        return True
     return False
 
 
@@ -131,6 +133,7 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
         is_lead=sv(),
         qualified=sv(),
         meeting_booked=sv(),
+        meeting_confirmation_only=sv(),
         call_outcome=outcome,  # type: ignore[arg-type]
         overall_notes=note,
     )
@@ -193,6 +196,7 @@ class Classifier:
             "qualified": v.qualified.value,
             "qual_confidence": v.qualified.confidence,
             "meeting_booked": v.meeting_booked.value,
+            "meeting_confirmation": v.meeting_confirmation_only.value,
             "call_outcome": v.call_outcome,
             "evidence": v.model_dump(),
             "model": model,
@@ -211,17 +215,18 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
             INSERT INTO classifications (
                 call_id, rpc_connect, rpc_confidence, full_pitch, pitch_confidence,
                 is_lead, lead_confidence, qualified, qual_confidence, meeting_booked,
-                call_outcome, evidence, model, classified_at, needs_human_review)
+                meeting_confirmation, call_outcome, evidence, model, classified_at, needs_human_review)
             VALUES (
                 %(call_id)s, %(rpc_connect)s, %(rpc_confidence)s, %(full_pitch)s, %(pitch_confidence)s,
                 %(is_lead)s, %(lead_confidence)s, %(qualified)s, %(qual_confidence)s, %(meeting_booked)s,
-                %(call_outcome)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
+                %(meeting_confirmation)s, %(call_outcome)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
             ON CONFLICT (call_id) DO UPDATE SET
                 rpc_connect = EXCLUDED.rpc_connect, rpc_confidence = EXCLUDED.rpc_confidence,
                 full_pitch = EXCLUDED.full_pitch, pitch_confidence = EXCLUDED.pitch_confidence,
                 is_lead = EXCLUDED.is_lead, lead_confidence = EXCLUDED.lead_confidence,
                 qualified = EXCLUDED.qualified, qual_confidence = EXCLUDED.qual_confidence,
-                meeting_booked = EXCLUDED.meeting_booked, call_outcome = EXCLUDED.call_outcome,
+                meeting_booked = EXCLUDED.meeting_booked,
+                meeting_confirmation = EXCLUDED.meeting_confirmation, call_outcome = EXCLUDED.call_outcome,
                 evidence = EXCLUDED.evidence, model = EXCLUDED.model,
                 classified_at = EXCLUDED.classified_at,
                 needs_human_review = EXCLUDED.needs_human_review
@@ -231,18 +236,26 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
         conn.commit()
 
 
-def _pending_calls_for_day(pool: ConnectionPool, day: date, limit: int | None = None) -> list[dict]:
-    """In-scope, transcribed, not-yet-classified calls for one day, with transcript."""
+def _pending_calls_for_day(
+    pool: ConnectionPool, day: date, limit: int | None = None, force: bool = False
+) -> list[dict]:
+    """In-scope, transcribed calls for one day, with transcript.
+
+    By default only NOT-yet-classified calls (idempotent). With force=True, ALL
+    such calls are returned so they get re-classified under the current rubric —
+    use this after a prompt / schema change (e.g. new verdict fields).
+    """
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
-    sql = """
+    not_classified = "" if force else "AND cl.call_id IS NULL"
+    sql = f"""
         SELECT c.call_id, c.answered, c.is_voicemail,
                t.text, t.sentiment, t.summary, t.diarized
         FROM calls c
         JOIN transcripts t ON t.call_id = c.call_id
         LEFT JOIN classifications cl ON cl.call_id = c.call_id
         WHERE c.started_at >= %(start)s AND c.started_at < %(end)s
-          AND c.has_transcript AND c.in_scope AND cl.call_id IS NULL
+          AND c.has_transcript AND c.in_scope {not_classified}
         ORDER BY c.started_at
     """
     params: dict = {"start": start, "end": end}
@@ -260,9 +273,13 @@ def classify_day(
     day: date,
     limit: int | None = None,
     workers: int | None = None,
+    force: bool = False,
 ) -> dict:
-    """Classify pending transcribed in-scope calls for a day, in parallel. Idempotent."""
-    pending = _pending_calls_for_day(pool, day, limit)
+    """Classify pending transcribed in-scope calls for a day, in parallel. Idempotent.
+
+    force=True re-classifies already-classified calls too (for rubric changes).
+    """
+    pending = _pending_calls_for_day(pool, day, limit, force)
     if not pending:
         return {"classified": 0, "errors": 0, "needs_review": 0}
 

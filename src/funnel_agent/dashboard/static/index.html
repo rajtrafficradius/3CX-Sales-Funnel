@@ -15,6 +15,8 @@
   body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   header{display:flex;align-items:center;gap:16px;padding:14px 22px;background:linear-gradient(180deg,#11161f,#0d1117);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
   header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:6px 12px;line-height:0;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .brand img{height:30px;display:block}
   header h1 small{color:var(--muted);font-weight:400;margin-left:8px}
   .spacer{flex:1}
   select,button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
@@ -71,6 +73,7 @@
 </head>
 <body>
 <header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
   <h1>3CX Sales-Funnel <small>per BDE &amp; overall</small></h1>
   <div class="spacer"></div>
   <label class="muted" for="bde">BDE</label>
@@ -162,8 +165,8 @@ function renderKpis(f){
     ['Calls Made', f.calls_made, ''],
     ['Transcribed', f.transcribed, (f.coverage!=null?f.coverage+'% coverage':'')],
     ['Connect rate', pct(f.conversion?.connect), 'Connected / Calls Made'],
-    ['RPC rate', pct(f.conversion?.rpc), 'RPC / Connected'],
-    ['Booked rate', pct(f.conversion?.booked), 'Booked / Full Pitch'],
+    ['Right Party Contact rate', pct(f.conversion?.rpc), 'Right Party Contact / Connected'],
+    ['Meeting Booked rate', pct(f.conversion?.booked), 'Meeting Booked / Full Pitch'],
   ];
   $('#kpis').innerHTML = k.map(([l,v,sub])=>`
     <div class="card kpi"><div class="v">${fmt(v)}</div><div class="l">${l}</div><div class="sub">${sub||'&nbsp;'}</div></div>`).join('');
@@ -215,8 +218,8 @@ async function openStageList(stage,label,bdeOverride){
 function renderLeaderboard(d){
   // [header, dataKey, drillStageKey|null]
   const cols=[['BDE','bde_name',null],['Calls','calls_made','calls_made'],['Connected','connected','connected'],
-    ['RPC','rpc_connect','rpc_connect'],['Pitch','full_pitch','full_pitch'],['Lead (Booked)','meetings_booked','meetings_booked'],
-    ['Conn%','conv_connect',null],['RPC%','conv_rpc',null],['Pitch%','conv_pitch',null],['Book%','conv_booked',null]];
+    ['Right Party Contact','rpc_connect','rpc_connect'],['Full Pitch','full_pitch','full_pitch'],['Meeting Booked','meetings_booked','meetings_booked'],
+    ['Conn%','conv_connect',null],['Right Party Contact %','conv_rpc',null],['Full Pitch %','conv_pitch',null],['Meeting Booked %','conv_booked',null]];
   $('#leaderboard thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
   const body=$('#leaderboard tbody');
   if(!d.rows.length){body.innerHTML='<tr><td class="empty" colspan="10">No BDE activity for this date</td></tr>';return;}
@@ -235,8 +238,8 @@ function renderTrend(t){
     grid:{left:38,right:14,top:34,bottom:26},
     xAxis:{type:'category',data:t.dates,axisLabel:{color:'#8b949e'}},
     yAxis:{type:'value',axisLabel:{color:'#8b949e'},splitLine:{lineStyle:{color:'#222b38'}}},
-    series:[mk('Calls','calls_made','#60a5fa'),mk('RPC','rpc_connect','#34d399'),
-      mk('Pitch','full_pitch','#fbbf24'),mk('Lead','leads','#fb923c'),
+    series:[mk('Calls','calls_made','#60a5fa'),mk('Right Party Contact','rpc_connect','#34d399'),
+      mk('Full Pitch','full_pitch','#fbbf24'),mk('Lead','leads','#fb923c'),
       mk('Qualified','qualified','#f472b6')]
   },true);
 }
@@ -255,6 +258,18 @@ async function loadReview(){
     }).join('')+'</tr>').join('');
 }
 
+// Interpret a booking into the funnel-counted verdict (shared concept with call.html).
+function bookingBanner(ev){
+  if(!(ev.meeting_booked && ev.meeting_booked.value)) return '';
+  const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
+  const qual = ev.qualified && ev.qualified.value;
+  let css, txt;
+  if(conf){ css='background:rgba(251,191,36,.16);color:#fbbf24'; txt='📞 Meeting Confirmation Call — confirms a meeting booked on an earlier call (NOT counted as a new booking)'; }
+  else if(!qual){ css='background:rgba(239,68,68,.16);color:#f87171'; txt='🚫 Booking cancelled — baby prospect / not qualified (NOT counted)'; }
+  else { css='background:rgba(34,197,94,.16);color:#4ade80'; txt='✅ Meeting Booked — genuine new qualified booking (counted)'; }
+  return `<div style="padding:9px 12px;border-radius:8px;font-weight:700;margin:4px 0 12px;${css}">${txt}</div>`;
+}
+
 async function openCall(id){
   const d = await jget('/api/call/'+encodeURIComponent(id));
   $('#dTitle').textContent = (d.call.bde_name||'?')+'  •  '+(d.call.dest_number||'');
@@ -265,11 +280,13 @@ async function openCall(id){
   };
   $('#dBody').innerHTML = `
     <div class="muted" style="margin-bottom:8px">${d.call.started_at||''} · ${d.call.fresh_or_followup||''} · talk ${d.call.talk_seconds||0}s · outcome: <b>${cl.call_outcome||'—'}</b> · model: ${cl.model||'—'}</div>
-    ${stage('RPC Connect','rpc_connect')}
+    ${bookingBanner(ev)}
+    ${stage('Right Party Contact','rpc_connect')}
     ${stage('Full Pitch','full_pitch')}
     ${stage('Lead','is_lead')}
     ${stage('Qualified','qualified')}
     ${stage('Meeting Booked','meeting_booked')}
+    ${ev.meeting_confirmation_only?stage('Meeting confirmation only','meeting_confirmation_only'):''}
     ${ev.overall_notes?`<div class="ev"><div class="s"><span>Notes</span></div><div class="q">${ev.overall_notes}</div></div>`:''}
     <h2 style="margin-top:16px">Transcript</h2>
     <div class="transcript">${d.transcript? (d.transcript.text||'').replace(/</g,'&lt;') : '(no transcript)'}</div>`;
@@ -312,7 +329,27 @@ async function autoRefresh(){
     $('#updated').textContent = 'updated ' + new Date().toLocaleTimeString();
   }catch(e){}
 }
-setInterval(autoRefresh, 60000);
+// Slow safety-net poll (in case the realtime stream drops); the SSE stream below
+// is what makes updates feel instant.
+setInterval(autoRefresh, 120000);
+
+// ---- Realtime push: update the moment new data lands (no waiting on a timer) ----
+let _es=null, _esRetry=null;
+function startStream(){
+  if(_es){ try{_es.close();}catch(e){} }
+  try{
+    _es = new EventSource('/api/events');
+    _es.addEventListener('refresh', ()=>{ autoRefresh(); pollProgress(); });
+    _es.onopen = ()=>{ $('#updated').textContent='live · connected'; };
+    _es.onerror = ()=>{
+      // EventSource auto-reconnects, but if the connection is fully closed, retry.
+      if(_es && _es.readyState===2 && !_esRetry){
+        _esRetry=setTimeout(()=>{_esRetry=null; startStream();}, 5000);
+      }
+    };
+  }catch(e){}
+}
+startStream();
 
 boot().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">Error: '+e.message+'</div>';});
 pollProgress();
