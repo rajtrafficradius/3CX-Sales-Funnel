@@ -23,6 +23,23 @@ done
 # Web service: bind to Railway's injected $PORT on all interfaces.
 # Any other command (daily, roster-sync, backfill, report) passes straight through.
 if [ "$1" = "dashboard" ]; then
+  # Self-updating loop (the cloud equivalent of the local launchd job): keep the
+  # data live by running the full pipeline (ingest -> transcribe -> classify ->
+  # aggregate) every REFRESH_INTERVAL seconds. Runs in the background alongside
+  # the web server so the dashboard's SSE stream pushes fresh numbers in
+  # near-real-time, exactly like local. Failures are logged but never crash the
+  # web process. Disable with REFRESH_IN_WEB=0 (e.g. if you run a separate worker).
+  if [ "${REFRESH_IN_WEB:-1}" = "1" ]; then
+    (
+      sleep "${REFRESH_INITIAL_DELAY:-30}"   # let the web process + DB settle first
+      while true; do
+        echo "[refresh-loop] $(date -u +%FT%TZ) starting refresh" >&2
+        funnel-agent refresh --days "${REFRESH_DAYS:-2}" >&2 || \
+          echo "[refresh-loop] refresh failed (continuing)" >&2
+        sleep "${REFRESH_INTERVAL:-60}"
+      done
+    ) &
+  fi
   exec funnel-agent dashboard --host 0.0.0.0 --port "${PORT:-8080}"
 fi
 
