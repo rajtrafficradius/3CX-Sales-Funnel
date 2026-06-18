@@ -56,6 +56,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index() -> str:
         return _index_html()
 
+    @app.get("/tv", response_class=HTMLResponse)
+    def tv_page() -> str:
+        return resources.files("funnel_agent.dashboard").joinpath(
+            "static/tv.html").read_text(encoding="utf-8")
+
     @app.get("/logo.png")
     def logo() -> Response:
         data = resources.files("funnel_agent.dashboard").joinpath(

@@ -109,6 +109,16 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
                 deactivated = cur.rowcount
             else:
                 deactivated = 0
+
+            # Merge secondary lines into their primary BDE (config-driven), so a
+            # BDE's landline / 2nd extension reports under the same name and its
+            # activity rolls into one person. Runs every sync, so it's stable.
+            for sec, prim in settings.merge_map.items():
+                cur.execute(
+                    "UPDATE bde_agents s SET bde_name = p.bde_name "
+                    "FROM bde_agents p WHERE p.extension = %s AND s.extension = %s",
+                    (prim, sec),
+                )
         conn.commit()
 
     in_scope = _count_in_scope(pool)

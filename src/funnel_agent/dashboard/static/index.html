@@ -22,6 +22,30 @@
   select,button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
   select:focus{outline:1px solid var(--accent)}
   .badge{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:6px 12px;color:var(--txt);font-size:13px}
+  /* Realtime LIVE indicator — makes it obvious the dashboard streams live */
+  .livebadge{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 10px;border-radius:20px;
+    border:1px solid rgba(34,197,94,.35);background:rgba(34,197,94,.10);white-space:nowrap;transition:background .3s,border-color .3s;
+    width:300px;box-sizing:border-box}  /* fixed width so changing text never reflows the header */
+  .livebadge .lb-dot{flex:none;width:9px;height:9px;border-radius:50%;background:#22c55e;
+    box-shadow:0 0 0 0 rgba(34,197,94,.6);animation:lb-pulse 1.6s ease-out infinite}
+  .livebadge .lb-text{flex:none;font-size:11.5px;font-weight:800;letter-spacing:.8px;color:#4ade80}
+  .livebadge .lb-sub{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .livebadge .lb-spark{flex:none;font-size:12px;line-height:1;color:#4ade80;animation:lb-twinkle 2.2s ease-in-out infinite}
+  .livebadge.connecting .lb-spark{color:#fbbf24}
+  .livebadge.offline .lb-spark{color:#f87171;animation:none}
+  .lb-ell::after{content:'';animation:lb-ell 1.4s steps(1,end) infinite}
+  .livebadge.connecting{border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.10)}
+  .livebadge.connecting .lb-dot{background:#f59e0b;animation-duration:1s}
+  .livebadge.connecting .lb-text{color:#fbbf24}
+  .livebadge.offline{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.10)}
+  .livebadge.offline .lb-dot{background:#ef4444;box-shadow:none;animation:none}
+  .livebadge.offline .lb-text{color:#f87171}
+  .livebadge.flash{animation:lb-flash .9s ease-out}
+  @keyframes lb-pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+  @keyframes lb-flash{0%{background:rgba(34,197,94,.45);box-shadow:0 0 0 0 rgba(34,197,94,.55)}100%{background:rgba(34,197,94,.10);box-shadow:0 0 0 14px rgba(34,197,94,0)}}
+  @keyframes lb-twinkle{0%,100%{opacity:.5;transform:scale(.82) rotate(0)}50%{opacity:1;transform:scale(1.18) rotate(90deg)}}
+  @keyframes lb-ell{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+  @media (prefers-reduced-motion:reduce){.livebadge .lb-dot{animation:none}.livebadge.flash{animation:none}}
   .badge b{color:var(--warn)}
   main{padding:18px 22px;max-width:1500px;margin:0 auto}
   .grid{display:grid;gap:16px}
@@ -65,10 +89,59 @@
   .stageitem{display:block;padding:10px 12px;margin:6px 0;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--txt);text-decoration:none}
   .stageitem:hover{border-color:var(--accent)}
   .stagetoggle{margin:0 0 12px;padding:8px 10px;background:var(--chip);border:1px solid var(--line);border-radius:8px;font-size:13px}
-  .clsbar{padding:9px 22px;background:#11161f;border-bottom:1px solid var(--line)}
-  .clslabel{font-size:12px;color:var(--muted);margin-bottom:6px}
-  .clstrack{height:7px;background:#0b0f15;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-  .clsfill{height:100%;width:0;background:linear-gradient(90deg,#3b82f6,#22c55e);transition:width .5s ease}
+  .clsbar{padding:10px 22px;background:linear-gradient(180deg,#11161f,#0d1117);border-bottom:1px solid var(--line)}
+  .clshead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}
+  .clslabel{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;min-width:0}
+  .clslabel .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#3b82f6;box-shadow:0 0 0 0 rgba(59,130,246,.6);animation:cls-livedot 1.4s ease-out infinite}
+  .clsbadge{flex:none;font-variant-numeric:tabular-nums;font-weight:700;font-size:12.5px;color:#cbd5e1;background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:3px 11px;min-width:58px;text-align:center;transition:color .3s,border-color .3s}
+  .clstrack{position:relative;height:10px;background:#0b0f15;border:1px solid var(--line);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.55)}
+  .clsfill{position:relative;height:100%;width:0;border-radius:999px;
+    background:linear-gradient(90deg,#3b82f6,#22d3ee,#22c55e,#3b82f6);background-size:300% 100%;
+    box-shadow:0 0 10px rgba(59,130,246,.55),0 0 4px rgba(34,197,94,.5);
+    transition:width .6s cubic-bezier(.22,.61,.36,1);
+    animation:cls-flow 2.4s linear infinite;will-change:width,background-position}
+  .clsfill::after{content:"";position:absolute;inset:0;border-radius:999px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
+    transform:translateX(-100%);animation:cls-shimmer 1.7s ease-in-out infinite;will-change:transform}
+  .clsfill::before{content:"";position:absolute;top:0;right:0;height:100%;width:16px;border-radius:999px;
+    background:radial-gradient(circle at right center,rgba(255,255,255,.95),transparent 72%);filter:blur(.5px)}
+  /* completed: steady green, animations off (efficient), one celebratory glow */
+  .clsbar.done .clsfill{background:linear-gradient(90deg,#16a34a,#22c55e);background-size:auto;
+    box-shadow:0 0 12px rgba(34,197,94,.6);animation:cls-done 1.2s ease-out 1}
+  .clsbar.done .clsfill::after{animation:none;opacity:0}
+  .clsbar.done .clsfill::before{opacity:.5}
+  .clsbar.done .clslabel .dot{background:#22c55e;animation:none;box-shadow:0 0 8px rgba(34,197,94,.75)}
+  .clsbar.done .clsbadge{color:#4ade80;border-color:rgba(34,197,94,.4)}
+  @keyframes cls-flow{0%{background-position:0% 50%}100%{background-position:300% 50%}}
+  @keyframes cls-shimmer{0%{transform:translateX(-100%)}55%,100%{transform:translateX(240%)}}
+  @keyframes cls-livedot{0%{box-shadow:0 0 0 0 rgba(59,130,246,.6)}70%{box-shadow:0 0 0 7px rgba(59,130,246,0)}100%{box-shadow:0 0 0 0 rgba(59,130,246,0)}}
+  @keyframes cls-done{0%{box-shadow:0 0 0 0 rgba(34,197,94,.75)}55%{box-shadow:0 0 18px 5px rgba(34,197,94,.45)}100%{box-shadow:0 0 12px rgba(34,197,94,.45)}}
+  @media (prefers-reduced-motion:reduce){.clsfill,.clsfill::after,.clslabel .dot{animation:none!important}.clsfill{transition:width .2s linear}}
+  /* ---- TV / kiosk mode (?tv=1): original dashboard fit to ONE viewport, through the leaderboard ---- */
+  html.tv,html.tv body{height:100%;overflow:hidden;margin:0}
+  html.tv body{display:flex;flex-direction:column}
+  html.tv header,html.tv #clsBar{flex:none}
+  html.tv header label,html.tv #bde,html.tv #date,html.tv #reviewBadge,html.tv #tvBtn{display:none}
+  html.tv #trendCard,html.tv #reviewCard{display:none}        /* show only through the leaderboard */
+  html.tv main{max-width:none;flex:1;min-height:0;display:flex;flex-direction:column;gap:1.1vh;padding:1.1vh 1.4vw;overflow:hidden}
+  html.tv main>div{margin-top:0!important}
+  html.tv .grid.cols-kpi{flex:none}
+  html.tv .grid.cols-2{flex:1.15 1 0;min-height:0}
+  html.tv #leaderboardCard{flex:1 1 0;min-height:0}
+  html.tv .card{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  html.tv #funnelChart{flex:1;height:auto!important;min-height:0}
+  html.tv #leaderboardCard>div{flex:1;min-height:0;overflow:hidden}
+  html.tv .kpi .v{font-size:clamp(26px,2.9vw,60px)}
+  html.tv .kpi .l{font-size:clamp(12px,1vw,19px)}
+  html.tv .kpi .sub{font-size:clamp(10px,.8vw,16px)}
+  html.tv .card h2{font-size:clamp(12px,1vw,20px);margin-bottom:.6vh}
+  html.tv #funnelTable td,html.tv #funnelTable th{font-size:clamp(12px,1.1vw,24px);padding:.45vh .6vw}
+  html.tv #leaderboard th{font-size:clamp(11px,.9vw,18px);padding:.4vh .6vw}
+  html.tv #leaderboard td{font-size:clamp(14px,1.4vw,30px);padding:.5vh .6vw}
+  #tvFs{display:none}
+  html.tv #tvFs{display:block;position:fixed;bottom:10px;right:12px;z-index:60;background:rgba(28,36,48,.7);
+    color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;opacity:.4}
+  html.tv #tvFs:hover{opacity:1}
 </style>
 </head>
 <body>
@@ -80,12 +153,21 @@
   <select id="bde"></select>
   <label class="muted" for="date">Date</label>
   <select id="date"></select>
+  <a class="badge clickable" id="tvBtn" href="/?tv=1" target="_blank" title="Open this dashboard full-screen for an office TV">📺 TV mode</a>
   <span class="badge clickable" id="reviewBadge" onclick="scrollToReview()">Review queue: <b id="reviewN">0</b></span>
-  <span class="muted" id="updated" style="font-size:11px;min-width:120px"></span>
+  <div class="livebadge connecting" id="liveBadge" title="Powered by an AI agent — this dashboard analyses calls and updates in real time">
+    <span class="lb-dot"></span>
+    <span class="lb-spark">✦</span>
+    <span class="lb-text" id="lbText">AI LIVE</span>
+    <span class="lb-sub" id="lbSub">connecting…</span>
+  </div>
 </header>
 
 <div id="clsBar" class="clsbar">
-  <div class="clslabel" id="clsLabel">Classification status…</div>
+  <div class="clshead">
+    <div class="clslabel" id="clsLabel"><span class="dot"></span><span id="clsText">Classification status…</span></div>
+    <div class="clsbadge" id="clsPct">—</div>
+  </div>
   <div class="clstrack"><div id="clsFill" class="clsfill"></div></div>
 </div>
 
@@ -103,12 +185,12 @@
     </div>
   </div>
 
-  <div class="card" style="margin-top:16px">
+  <div class="card" id="leaderboardCard" style="margin-top:16px">
     <h2>Leaderboard — per-BDE conversion (selected date)</h2>
     <div style="overflow:auto"><table id="leaderboard"><thead></thead><tbody></tbody></table></div>
   </div>
 
-  <div class="card" style="margin-top:16px">
+  <div class="card" id="trendCard" style="margin-top:16px">
     <h2>Trend — last 30 days (<span id="trendScope">ALL</span>)</h2>
     <div id="trendChart" class="chart sm"></div>
   </div>
@@ -119,6 +201,7 @@
   </div>
 </main>
 
+<button id="tvFs" onclick="tvFullscreen()">⛶ Fullscreen</button>
 <div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
 <aside class="drawer" id="drawer">
   <header><strong id="dTitle">Call</strong><div class="spacer"></div><button class="x" onclick="closeDrawer()">&times;</button></header>
@@ -130,6 +213,13 @@ const $ = s => document.querySelector(s);
 // Single-quote a value for safe inlining in an onclick="" (double-quoted) attribute.
 const jsq = s => "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'";
 const fmt = n => (n==null?'—':n);
+
+// TV / kiosk mode: same dashboard, enlarged + chromeless for a wall display.
+const TV = new URLSearchParams(location.search).get('tv')==='1' || location.hash==='#tv';
+if(TV) document.documentElement.classList.add('tv');
+function tvFullscreen(){ const el=document.documentElement;
+  if(!document.fullscreenElement){ el.requestFullscreen && el.requestFullscreen(); }
+  else { document.exitFullscreen && document.exitFullscreen(); } }
 const pillClass = (v,a,b) => v==null?'':v>=a?'p-good':v>=b?'p-mid':'p-bad';
 const pct = v => v==null?'—':v+'%';
 let funnelChart, trendChart;
@@ -158,6 +248,7 @@ async function refresh(){
   renderKpis(f); renderFunnel(f); renderFunnelTable(f);
   renderLeaderboard(await jget(`/api/leaderboard?date=${date}`));
   renderTrend(await jget(`/api/trend?bde=${encodeURIComponent(bde)}&days=30`));
+  if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} });
 }
 
 function renderKpis(f){
@@ -179,7 +270,7 @@ function renderFunnel(f){
     tooltip:{trigger:'item',formatter:p=>`${p.name}<br/><b>${p.value}</b>`},
     color:['#60a5fa','#38bdf8','#34d399','#a3e635','#fbbf24','#fb923c','#f472b6'],
     series:[{type:'funnel',sort:'none',gap:2,left:'6%',right:'6%',top:6,bottom:6,
-      minSize:'14%',label:{position:'inside',formatter:'{b}: {c}',color:'#0b0f15',fontWeight:600},
+      minSize:'14%',label:{position:'inside',formatter:'{b}: {c}',color:'#0b0f15',fontWeight:600,fontSize:TV?20:12},
       data}]
   },true);
 }
@@ -296,18 +387,45 @@ function closeDrawer(){$('#drawer').classList.remove('open');$('#drawerBg').styl
 function scrollToReview(){$('#reviewCard').scrollIntoView({behavior:'smooth'});}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 
+// Smoothly ease the percentage chip toward its target (a "count-up" feel),
+// driven by requestAnimationFrame so it only paints while actually changing.
+let _clsShown=0, _clsTarget=0, _clsRAF=null;
+function clsTick(){
+  const d=_clsTarget-_clsShown;
+  _clsShown = Math.abs(d)<0.4 ? _clsTarget : _clsShown + d*0.16;
+  const dec = (_clsTarget>0 && _clsTarget<100) ? 1 : 0;
+  $('#clsPct').textContent=_clsShown.toFixed(dec)+'%';
+  _clsRAF = (_clsShown!==_clsTarget) ? requestAnimationFrame(clsTick) : null;
+}
+
+// Adaptive, visibility-aware polling: fast (4s) while work is pending, slow
+// (30s) once complete, and fully paused while the tab is hidden — efficient.
+let _pollTimer=null;
+function schedulePoll(done){
+  clearTimeout(_pollTimer);
+  if(document.hidden) return;
+  _pollTimer=setTimeout(pollProgress, done?30000:4000);
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) pollProgress(); });
+
 async function pollProgress(){
+  let done=false;
   try{
     const p=await jget('/api/classification-progress');
+    done = p.pending<=0;
     $('#clsFill').style.width=p.pct+'%';
-    $('#clsLabel').innerHTML = p.pending>0
-      ? `Classifying transcripts… <b>${p.pct}%</b> <span class="muted">(${p.done.toLocaleString()} / ${p.total.toLocaleString()} calls — ${p.pending.toLocaleString()} pending)</span>`
-      : `Classification complete — <b>${p.total.toLocaleString()}</b> calls ✓`;
+    _clsTarget=p.pct; if(!_clsRAF) _clsRAF=requestAnimationFrame(clsTick);
+    $('#clsBar').classList.toggle('done', done);
+    $('#clsText').innerHTML = done
+      ? `AI analysis up to date — <b>${p.total.toLocaleString()}</b> calls scored ✓`
+      : `🧠 AI is analysing transcripts… <span class="muted">${p.done.toLocaleString()} / ${p.total.toLocaleString()} · ${p.pending.toLocaleString()} pending</span>`;
+    // feed the header AI-agent status
+    _ai.pending=p.pending; _ai.total=p.total; renderAI();
   }catch(e){
-    $('#clsLabel').textContent='Classification status unavailable — restart the dashboard (run-dashboard.command) to enable it.';
+    $('#clsText').textContent='Classification status unavailable — restart the dashboard to enable it.';
   }
+  schedulePoll(done);
 }
-setInterval(pollProgress, 4000);
 
 // Live auto-refresh: re-fetch data every 60s so the page stays current without a
 // manual reload. Preserves the user's selected date/BDE; picks up new dates.
@@ -325,30 +443,80 @@ async function autoRefresh(){
       $('#bde').innerHTML = s.bdes.map(b=>`<option>${b}</option>`).join('');
       $('#bde').value = s.bdes.includes(curB) ? curB : 'ALL';
     }
+    if(TV){ if(s.dates[0]) $('#date').value=s.dates[0]; $('#bde').value='ALL'; }  // TV: always latest day + overall
     await refresh();
-    $('#updated').textContent = 'updated ' + new Date().toLocaleTimeString();
   }catch(e){}
 }
 // Slow safety-net poll (in case the realtime stream drops); the SSE stream below
 // is what makes updates feel instant.
 setInterval(autoRefresh, 120000);
 
-// ---- Realtime push: update the moment new data lands (no waiting on a timer) ----
+// ---- Realtime AI-agent status + push stream ------------------------------------
+// Drives the header "AI LIVE" badge so anyone viewing instantly understands the
+// dashboard is an AI agent working in real time.
+const _ai={sse:'connecting', pending:0, total:0, lastData:null, lastMsg:null};
+const AI_WATCH=['watching 3CX for new calls','monitoring the funnel live','auto-refreshing every 60s','agent on standby'];
+let _aiSec=0, _aiPhrase=0;
+function renderAI(){
+  const b=$('#liveBadge'); if(!b) return;
+  b.classList.toggle('live', _ai.sse==='live');
+  b.classList.toggle('connecting', _ai.sse==='connecting');
+  b.classList.toggle('offline', _ai.sse==='offline');
+  const txt=$('#lbText'), sub=$('#lbSub');
+  if(_ai.sse==='offline'){ txt.textContent='AI OFFLINE'; sub.textContent='reconnecting…'; return; }
+  if(_ai.sse==='connecting'){ txt.textContent='AI LIVE'; sub.textContent='connecting…'; return; }
+  txt.textContent='AI LIVE';
+  if(_ai.pending>0){ sub.innerHTML='analysing transcripts<span class="lb-ell"></span> · '+_ai.pending.toLocaleString()+' pending'; return; }
+  const now=Date.now();
+  if(_ai.lastData && now-_ai.lastData<8000){ sub.textContent=(_ai.lastMsg||'data refreshed')+' · just now'; return; }
+  let rel='';
+  if(_ai.lastData){ const s=Math.round((now-_ai.lastData)/1000); rel=' · '+(s<60?s+'s':Math.floor(s/60)+'m')+' ago'; }
+  sub.textContent=AI_WATCH[_aiPhrase%AI_WATCH.length]+rel;
+}
+// The SSE event payload is the real freshness token:
+//   "maxClassifiedAt|countClassifications|countCalls"
+// Diffing it against the previous one tells us EXACTLY what changed, so the
+// badge can narrate the truth (calls ingested vs calls the AI actually scored).
+let _prevTok=null;
+function tokenDelta(data){
+  const p=String(data||'').split('|'); const nc=+p[1], ncalls=+p[2];
+  if(isNaN(nc)||isNaN(ncalls)) return null;
+  const d=_prevTok ? {scored:Math.max(0,nc-_prevTok.nc), calls:Math.max(0,ncalls-_prevTok.ncalls)} : null;
+  _prevTok={nc,ncalls};
+  return d;
+}
+function markData(delta){
+  _ai.lastData=Date.now();
+  if(delta.calls>0 && delta.scored>0) _ai.lastMsg=`ingested ${delta.calls}, AI scored ${delta.scored}`;
+  else if(delta.scored>0) _ai.lastMsg=`AI scored ${delta.scored} new call`+(delta.scored>1?'s':'');
+  else _ai.lastMsg=`ingested ${delta.calls} new call`+(delta.calls>1?'s':'');
+  const b=$('#liveBadge'); if(b){ b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
+  renderAI();
+}
+// 1s ticker keeps the relative time fresh; rotate the idle phrase every ~5s.
+setInterval(()=>{ _aiSec++; if(_aiSec%5===0) _aiPhrase++; renderAI(); }, 1000);
+
 let _es=null, _esRetry=null;
 function startStream(){
   if(_es){ try{_es.close();}catch(e){} }
   try{
     _es = new EventSource('/api/events');
-    _es.addEventListener('refresh', ()=>{ autoRefresh(); pollProgress(); });
-    _es.onopen = ()=>{ $('#updated').textContent='live · connected'; };
+    _es.addEventListener('refresh', (e)=>{
+      const d=tokenDelta(e.data);
+      if(d && (d.calls>0 || d.scored>0)) markData(d);  // narrate only a genuine change
+      autoRefresh(); pollProgress();
+    });
+    _es.onopen = ()=>{ _ai.sse='live'; renderAI(); };
     _es.onerror = ()=>{
-      // EventSource auto-reconnects, but if the connection is fully closed, retry.
-      if(_es && _es.readyState===2 && !_esRetry){
-        _esRetry=setTimeout(()=>{_esRetry=null; startStream();}, 5000);
+      // EventSource auto-reconnects; if fully closed, flag offline + retry.
+      if(_es && _es.readyState===2){
+        _ai.sse='offline'; renderAI();
+        if(!_esRetry) _esRetry=setTimeout(()=>{_esRetry=null; startStream();}, 5000);
       }
     };
   }catch(e){}
 }
+renderAI();
 startStream();
 
 boot().catch(e=>{document.querySelector('main').innerHTML='<div class="empty">Error: '+e.message+'</div>';});

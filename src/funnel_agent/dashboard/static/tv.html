@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Traffic Radius — Sales Funnel (TV)</title>
+<style>
+  :root{--bg:#0b0f15;--panel:#161b22;--panel2:#1c2430;--line:#27313f;--txt:#e9eef5;--muted:#9aa6b2}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:radial-gradient(1400px 800px at 72% -12%,#13202e,#0b0f15 60%);color:var(--txt);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;overflow:hidden;height:100vh}
+  .wrap{display:flex;flex-direction:column;height:100vh;padding:1.8vh 1.6vw;gap:1.6vh}
+  /* header */
+  header{display:flex;align-items:center;gap:1.4vw;flex:none}
+  .logo{background:#fff;border-radius:12px;padding:.8vh 1vw;line-height:0;box-shadow:0 2px 12px rgba(0,0,0,.45)}
+  .logo img{height:5.2vh;display:block}
+  .htitle{font-size:clamp(22px,2.2vw,46px);font-weight:800;letter-spacing:.3px}
+  .htitle b{color:#fff}
+  .htitle span{color:var(--muted);font-weight:600}
+  .spacer{flex:1}
+  .clock{font-size:clamp(20px,1.9vw,40px);font-weight:800;font-variant-numeric:tabular-nums;color:#dbe4ee}
+  .live{display:flex;align-items:center;gap:.7vw;font-size:clamp(15px,1.4vw,30px);font-weight:900;letter-spacing:1.2px;color:#4ade80;
+    background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);border-radius:999px;padding:.7vh 1.2vw;white-space:nowrap}
+  .live .d{width:1.3vh;height:1.3vh;min-width:11px;min-height:11px;border-radius:50%;background:#22c55e;animation:tvpulse 1.6s ease-out infinite}
+  .live .ago{font-size:.62em;font-weight:600;color:var(--muted);letter-spacing:.3px}
+  .live.off{color:#f87171;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4)}
+  .live.off .d{background:#ef4444;animation:none}
+  @keyframes tvpulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 1.5vh rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+  /* funnel row */
+  .funnel{flex:none;display:grid;grid-template-columns:repeat(5,1fr);gap:1vw;height:34vh}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:1.8vh 1.1vw;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
+  .stage .nm{font-size:clamp(13px,1.15vw,26px);font-weight:800;text-transform:uppercase;letter-spacing:1.1px;color:var(--muted)}
+  .stage .num{font-size:clamp(44px,6vw,150px);font-weight:900;line-height:.95;font-variant-numeric:tabular-nums}
+  .stage .cv{font-size:clamp(13px,1.1vw,24px);color:var(--muted);font-weight:700}
+  .stage .bar{height:1.1vh;border-radius:999px;background:#0b0f15;overflow:hidden;margin-top:.6vh}
+  .stage .bar i{display:block;height:100%;border-radius:999px;transition:width .8s cubic-bezier(.22,.61,.36,1)}
+  .stage.booked{border-color:rgba(34,197,94,.55);box-shadow:inset 0 0 36px rgba(34,197,94,.16)}
+  /* leaderboard */
+  .lb{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:1.4vh 1.3vw;display:flex;flex-direction:column;min-height:0}
+  .lb h2{font-size:clamp(16px,1.4vw,32px);text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:1vh;display:flex;align-items:center;gap:1vw;flex:none}
+  .lb h2 .pg{font-size:.66em;color:var(--muted)}
+  .lbgridcols{display:grid;grid-template-columns:1.1fr 6fr 2.2fr 2.2fr 2.6fr 2.2fr 2.8fr;align-items:center;gap:0 1.1vw}
+  .lbhead{flex:none;border-bottom:2px solid var(--line);padding-bottom:.7vh}
+  .lbhead>div{font-size:clamp(12px,1vw,24px);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:800;text-align:right;white-space:nowrap}
+  .lbhead>div.l{text-align:left}
+  .lbbody{flex:1;display:flex;flex-direction:column;min-height:0}
+  .lbrow{flex:1;border-bottom:1px solid var(--line);font-size:clamp(18px,1.85vw,44px);font-weight:800}
+  .lbrow>div{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lbrow .rk{text-align:center;color:var(--muted);font-weight:900}
+  .lbrow .nm{text-align:left;font-weight:800;color:#fff}
+  .lbrow .bk{color:#4ade80;font-weight:900}
+  .lbrow.top{background:linear-gradient(90deg,rgba(250,204,21,.10),transparent)}
+  .lbrow.top .rk{color:#facc15}
+  .lbrow.top .nm::after{content:" 🏆";font-size:.7em}
+  .empty{flex:1;display:flex;align-items:center;justify-content:center;font-size:2.6vw;color:var(--muted)}
+  .fsbtn{position:fixed;bottom:1.2vh;right:1.1vw;background:rgba(28,36,48,.65);color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:.6vh 1vw;font-size:15px;cursor:pointer;opacity:.45;transition:opacity .2s}
+  .fsbtn:hover{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo"><img src="/logo.png" alt="Traffic Radius"/></span>
+    <div class="htitle"><b>Sales Funnel</b> <span id="hdate"></span></div>
+    <div class="spacer"></div>
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="live off" id="live"><span class="d"></span><span id="liveT">CONNECTING</span><span class="ago" id="liveAgo"></span></div>
+  </header>
+  <div class="funnel" id="funnel"></div>
+  <div class="lb">
+    <h2>🏆 Leaderboard — per BDE <span class="pg" id="lbPage"></span></h2>
+    <div class="lbgridcols lbhead">
+      <div class="rk">#</div><div class="l">BDE</div><div>Calls</div><div>Conn</div><div>Right Party</div><div>Pitch</div><div>Booked</div>
+    </div>
+    <div class="lbbody" id="lbBody"></div>
+  </div>
+</div>
+<button class="fsbtn" onclick="fs()">⛶ Fullscreen</button>
+<script>
+const $=s=>document.querySelector(s);
+const fmt=n=>(n==null?'—':Number(n).toLocaleString());
+const STAGES=[['Calls Made','#60a5fa'],['Connected','#38bdf8'],['Right Party Contact','#34d399'],['Full Pitch','#fbbf24'],['Meeting Booked','#22c55e']];
+const LB_PAGE=8;
+let DATE=null, _rows=[], _page=0, _lastData=null;
+
+async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
+
+async function loadDate(){
+  const s=await jget('/api/summary');
+  const d=(s.dates&&s.dates[0])||null;
+  if(d!==DATE){ DATE=d; _page=0; }
+  $('#hdate').textContent = DATE
+    ? '— '+new Date(DATE+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})
+    : '— waiting for data';
+}
+async function loadAll(){
+  if(!DATE){ await loadDate(); }
+  if(!DATE){ $('#funnel').innerHTML='<div class="empty">Waiting for data…</div>'; return; }
+  const [f,l]=await Promise.all([
+    jget('/api/funnel?date='+DATE+'&bde=ALL'),
+    jget('/api/leaderboard?date='+DATE)
+  ]);
+  renderFunnel(f);
+  // Rank by the metric that matters on a sales floor: bookings, then pitches, then volume.
+  _rows=(l.rows||[]).slice().sort((a,b)=>
+    (b.meetings_booked-a.meetings_booked)||(b.full_pitch-a.full_pitch)||(b.calls_made-a.calls_made));
+  renderLB();
+}
+function renderFunnel(f){
+  const el=$('#funnel');
+  if(!f.found){ el.innerHTML='<div class="empty" style="grid-column:1/-1">Waiting for today’s data…</div>'; return; }
+  const max=Math.max(1,...f.stages.map(s=>s.total));
+  el.innerHTML=f.stages.map((s,i)=>{
+    const [nm,color]=STAGES[i]||[s.stage,'#60a5fa'];
+    const w=Math.max(3,Math.round(100*s.total/max));
+    const cv = s.conv==null ? '&nbsp;' : (s.conv+'% of previous');
+    return `<div class="stage ${i===4?'booked':''}">
+      <div class="nm">${nm}</div>
+      <div class="num" style="color:${color}">${fmt(s.total)}</div>
+      <div class="cv">${cv}</div>
+      <div class="bar"><i style="width:${w}%;background:${color}"></i></div>
+    </div>`;
+  }).join('');
+}
+function renderLB(){
+  const body=$('#lbBody');
+  if(!_rows.length){ body.innerHTML='<div class="empty">No BDE activity yet today</div>'; $('#lbPage').textContent=''; return; }
+  const pages=Math.ceil(_rows.length/LB_PAGE);
+  if(_page>=pages)_page=0;
+  $('#lbPage').textContent = pages>1 ? `(page ${_page+1} / ${pages})` : '';
+  const start=_page*LB_PAGE;
+  body.innerHTML=_rows.slice(start,start+LB_PAGE).map((r,idx)=>{
+    const rank=start+idx+1;
+    return `<div class="lbgridcols lbrow ${rank===1?'top':''}">
+      <div class="rk">${rank}</div>
+      <div class="nm">${r.bde_name||'?'}</div>
+      <div>${fmt(r.calls_made)}</div>
+      <div>${fmt(r.connected)}</div>
+      <div>${fmt(r.rpc_connect)}</div>
+      <div>${fmt(r.full_pitch)}</div>
+      <div class="bk">${fmt(r.meetings_booked)}</div>
+    </div>`;
+  }).join('');
+}
+function rotateLB(){ const pages=Math.ceil(_rows.length/LB_PAGE); if(pages>1){ _page=(_page+1)%pages; renderLB(); } }
+
+function setLive(on){ const e=$('#live'); e.classList.toggle('off',!on); $('#liveT').textContent= on?'LIVE':'RECONNECTING'; }
+function tick(){
+  $('#clock').textContent=new Date().toLocaleTimeString();
+  const a=$('#liveAgo');
+  if(_lastData){ const s=Math.round((Date.now()-_lastData)/1000); a.textContent='· '+(s<3?'just now':(s<60?s+'s ago':Math.floor(s/60)+'m ago')); }
+  else a.textContent='';
+}
+function fs(){ const el=document.documentElement; if(!document.fullscreenElement){ el.requestFullscreen&&el.requestFullscreen(); } else { document.exitFullscreen&&document.exitFullscreen(); } }
+
+// realtime push
+let _es=null;
+function stream(){
+  try{
+    _es=new EventSource('/api/events');
+    _es.onopen=()=>setLive(true);
+    _es.addEventListener('refresh',()=>{ _lastData=Date.now(); loadAll().catch(()=>{}); });
+    _es.onerror=()=>{ if(_es&&_es.readyState===2){ setLive(false); setTimeout(stream,5000); } };
+  }catch(e){}
+}
+
+tick(); setInterval(tick,1000);
+setInterval(rotateLB,12000);                                   // cycle leaderboard pages
+setInterval(()=>loadDate().then(loadAll).catch(()=>{}),60000); // fallback refresh + midnight rollover
+loadDate().then(loadAll).catch(()=>{ $('#funnel').innerHTML='<div class="empty" style="grid-column:1/-1">Could not load data</div>'; });
+stream();
+
+// hide the cursor when idle (kiosk feel)
+let _cur; document.addEventListener('mousemove',()=>{ document.body.style.cursor='default'; clearTimeout(_cur); _cur=setTimeout(()=>document.body.style.cursor='none',4000); });
+_cur=setTimeout(()=>document.body.style.cursor='none',4000);
+</script>
+</body>
+</html>

@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     roster_inscope_groups: str = ""
     roster_inscope_extensions: str = ""
     roster_exclude_extensions: str = ""  # always out-of-scope, overrides groups (e.g. admins)
+    # Merge a secondary extension into a primary BDE (e.g. a BDE's landline / 2nd
+    # line -> their main line) so each person appears once with combined totals.
+    # Format: "secondaryExt:primaryExt,secondaryExt:primaryExt"  e.g. "303:302,182:184,190:252".
+    roster_merge_map: str = ""
 
     # --- Report email (optional) ---
     smtp_host: str = ""
@@ -151,6 +155,17 @@ class Settings(BaseSettings):
     @property
     def exclude_extensions(self) -> list[str]:
         return _csv(self.roster_exclude_extensions)
+
+    @property
+    def merge_map(self) -> dict[str, str]:
+        """{secondary_extension: primary_extension} parsed from ROSTER_MERGE_MAP."""
+        out: dict[str, str] = {}
+        for pair in _csv(self.roster_merge_map):
+            if ":" in pair:
+                sec, prim = (p.strip() for p in pair.split(":", 1))
+                if sec and prim:
+                    out[sec] = prim
+        return out
 
     @property
     def cdr(self) -> CdrSchema:
