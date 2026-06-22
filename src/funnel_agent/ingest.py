@@ -7,7 +7,7 @@ nothing. A no-transcript call is still recorded (Calls Made) but flagged
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 from psycopg_pool import ConnectionPool
 
@@ -28,6 +28,54 @@ def _load_roster(pool: ConnectionPool) -> dict[str, dict]:
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT extension, bde_name, in_scope, active FROM bde_agents")
         return {str(r["extension"]): r for r in cur.fetchall()}
+
+
+def _register_unknown_extensions(pool: ConnectionPool, roster: dict, rows: list[dict],
+                                 client: ThreeCXClient | None = None,
+                                 settings: Settings | None = None) -> dict:
+    """Make sure every calling extension exists in bde_agents, so a NEW number a BDE
+    starts dialing from is captured automatically (and never FK-crashes ingestion).
+
+    BDEs rotate across old + new numbers. When an unseen extension appears we add
+    ONLY that extension — pulling its real name + group + in-scope status from 3CX
+    (so a new BDE line counts immediately, attributed correctly). This is a TARGETED
+    add: existing roster rows are never touched, so it can't disturb manual
+    scope/merge cleanups. Anything 3CX doesn't know (e.g. a raw trunk) is inserted
+    as an out-of-scope stub purely so the calls.bde_extension FK is satisfied.
+    Without this, a brand-new extension would abort the whole ingest and freeze all
+    dashboard updates until someone manually ran roster-sync.
+    """
+    unknown = {str(r["bde_extension"]) for r in rows
+               if r.get("bde_extension") and str(r["bde_extension"]) not in roster}
+    if not unknown:
+        return roster
+
+    # Look up just these extensions in 3CX so legit new BDE lines get name + scope.
+    found: dict[str, dict] = {}
+    if client is not None and settings is not None:
+        try:
+            from .roster import _full_name, _group_name, _role_name, decide_in_scope
+            for user in client.iter_users():
+                ext = str(user.get("Number") or "").strip()
+                if ext in unknown:
+                    found[ext] = {"name": _full_name(user), "group": _group_name(user),
+                                  "role": _role_name(user), "in_scope": bool(decide_in_scope(user, settings))}
+        except Exception as exc:
+            log.warning("roster_lookup_failed", error=str(exc)[:160])
+
+    now = datetime.now(timezone.utc)
+    with pool.connection() as conn, conn.cursor() as cur:
+        for ext in sorted(unknown):
+            info = found.get(ext)
+            cur.execute(
+                "INSERT INTO bde_agents (extension, bde_name, group_name, role_name, in_scope, active, synced_at) "
+                "VALUES (%s, %s, %s, %s, %s, true, %s) ON CONFLICT (extension) DO NOTHING",
+                (ext, info["name"] if info else ext, info["group"] if info else None,
+                 info["role"] if info else None, info["in_scope"] if info else False, now),
+            )
+        conn.commit()
+    log.info("registered_new_extensions", new=sorted(unknown), named_from_3cx=sorted(found))
+    return _load_roster(pool)
 
 
 def _is_voicemail(disposition: str | None) -> bool:
@@ -205,6 +253,8 @@ def ingest_day_api(
     if not rows:
         log.info("ingest_api_empty", day=str(day))
         return {"calls": 0, "transcribed": 0, "in_scope": 0}
+    # Capture new BDE numbers automatically + keep ingestion flowing (auto roster-sync).
+    roster = _register_unknown_extensions(analytics_pool, roster, rows, client, settings)
 
     n_transcribed = n_in_scope = 0
     numbers: set[str] = set()
