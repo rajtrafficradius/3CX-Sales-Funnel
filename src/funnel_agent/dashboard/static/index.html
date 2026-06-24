@@ -394,7 +394,9 @@ async function refresh(){
   renderLeaderboard(await jget(`/api/leaderboard?start=${WIN.start}&end=${WIN.end}`));
   jget(`/api/channel-report?start=${WIN.start}&end=${WIN.end}`).then(renderChannel).catch(()=>{});
   jget(`/api/pitch-quality?start=${WIN.start}&end=${WIN.end}`).then(renderPitch).catch(()=>{});
-  jget(`/api/rpc-monitor?bde=${encodeURIComponent(bde)}&limit=15`).then(renderRpc).catch(()=>{});
+  jget(`/api/rpc-monitor?bde=${encodeURIComponent(bde)}&limit=15`).then(renderRpc).catch(e=>{
+    const tb=$('#rpcTable'); if(tb){ const tb2=tb.querySelector('tbody'); if(tb2) tb2.innerHTML=`<tr><td colspan="6" style="color:#f87171">RPC load error: ${esc(e&&e.message||e)}</td></tr>`; }
+  });
   renderTrend(await jget(`/api/trend?bde=${encodeURIComponent(bde)}&days=30`));
   if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} fitTv();
     setTimeout(()=>{ try{funnelChart.resize();}catch(e){} fitTv(); },300); });
@@ -577,31 +579,42 @@ async function openStageList(stage,label,bdeOverride){
   $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
 
+function rpcRowHtml(r){
+  const CH={mobile:'📱',landline:'☎️',tollfree:'📞'};
+  const col=r.urgency==='high'?'#f87171':'#fbbf24';
+  // Compliance flag on the attempts cell: missed mobile that never got a 2nd dial.
+  const breach = r.mobile_missed && !r.double_tap_done;
+  const att = `${r.attempts==null?'':r.attempts} <span class="muted" style="font-size:11px">(${r.answered==null?0:r.answered} ans)</span>${breach?' <span title="No 2nd attempt on a missed mobile" style="color:#f87171">⚠</span>':''}`;
+  // Gatekeeper analysis: handled-well flag + the AI's note (compliance intelligence).
+  let gk='<span class="muted">—</span>';
+  if(r.hit_gatekeeper){ const ok=r.gk_handled_well;
+    gk=`<span style="color:${ok?'#4ade80':'#f87171'};font-weight:700">${ok?'✓ handled':'✗ mishandled'}</span>`
+      + (r.gatekeeper_notes?` <span class="muted" style="font-size:11.5px">— ${esc(r.gatekeeper_notes)}</span>`:''); }
+  const key=r.dest_number||r.dest9||'';
+  return `<tr><td style="text-align:left"><a class="clickable" style="color:inherit;text-decoration:none" href="/prospect/${encodeURIComponent(key)}" target="_blank">${esc(r.business_name||r.dest_number||r.dest9)}</a></td>
+    <td>${CH[r.channel]||''}</td><td>${att}</td>
+    <td>${esc(r.last_bde||'—')}</td><td style="text-align:left;color:${col}">${esc(r.required_action)}</td>
+    <td style="text-align:left">${gk}</td></tr>`;
+}
 function renderRpc(d){
   const tb=$('#rpcTable'); if(!tb) return;
-  const s=d.summary||{}, rows=d.rows||[];
+  const s=(d&&d.summary)||{}, rows=(d&&d.rows)||[];
   const comp = s.double_tap_compliance_pct;
   const compTxt = comp==null ? '' : ` · <span style="color:${comp>=80?'#4ade80':comp>=50?'#fbbf24':'#f87171'}">double-tap compliance ${comp}%</span>`;
   const mish = s.gatekeeper_mishandled||0;
   const mishTxt = mish>0 ? ` · <span style="color:#f87171">${mish} gatekeeper mishandled</span>` : '';
   $('#rpcSummary').innerHTML = `· ${s.open||0} open · ${s.mobile_double_tap_needed||0} need double-tap · ${s.needs_sms_vm||0} need SMS+VM · ${s.gatekeeper_blocked||0} gatekeeper-blocked${mishTxt}${compTxt}`;
-  const CH={mobile:'📱',landline:'☎️',tollfree:'📞'};
   tb.querySelector('thead').innerHTML='<tr><th style="text-align:left">Prospect</th><th>Ch</th><th>Attempts</th><th>Last BDE</th><th style="text-align:left">Required next action</th><th style="text-align:left">Gatekeeper analysis</th></tr>';
-  tb.querySelector('tbody').innerHTML = rows.length
-    ? rows.map(r=>{const col=r.urgency==='high'?'#f87171':'#fbbf24';
-        // Compliance flag on the attempts cell: missed mobile that never got a 2nd dial.
-        const breach = r.mobile_missed && !r.double_tap_done;
-        const att = `${r.attempts} <span class="muted" style="font-size:11px">(${r.answered} ans)</span>${breach?' <span title="No 2nd attempt on a missed mobile" style="color:#f87171">⚠</span>':''}`;
-        // Gatekeeper analysis: handled-well flag + the AI's note (compliance intelligence).
-        let gk='<span class="muted">—</span>';
-        if(r.hit_gatekeeper){ const ok=r.gk_handled_well;
-          gk=`<span style="color:${ok?'#4ade80':'#f87171'};font-weight:700">${ok?'✓ handled':'✗ mishandled'}</span>`
-            + (r.gatekeeper_notes?` <span class="muted" style="font-size:11.5px">— ${esc(r.gatekeeper_notes)}</span>`:''); }
-        return `<tr><td style="text-align:left"><a class="clickable" style="color:inherit;text-decoration:none" href="/prospect/${encodeURIComponent(r.dest_number||r.dest9)}" target="_blank">${esc(r.business_name||r.dest_number||r.dest9)}</a></td>
-        <td>${CH[r.channel]||''}</td><td>${att}</td>
-        <td>${esc(r.last_bde||'—')}</td><td style="text-align:left;color:${col}">${esc(r.required_action)}</td>
-        <td style="text-align:left">${gk}</td></tr>`;}).join('')
-    : '<tr><td colspan="6" class="muted">All dialled numbers have reached a decision-maker. 🎉</td></tr>';
+  // Fail-visible + per-row resilient: one bad row can never blank the whole table,
+  // and any unexpected error is shown in-place instead of being swallowed silently.
+  let body;
+  if(!rows.length){
+    body='<tr><td colspan="6" class="muted">All dialled numbers have reached a decision-maker. 🎉</td></tr>';
+  } else {
+    body = rows.map((r,i)=>{ try{ return rpcRowHtml(r); }
+      catch(e){ return `<tr><td colspan="6" style="color:#f87171">row ${i} render error: ${esc(e.message)}</td></tr>`; } }).join('');
+  }
+  tb.querySelector('tbody').innerHTML = body;
 }
 function renderPitch(d){
   const tb=$('#pitchTable'); if(!tb) return;
