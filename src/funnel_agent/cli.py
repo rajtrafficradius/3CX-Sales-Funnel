@@ -518,6 +518,10 @@ def refresh(
         # Grow the master DB from live calls (numbers not on file → captured from the
         # AI-extracted business name/website), then keep Pipeline-2 assignments current.
         cap = capture_called_prospects(ana)
+        # Mirror Raven (master) + 3CX-captured prospects into `companies` so the Database
+        # browser shows all data sources (with the source filter) and stays current.
+        from .companies import sync_company_sources_from_prospects
+        sync_company_sources_from_prospects(ana)
         p2 = sync_pipeline2(ana, default_cadence_days=settings.pipeline2_default_cadence_days)
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}

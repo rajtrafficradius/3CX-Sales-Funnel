@@ -59,6 +59,12 @@
   <div class="stats" id="stats"></div>
   <div class="bar">
     <input id="search" type="search" placeholder="Search business name, website, or phone…" autocomplete="off" />
+    <select id="source">
+      <option value="">All sources</option>
+      <option value="raghav">Raghav (D&amp;B)</option>
+      <option value="raven">Raven</option>
+      <option value="3cx_calls">3CX calls</option>
+    </select>
     <select id="enriched">
       <option value="">All enrichment</option>
       <option value="yes">Enriched</option>
@@ -74,11 +80,11 @@
   <div class="tablewrap">
     <table>
       <thead><tr>
-        <th>Business</th><th>Website</th><th>Industry</th><th>Location</th>
+        <th>Business</th><th>Website</th><th>Paid ads</th><th>Source</th><th>Industry</th><th>Sub-industry</th><th>Location</th>
         <th class="num">Businesses</th><th class="num">Total revenue</th><th class="num">Employees</th>
-        <th class="num">Contacts</th><th>Phone</th><th>Paid ads</th><th>Enriched</th>
+        <th class="num">Contacts</th><th>Phone</th><th>Enriched</th>
       </tr></thead>
-      <tbody id="rows"><tr><td colspan="11" class="muted">Loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="13" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
   <div class="pager">
@@ -118,6 +124,11 @@ function paidAdsCell(r){
   if(r.scanned) return '<span class="muted">No</span>';
   return '<span class="muted" title="website not scanned yet">·</span>';
 }
+const SRC_LABEL={raghav:'Raghav (D&B)',raven:'Raven','3cx_calls':'3CX calls',dnb_wholesale:'Raghav (D&B)',given_data:'Uploaded'};
+function sourcesCell(s){
+  if(!s) return '<span class="muted">—</span>';
+  return String(s).split(',').map(x=>`<span class="pill" style="background:var(--chip);font-size:11px">${esc(SRC_LABEL[x]||x)}</span>`).join(' ');
+}
 function rowHtml(r){
   const enr = r.enriched?'<span class="pill ok">enriched</span>':'<span class="pill none">—</span>';
   const multi = r.businesses>1?` <span class="muted" style="font-size:11px">+${r.businesses-1} more</span>`:'';
@@ -127,24 +138,26 @@ function rowHtml(r){
   return `<tr ${click}>
     <td><b>${esc(r.name||'—')}</b>${multi}</td>
     <td>${r.domain?`<span class="dom">${esc(r.domain)}</span>`:'<span class="muted">—</span>'}</td>
+    <td>${paidAdsCell(r)}</td>
+    <td>${sourcesCell(r.sources||r.source)}</td>
     <td>${esc(r.industry||'—')}</td>
+    <td>${esc(r.sub_industry||'—')}</td>
     <td>${esc(r.location||'—')}</td>
     <td class="num">${fmtN(r.businesses)}</td>
     <td class="num">${fmtRev(r.total_revenue)}</td>
     <td class="num">${fmtN(r.employees)}</td>
     <td class="num">${fmtN(r.contacts)}</td>
     <td>${esc(r.phone||'—')}</td>
-    <td>${paidAdsCell(r)}</td>
     <td>${enr}</td>
   </tr>`;
 }
 
 async function loadRows(flash){
-  const q=$('#search').value.trim(), en=$('#enriched').value, pa=$('#paidAds').value;
-  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&paid_ads=${pa}&limit=${limit}&offset=${offset}`;
+  const q=$('#search').value.trim(), en=$('#enriched').value, pa=$('#paidAds').value, sr=$('#source').value;
+  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&paid_ads=${pa}&source=${sr}&limit=${limit}&offset=${offset}`;
   let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
   total=d.total;
-  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="11" class="muted">No matching businesses.</td></tr>';
+  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="13" class="muted">No matching businesses.</td></tr>';
   if(flash) $('#rows').classList.add('flash'), setTimeout(()=>$('#rows').classList.remove('flash'),1200);
   const from = total?offset+1:0, to=Math.min(offset+limit,total);
   $('#rangeText').textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`;
@@ -155,6 +168,7 @@ let searchTimer;
 $('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();},250); });
 $('#enriched').onchange=()=>{offset=0;loadRows();};
 $('#paidAds').onchange=()=>{offset=0;loadRows();};
+$('#source').onchange=()=>{offset=0;loadRows();};
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };
 

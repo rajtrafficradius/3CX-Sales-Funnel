@@ -123,6 +123,43 @@ VALUES (
 """
 
 
+# Friendly source names for the Database browser filter.
+SOURCE_LABELS = {"raghav": "Raghav (D&B)", "raven": "Raven", "3cx_calls": "3CX calls",
+                 "dnb_wholesale": "Raghav (D&B)", "given_data": "Uploaded"}
+
+
+def sync_company_sources_from_prospects(pool: ConnectionPool) -> dict:
+    """Mirror the Raven master-file (-> source 'raven') and 3CX call-captured
+    (-> '3cx_calls') prospects into `companies` so the Database browser shows ALL
+    data sources with a source filter. Idempotent: rebuilds those two sources each
+    run (never touches Raghav's 'raghav' rows). Set-based + cheap."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM companies WHERE source IN ('raven', '3cx_calls')")
+        cur.execute(
+            """
+            INSERT INTO companies (source, company_name, domain, phone, phone_norm, suburb, contacts, created_at)
+            SELECT CASE WHEN p.source = 'master_file' THEN 'raven' ELSE '3cx_calls' END,
+                   COALESCE(NULLIF(p.business_name, ''), NULLIF(p.domain, ''), 'Unknown'),
+                   NULLIF(p.domain, ''),
+                   COALESCE(p.contact1_mobile, p.contact1_phone),
+                   (p.phones_norm)[1],
+                   p.location,
+                   COALESCE((SELECT jsonb_agg(x) FROM jsonb_array_elements(jsonb_build_array(
+                       CASE WHEN p.contact1_name IS NOT NULL THEN jsonb_build_object('name', p.contact1_name, 'role', p.contact1_title) END,
+                       CASE WHEN p.contact2_name IS NOT NULL THEN jsonb_build_object('name', p.contact2_name, 'role', p.contact2_title) END
+                   )) x WHERE x IS NOT NULL), '[]'::jsonb),
+                   now()
+            FROM prospects p WHERE p.source IN ('master_file', 'call_capture')
+            """
+        )
+        n = cur.rowcount
+        # Normalise the legacy D&B tag to the friendly 'raghav' source.
+        cur.execute("UPDATE companies SET source='raghav' WHERE source IN ('dnb_wholesale','given_data')")
+        conn.commit()
+    log.info("sync_company_sources", mirrored=n)
+    return {"mirrored": n}
+
+
 def load_companies_from_csv(pool: ConnectionPool, csv_path: str,
                             source: str = "given_data", batch: int = 1000) -> dict:
     """Replace all rows for `source` with the file's rows (idempotent per source)."""

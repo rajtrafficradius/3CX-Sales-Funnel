@@ -1325,7 +1325,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/database/prospects")
     def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
-                           enriched: str = "", pipeline: str = "", paid_ads: str = "") -> JSONResponse:
+                           enriched: str = "", pipeline: str = "", paid_ads: str = "",
+                           source: str = "") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         Businesses with no domain are listed individually. Dynamic metrics (SEO/Apollo/
@@ -1345,6 +1346,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 sd += " OR co.phone_norm LIKE %(qd)s"
                 sn += " OR co.phone_norm LIKE %(qd)s"
             sd += ")"; sn += ")"
+        src = ""
+        if source in ("raghav", "raven", "3cx_calls"):
+            src = " AND co.source = %(src)s"
+            params["src"] = source
         conds = []
         if enriched == "yes":
             conds.append("ge.enriched")
@@ -1363,16 +1368,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  sum(co.revenue_musd) AS total_revenue, max(co.employees) AS employees,
                  (array_agg(co.company_name ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS name,
                  (array_agg(co.industry ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS industry,
+                 (array_agg(co.sub_industry ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS sub_industry,
                  (array_agg(NULLIF(concat_ws(', ', co.suburb, co.state), '') ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS location,
                  (array_remove(array_agg(co.phone_norm ORDER BY co.revenue_musd DESC NULLS LAST), NULL))[1] AS phone,
-                 sum(jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))) AS contacts
-          FROM companies co WHERE co.domain IS NOT NULL {sd}
+                 sum(jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))) AS contacts,
+                 array_to_string(array_agg(DISTINCT co.source), ',') AS sources
+          FROM companies co WHERE co.domain IS NOT NULL {sd}{src}
           GROUP BY co.domain
           UNION ALL
-          SELECT NULL, 'nodomain', 1, co.revenue_musd, co.employees, co.company_name, co.industry,
+          SELECT NULL, 'nodomain', 1, co.revenue_musd, co.employees, co.company_name, co.industry, co.sub_industry,
                  NULLIF(concat_ws(', ', co.suburb, co.state), ''), co.phone_norm,
-                 jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))
-          FROM companies co WHERE co.domain IS NULL {sn}
+                 jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb)), co.source
+          FROM companies co WHERE co.domain IS NULL {sn}{src}
         ), ge AS (
           SELECT g.*, (e.status IS NOT NULL) AS enriched,
                  (e.website IS NOT NULL) AS scanned,
