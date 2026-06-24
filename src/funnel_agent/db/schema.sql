@@ -2,6 +2,10 @@
 -- Applied idempotently by `init-db`. Lives in the team's OWN Postgres,
 -- never in the 3CX database.
 
+-- Fail fast if any DDL (ALTER TABLE …) is blocked by a lock held by the running
+-- refresh loop, instead of hanging — the entrypoint then simply retries init-db.
+SET lock_timeout = '4s';
+
 CREATE TABLE IF NOT EXISTS bde_agents (
   extension   text PRIMARY KEY,
   bde_name    text,
