@@ -142,7 +142,11 @@
   html.tv header,html.tv #clsBar{flex:none}
   html.tv header label,html.tv #bde,html.tv #period,html.tv #startDate,html.tv #endDate,html.tv #reviewBadge,html.tv #tvBtn,html.tv #calBtn,html.tv #p2Btn,html.tv #dbBtn,html.tv #adminBtn,html.tv #whoami,html.tv #logoutBtn{display:none}
   .who{font-size:12px;color:var(--muted);white-space:nowrap}
-  html.tv #trendCard,html.tv #reviewCard{display:none}        /* show only through the leaderboard */
+  /* TV is a wall display: show KPIs -> funnel -> lead/pipeline -> leaderboard only.
+     Operational worklists (channel, pitch quality, RPC follow-up, trend, review) are
+     manager desk tools and are hidden here so the view fits ONE screen without overlap. */
+  html.tv #trendCard,html.tv #reviewCard,html.tv #channelCard,html.tv #pitchCard,html.tv #rpcCard,html.tv #pipelineCard{display:none}
+  html.tv #leadCard{flex:none}   /* small chips row — fixed height, don't let it grow/overlap */
   html.tv main{max-width:none;flex:1;min-height:0;display:flex;flex-direction:column;gap:1.1vh;padding:1.1vh 1.4vw;overflow:hidden}
   html.tv main>div{margin-top:0!important}
   html.tv .grid.cols-kpi{flex:none}
