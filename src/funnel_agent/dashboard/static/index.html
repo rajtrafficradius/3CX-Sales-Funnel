@@ -535,6 +535,19 @@ async function openStageList(stage,label,bdeOverride){
     try{ const od=await jget(`${base}&stage=${other}&limit=1`); oc=` (${od.count})`; }catch(e){}
     toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('${other}','${other.charAt(0).toUpperCase()+other.slice(1)}',${jsq(bde)})">→ view ${other} calls${oc}</span></div>`;
   }
+  // Qualified views ⇄ Disqualified: surface the disqualified count + a reference link
+  // inside the Qualified (and Qualified Booked) drawer, and a back-link from Disqualified.
+  if(stage==='qualified'||stage==='qualified_booked'||stage==='disqualified'){
+    const other = stage==='disqualified' ? 'qualified' : 'disqualified';
+    const olabel = other==='disqualified' ? 'Disqualified — reached decision-maker, not qualified' : 'Qualified leads';
+    let oc='';
+    try{ const od=await jget(`${base}&stage=${other}&limit=1`); oc=` (${od.count})`; }catch(e){}
+    const note = other==='disqualified'
+      ? 'Disqualified = leads that reached a decision-maker but did NOT pass the qualification gate (BANT/BAPU).'
+      : 'Qualified = leads that passed the qualification gate.';
+    toggle=`<div class="stagetoggle"><span class="muted">${note}</span>
+      <span class="drill" onclick="openStageList('${other}','${olabel.replace(/'/g,'')}',${jsq(bde)})">→ view ${other}${oc}</span></div>`;
+  }
   // Meeting Booked drawer: link to reschedules/confirmations (NOT counted in the funnel,
   // shown for reference only — the booking was already counted when first made).
   if(stage==='meetings_booked'||stage==='already_booked'){

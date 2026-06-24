@@ -356,7 +356,7 @@ async function enrichWebsite(){
 }
 
 function bapu(label,v){const on=v&&v.value;return v?`<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`:'';}
-function callEvent(c){
+function callEvent(c, canDownload){
   const ev=(c.evidence&&typeof c.evidence==='object')?c.evidence:{};
   const connected = c.answered && (c.talk_seconds>=15) && c.call_outcome!=='voicemail';
   const booked = c.meeting_booked && !c.meeting_confirmation;
@@ -378,6 +378,11 @@ function callEvent(c){
   const contract=ev.contract_end?`<div class="small mt6"><b>📄 Contract signal:</b> ${esc(ev.contract_end)}${ev.recommended_cadence_days?` · suggest next call in ~${ev.recommended_cadence_days} days`:''}</div>`:'';
   const who=ev.who_answered?`<span class="muted small">· ${esc(ev.who_answered)}</span>`:'';
   const summ=c.transcript_summary||ev.prospect_summary||'';
+  const rec = c.recording_id
+    ? `<div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+         <audio controls preload="none" style="height:32px;max-width:320px" src="/api/call/${encodeURIComponent(c.call_id)}/recording"></audio>
+         ${canDownload?`<a class="lnk small" href="/api/call/${encodeURIComponent(c.call_id)}/recording?download=1" download title="Download recording">⬇</a>`:''}</div>`
+    : '';
   return `<div class="${cls}">
     <div class="evhead">
       <span class="dt">${fmtDate(c.started_at)}</span>
@@ -385,6 +390,7 @@ function callEvent(c){
       <span class="muted small">${c.talk_seconds||0}s · ${esc(c.call_outcome)||(connected?'connected':'no connect')}</span>${who}
       <a class="lnk small" style="margin-left:auto" href="/call/${encodeURIComponent(c.call_id)}" target="_blank">Open call ↗</a>
     </div>
+    ${rec}
     ${tags.length||bapus||summ||sigHtml||objHtml||next||contract?`<div class="evbody">
       ${tags.length?`<div style="display:flex;gap:6px;flex-wrap:wrap">${tags.join('')}</div>`:''}
       ${bapus}
@@ -398,7 +404,7 @@ function timelineCard(d){
   const calls=(d.calls||[]).slice().reverse(); // newest first
   if(!calls.length) return `<div class="card full"><h2>Call history</h2><div class="muted">No calls.</div></div>`;
   return `<div class="card full"><h2>Call history — ${calls.length} call${calls.length>1?'s':''} across ${(d.rollup.bdes||[]).length} BDE(s)</h2>
-    <div class="tl">${calls.map(callEvent).join('')}</div></div>`;
+    <div class="tl">${calls.map(c=>callEvent(c, d.can_download)).join('')}</div></div>`;
 }
 
 async function addPhone(){

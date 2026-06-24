@@ -972,6 +972,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                "AND NOT COALESCE(cl.meeting_rescheduled, false) AND NOT COALESCE(cl.qualified, false)",
         "lead": f"{_CONN} AND cl.rpc_connect AND cl.is_lead",
         "qualified": f"{_CONN} AND cl.rpc_connect AND cl.is_lead AND cl.qualified",
+        # Disqualified = a lead that reached a decision-maker but did NOT pass the
+        # qualification gate (BANT/BAPU). The clean complement of `qualified` within
+        # leads, so qualified + disqualified = leads. Honours a BDM/admin override.
+        "disqualified": f"{_CONN} AND cl.rpc_connect AND cl.is_lead AND NOT COALESCE("
+                        "(SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), "
+                        "cl.qualified, false)",
         # Lead quality + pipeline routing (interested pipeline only carries temperature).
         "warm": f"{_CONN} AND cl.lead_temperature = 'warm'",
         "hot": f"{_CONN} AND cl.lead_temperature = 'hot'",
@@ -1061,6 +1067,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "can_override": can_manage_pipeline(u),  # BDM/admin only
         }))
 
+    # One cached 3CX client (reuses its OAuth token) for streaming recordings on demand.
+    _tcx: dict = {}
+
+    def _threecx():
+        cli = _tcx.get("c")
+        if cli is None:
+            from ..threecx.api import ThreeCXClient
+            cli = ThreeCXClient(settings)
+            _tcx["c"] = cli
+        return cli
+
+    @app.get("/api/call/{call_id}/recording")
+    def call_recording(request: Request, call_id: str, download: int = 0):
+        """Stream a call's recording audio from 3CX on demand. PLAY is available to any
+        logged-in staff user; DOWNLOAD (attachment) is restricted to BDM / admin."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":               # the public TV display can't pull audio
+            raise HTTPException(403, "login required")
+        rows = q("SELECT bde_name, bde_extension, recording_id FROM calls WHERE call_id=%s", (call_id,))
+        if not rows:
+            raise HTTPException(404, "call not found")
+        call = rows[0]
+        if _is_bde(request):                        # a BDE may only hear their own calls
+            own = _scoped_bde(request, None)
+            if (call.get("bde_name") or call.get("bde_extension")) != own:
+                raise HTTPException(403, "not your call")
+        rec_id = call.get("recording_id")
+        if not rec_id:
+            raise HTTPException(404, "no recording for this call")
+        if download and not can_manage_pipeline(u):
+            raise HTTPException(403, "download is restricted to BDM / admin")
+        try:
+            wav = _threecx().download_recording(rec_id)
+        except Exception:
+            _tcx.pop("c", None)                     # token may be stale — rebuild + retry once
+            wav = _threecx().download_recording(rec_id)
+        disp = "attachment" if download else "inline"
+        return Response(content=wav, media_type="audio/wav", headers={
+            "Content-Disposition": f'{disp}; filename="call_{call_id}.wav"',
+            "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600",
+        })
+
     @app.post("/api/call/{call_id}/qualify-override")
     async def call_qualify_override(request: Request, call_id: str) -> JSONResponse:
         """#4b — BDM/admin re-qualifies a booked meeting with a MANDATORY reason. The
@@ -1128,6 +1176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _PCALL_COLS = (
         "c.call_id, c.bde_name, c.bde_extension, c.dest_number, c.started_at, "
         "c.talk_seconds, c.answered, c.fresh_or_followup, c.direction, c.has_transcript, "
+        "c.recording_present, c.recording_id, "
         "cl.call_outcome, cl.rpc_connect, cl.full_pitch, cl.is_lead, cl.qualified, "
         "cl.meeting_booked, cl.meeting_confirmation, cl.meeting_rescheduled, "
         "cl.budget, cl.authority, cl.problem, cl.urgency, "
@@ -1350,6 +1399,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "company_summary": company_summary,
             "rollup": rollup,
             "paid_ads": _paid_ads_intel(enr, calls),
+            "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
             "calls": calls,
         }))
 

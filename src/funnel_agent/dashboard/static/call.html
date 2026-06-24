@@ -111,6 +111,21 @@ const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['�
 const PIPE={pipeline1_interested:'Pipeline 1 · Interested',pipeline2_existing_agency:'Pipeline 2 · Already with an agency',none:'No pipeline'};
 function bapuChip(label,v){const on=v&&v.value;return `<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`;}
 
+// Call-recording player. Playback is available to every logged-in user; the download
+// button is shown only to BDM / admin (can_override from the API).
+function recordingCard(c, canDownload){
+  if(!c || !c.recording_id) return c && c.recording_present
+    ? `<div class="card full"><h2>🎧 Call recording</h2><div class="muted">The call was recorded but 3CX did not return a downloadable recording id.</div></div>`
+    : '';
+  const url=`/api/call/${encodeURIComponent(c.call_id)}/recording`;
+  const dl = canDownload
+    ? `<a class="lnk" href="${url}?download=1" download style="margin-left:12px">⬇ Download</a>`
+    : `<span class="muted" style="margin-left:12px;font-size:12px">Download: BDM / admin only</span>`;
+  return `<div class="card full"><h2>🎧 Call recording</h2>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <audio controls preload="none" style="height:38px;max-width:420px;flex:1" src="${url}"></audio>${dl}
+    </div></div>`;
+}
 function leadCard(cl, ev){
   const t=cl.lead_temperature||'none', [lbl,col,bg]=TEMP[t]||TEMP.none;
   const cb = cl.callback_requested
@@ -313,7 +328,7 @@ async function load(){
   const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${txBody}</div></div>`;
 
   const tabs=[
-    ['summary','Summary', leadCard(cl,ev) + qualOverrideCard(d) + meta + verdicts + extractedCard(cl,ev)],
+    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + meta + verdicts + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['transcript','Transcript', transcript],
