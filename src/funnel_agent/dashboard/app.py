@@ -88,18 +88,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user = None
         # Kiosk: an office TV may pass ?token=<KIOSK_TOKEN> once (then a cookie) for
         # a read-only ALL view without a personal login.
+        # A REAL login always wins — check the session FIRST so an admin/BDE who once
+        # opened TV mode (and got the kiosk cookie) isn't downgraded to read-only kiosk
+        # on the normal dashboard.
+        if token := request.cookies.get("fa_session"):
+            user = await run_in_threadpool(user_for_session, pool, token)
+        # TV mode is PUBLIC: anyone NOT logged in with the link (?tv=1 / /tv / kiosk token
+        # / kiosk cookie) gets a READ-ONLY kiosk view. A cookie keeps the TV page's /api
+        # calls authed for that display. (Skipped entirely when a real session exists.)
         ktok = settings.kiosk_token
         via_query_token = bool(ktok) and request.query_params.get("token") == ktok
-        # TV mode is PUBLIC (per request): anyone with the link (?tv=1 or /tv) gets a
-        # READ-ONLY kiosk view, no login. A cookie is set so the page's /api calls stay
-        # authed for that browser. Writes are still blocked (kiosk role).
         via_tv = request.query_params.get("tv") == "1" or path == "/tv"
         kiosk_cookie = request.cookies.get("fa_kiosk")
         via_cookie = bool(kiosk_cookie) and (kiosk_cookie == ktok or kiosk_cookie == "tv")
-        if via_query_token or via_tv or via_cookie:
+        if user is None and (via_query_token or via_tv or via_cookie):
             user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
-        if user is None and (token := request.cookies.get("fa_session")):
-            user = await run_in_threadpool(user_for_session, pool, token)
         request.state.user = user
 
         if path not in _PUBLIC and user is None:
@@ -108,7 +111,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return RedirectResponse("/login", status_code=302)
 
         resp = await call_next(request)
-        if via_query_token or via_tv:
+        # Only persist the kiosk cookie for an ACTUAL kiosk view (not a logged-in user
+        # who happened to open a TV link) — so logins are never downgraded to kiosk.
+        if (via_query_token or via_tv) and (request.state.user or {}).get("role") == "kiosk":
             resp.set_cookie("fa_kiosk", ktok or "tv", max_age=31536000, httponly=True, samesite="lax")
         return resp
 
