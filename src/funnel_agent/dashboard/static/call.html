@@ -31,6 +31,35 @@
   .transcript{white-space:pre-wrap;background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:60vh;overflow:auto;font:13px/1.65 ui-monospace,Menlo,monospace;color:#cbd5e1}
   .muted{color:var(--muted)}
   .big{font-size:20px;font-weight:700}
+  /* lead qualification */
+  .bapus{display:flex;gap:8px;flex-wrap:wrap}
+  .bapu{padding:5px 13px;border-radius:8px;font-weight:700;font-size:12.5px;border:1px solid;cursor:default}
+  .bapu.on{background:rgba(34,197,94,.15);color:#4ade80;border-color:rgba(34,197,94,.4)}
+  .bapu.off{background:rgba(239,68,68,.10);color:#f87171;border-color:rgba(239,68,68,.3)}
+  .tbadge{padding:5px 14px;border-radius:20px;font-weight:800;font-size:13px;letter-spacing:.5px}
+  /* shared layout helpers */
+  .bizgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:700px){.bizgrid{grid-template-columns:1fr}}
+  .subh{font-weight:700;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:11.5px;color:var(--muted)}
+  ul.ci{margin:6px 0;padding-left:18px;font-size:13px}
+  ul.ci li{margin:3px 0}
+  .obj{margin:7px 0}
+  .scrow{display:flex;align-items:center;gap:10px;margin:6px 0}
+  .scl{width:140px;font-size:12.5px}
+  .sctrack{flex:1;height:8px;background:#0b0f15;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .sctrack i{display:block;height:100%;background:linear-gradient(90deg,#3b82f6,#22c55e)}
+  .scn{width:34px;text-align:right;font-size:12px;color:var(--muted)}
+  a.lnk{color:var(--accent);text-decoration:none}
+  /* tabs */
+  .tabs{grid-column:1/-1;display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:2px;flex-wrap:wrap}
+  .tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent}
+  .tab:hover{color:var(--txt)}
+  .tab.active{color:var(--txt);border-bottom-color:var(--accent)}
+  .tabpane{grid-column:1/-1;display:none}
+  .tabpane.active{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.tabpane.active{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -47,16 +76,26 @@ const pill=(v)=>`<span class="pill ${v?'yes':'no'}">${v?'YES':'NO'}</span>`;
 const esc=s=>(s==null?'':String(s)).replace(/[&<]/g,c=>({'&':'&amp;','<':'&lt;'}[c]));
 const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
 
-// Final funnel verdict for a booking: counted vs confirmation vs baby-prospect.
+// Final funnel verdict for a booking. Reschedules & confirmations are NOT counted
+// again (the booking was counted the day it was first made); tentative/cancelled
+// attempts never count.
+function banner(css,txt){return `<div style="padding:10px 12px;border-radius:8px;font-weight:700;margin:0 0 12px;line-height:1.4;${css}">${txt}</div>`;}
 function bookingBanner(ev){
-  if(!(ev.meeting_booked && ev.meeting_booked.value)) return '';
+  const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
+        GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
+  if(!(ev.meeting_booked && ev.meeting_booked.value)){
+    const bs=ev.booking_status;
+    if(bs==='cancelled_or_declined') return banner(AMBER,'❌ Booking attempt — the prospect cancelled / declined. NOT counted as a booking.');
+    if(bs==='tentative') return banner(GREY,'🕓 Tentative only — no firm date/time was agreed. NOT counted as a booking.');
+    return '';
+  }
   const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
+  const resched = ev.meeting_rescheduled && ev.meeting_rescheduled.value;
   const qual = ev.qualified && ev.qualified.value;
-  let css, txt;
-  if(conf){ css='background:rgba(251,191,36,.16);color:#fbbf24'; txt='📞 Meeting Confirmation Call — confirms a meeting booked on an earlier call (NOT counted as a new booking)'; }
-  else if(!qual){ css='background:rgba(239,68,68,.16);color:#f87171'; txt='🚫 Booking cancelled — baby prospect / not qualified (NOT counted)'; }
-  else { css='background:rgba(34,197,94,.16);color:#4ade80'; txt='✅ Meeting Booked — genuine new qualified booking (counted)'; }
-  return `<div style="padding:10px 12px;border-radius:8px;font-weight:700;margin:0 0 12px;line-height:1.4;${css}">${txt}</div>`;
+  if(conf) return banner(AMBER,'📞 Meeting Confirmation Call — re-confirms a meeting booked on an earlier call. NOT counted again.');
+  if(resched) return banner(AMBER,'🔁 Rescheduled booking — re-books an earlier meeting to a new date. NOT counted again (the original was already counted).');
+  if(qual) return banner(GREEN,'✅ Qualified booked meeting — counts as Meeting Booked AND Qualified Booked.');
+  return banner(BLUE,'📅 Meeting Booked (counted) — booked by the BDE but not yet qualified (BANT), so excluded from Qualified Booked Meetings.');
 }
 
 function stageRow(name, v){
@@ -66,13 +105,175 @@ function stageRow(name, v){
     <div style="text-align:right">${pill(v.value)}<div class="muted" style="font-size:11px;margin-top:3px">${conf}</div></div></div>`;
 }
 
+const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
+const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
+            warm:['🌤 WARM','#fbbf24','rgba(251,191,36,.16)'],none:['—','#8b949e','rgba(139,148,158,.12)']};
+const PIPE={pipeline1_interested:'Pipeline 1 · Interested',pipeline2_existing_agency:'Pipeline 2 · Already with an agency',none:'No pipeline'};
+function bapuChip(label,v){const on=v&&v.value;return `<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`;}
+
+function leadCard(cl, ev){
+  const t=cl.lead_temperature||'none', [lbl,col,bg]=TEMP[t]||TEMP.none;
+  const cb = cl.callback_requested
+    ? `<span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">📞 Callback${cl.callback_when?': '+esc(cl.callback_when):' requested'}</span>` : '';
+  const qpill = ev.qualified ? `<span class="pill ${ev.qualified.value?'yes':'no'}">${ev.qualified.value?'✓ Qualified':'Not qualified'}</span>` : '';
+  const autov = (ev.runs_paid_ads||ev.has_marketing_agency)
+    ? `<div class="muted" style="font-size:12.5px;margin-top:10px">⚡ Auto-validated (budget + aspiration): ${[ev.runs_paid_ads?'already runs paid ads':null, ev.has_marketing_agency?'already has a marketing agency':null].filter(Boolean).join(' · ')}</div>` : '';
+  const prob = ev.problem_summary ? `<div style="font-size:13px;margin-top:10px"><b>Marketing problem (prospect's words):</b> ${esc(ev.problem_summary)}</div>` : '';
+  return `<div class="card full"><h2>Lead qualification — BANT + Aspiration / Open-to-listening</h2>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <span class="tbadge" style="background:${bg};color:${col}">${lbl}</span>
+      <span class="muted">${PIPE[cl.pipeline]||esc(cl.pipeline)||'—'}</span>${qpill}${cb}
+    </div>
+    <div class="bapus">${bapuChip('Budget',ev.budget)}${bapuChip('Authority',ev.authority)}${bapuChip('Problem',ev.problem)}${bapuChip('Urgency',ev.urgency)}${bapuChip('Aspiration',ev.aspiration)}${bapuChip('Open to listening',ev.open_to_listening)}</div>
+    ${autov}${prob}
+  </div>`;
+}
+
+// BDM/admin qualification override (#4b). Shown on booked meetings; lets a BDM flip
+// the AI's qualification with a mandatory reason — the funnel honours it.
+function qualOverrideCard(d){
+  const cl=d.classification||{}, ev=cl.evidence||{};
+  const booked = ev.meeting_booked && ev.meeting_booked.value;
+  const o=d.qual_override;
+  if(!booked && !o) return '';  // only relevant for booked meetings
+  const aiQ = ev.qualified && ev.qualified.value;
+  const eff = o ? o.qualified : aiQ;
+  const effPill = `<span class="pill ${eff?'yes':'no'}">${eff?'✓ Qualified':'Not qualified'}</span>`;
+  const src = o ? `<span class="muted">BDM override by ${esc(o.override_by)||'?'} · ${esc(String(o.created_at||'').slice(0,16).replace('T',' '))}</span>` : `<span class="muted">AI verdict</span>`;
+  const reason = o ? `<div style="margin-top:8px;font-size:13px"><b>Reason:</b> ${esc(o.reason)}</div>` : '';
+  let controls='';
+  if(d.can_override){
+    controls = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+      <div class="subh">BDM re-qualification</div>
+      <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button id="qoYes" style="background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.4);border-radius:8px;padding:8px 13px;cursor:pointer">✓ Mark Qualified</button>
+        <button id="qoNo" style="background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:8px 13px;cursor:pointer">✕ Mark Not Qualified</button>
+        ${o?`<button id="qoClear" style="background:#0b0f15;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:8px 13px;cursor:pointer">Clear override (revert to AI)</button>`:''}
+      </div></div>`;
+  }
+  return `<div class="card full"><h2>Qualification review (BDM) ${effPill}</h2>
+    <div>${src}${o?` · AI said ${aiQ?'qualified':'not qualified'}`:''}</div>${reason}${controls}</div>`;
+}
+async function setQualOverride(qualified){
+  const reason=(document.getElementById('qoReason')||{}).value||'';
+  if(!reason.trim()){ alert('A reason is required.'); return; }
+  const r=await fetch(`/api/call/${encodeURIComponent(id)}/qualify-override`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qualified,reason})});
+  if(r.ok){ load(); } else { const j=await r.json().catch(()=>({})); alert(j.error||('Error '+r.status)); }
+}
+async function clearQualOverride(){
+  const r=await fetch(`/api/call/${encodeURIComponent(id)}/qualify-override/clear`,{method:'POST'});
+  if(r.ok) load();
+}
+
+// Contact details + key facts the AI extracted from the call itself (#7a).
+function extractedCard(cl, ev){
+  const rows=[['Name',esc(cl.prospect_contact_name)],['Mobile',esc(cl.prospect_mobile)],
+    ['Email',cl.prospect_email?`<a class="lnk" href="mailto:${esc(cl.prospect_email)}">${esc(cl.prospect_email)}</a>`:null],
+    ['Company',esc(cl.prospect_company||ev.prospect_company)],
+    ['Website',(cl.prospect_website||ev.prospect_website)?esc(cl.prospect_website||ev.prospect_website):null],
+    ['Industry',esc(cl.prospect_industry||ev.prospect_industry)]].filter(r=>r[1]!=null&&r[1]!=='');
+  const facts=(ev.key_facts||[]);
+  if(!rows.length && !facts.length) return '';
+  const kv=rows.length?`<div class="kv">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`:'';
+  const factsHtml=facts.length?`<div class="subh" style="margin-top:12px">Key facts heard on the call</div><ul class="ci">${facts.map(f=>`<li>${esc(f)}</li>`).join('')}</ul>`:'';
+  return `<div class="card"><h2>📇 Extracted from the call</h2>${kv}${factsHtml}</div>`;
+}
+
+// Merge master-DB metrics (always present for a matched prospect) with live
+// SEMrush/Apollo enrichment (enrichment wins; master fills gaps). Same logic as
+// the consolidated prospect page so call & prospect pages are consistent.
+function bizCard(d){
+  const cl=d.classification||{}, ev=cl.evidence||{}, e=d.enrichment||{}, m=d.master||{};
+  const ap=(e&&e.apollo)||{}, sm=(e&&e.semrush)||{};
+  const site=d.domain||cl.prospect_website||ev.prospect_website||'';
+  const company=ap.name||ev.prospect_company||m.business_name||'';
+  const industry=ap.industry||ev.prospect_industry||'';
+  const hasMaster=!!m.domain;
+  if(!(site||company||ap.found||sm.found||hasMaster))
+    return `<div class="card full"><h2>Business &amp; marketing intelligence</h2>
+      <div class="muted">This number isn't in the master prospect database and the prospect didn't state a website, so no marketing data could be looked up. Any user can add the business via the prospect page.</div></div>`;
+  const kv=rows=>rows.filter(r=>r[1]!=null&&r[1]!=='').map(([k,v])=>`<div>${k}</div><div>${v}</div>`).join('')||'<div class="muted">—</div>';
+  const pick=(en,ma)=>{ if(en!=null&&en!=='') return en; if(ma!=null&&ma!=='') return ma; return null; };
+  const otraf=pick(sm.organic_traffic,m.organic_traffic), okw=pick(sm.organic_keywords,m.organic_keywords);
+  const ocost=pick(sm.organic_cost,m.organic_cost), adkw=pick(sm.paid_keywords,m.adwords_keywords);
+  const rev=ap.annual_revenue_printed||(ap.annual_revenue?'$'+fmtN(ap.annual_revenue):null);
+  // Fallback revenue band when Apollo has none: SEMrush traffic value × 12 is a rough floor.
+  const revEst = (!rev && sm.organic_cost) ? '≈ $'+fmtN(sm.organic_cost*12)+' /yr (est. from SEO value)' : null;
+  const loc=[ap.city,ap.state,ap.country].filter(Boolean).join(', ')||m.location||'';
+  const link=(u,t)=>u?`<a class="lnk" href="${esc(u)}" target="_blank">${t}</a>`:null;
+  const bizRows=[['Company',esc(company)],['Industry',esc(industry)],
+    ['Est. revenue', rev?esc(rev):(revEst?`<span class="muted">${esc(revEst)}</span>`:null)],
+    ['Employees',ap.employees!=null?fmtN(ap.employees):null],['Founded',ap.founded_year],['Location',esc(loc)],
+    ['Phone',esc(ap.phone)],['Website',site?link('https://'+site,esc(site)):null],['LinkedIn',link(ap.linkedin_url,'profile')]];
+  const ads = adkw!=null ? (adkw>0?`Yes (${fmtN(adkw)} kw)`:'No') : null;
+  const seoRows=[['Authority score',sm.authority_score!=null?sm.authority_score+' / 100':null],
+    ['Organic traffic',otraf!=null?fmtN(otraf)+' /mo':null],
+    ['Organic keywords',okw!=null?fmtN(okw):null],
+    ['Est. traffic value',ocost!=null?'$'+fmtN(ocost)+' /mo':null],
+    ['Backlinks',sm.backlinks!=null?fmtN(sm.backlinks):null],
+    ['Referring domains',sm.referring_domains!=null?fmtN(sm.referring_domains):null],
+    ['Running Google Ads',ads]];
+  const tech=(ap.technologies||[]).slice(0,12);
+  const descr=ap.description?`<div class="muted" style="margin-top:10px;font-size:12.5px">${esc(ap.description)}</div>`:'';
+  const techHtml=tech.length?`<div class="subh" style="margin-top:10px">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
+  const srcNote = e&&e.fetched_at ? `<div class="muted" style="font-size:11.5px;margin-top:8px">Live enrichment ${esc(String(e.fetched_at).slice(0,10))}. SEO base from master DB.</div>`
+    : (hasMaster?`<div class="muted" style="font-size:11.5px;margin-top:8px">Showing master-DB metrics. Live SEMrush/Apollo not yet run for this domain.</div>`:'');
+  const prospectLink = d.call&&d.call.dest_number?`<a class="lnk" style="float:right;font-size:12px" href="/prospect/${encodeURIComponent(d.call.dest_number)}" target="_blank">Full prospect page ↗</a>`:'';
+  // Free website tracking-pixel detection (digital marketing / paid-ads evidence).
+  const w=(e&&e.website)||null;
+  let trackHtml='';
+  if(w&&w.found){
+    const trk=Object.values(w.trackers||{}), ads=w.paid_ad_platforms||[];
+    const badge=w.runs_paid_ads?'<span class="pill yes">✓ Running paid ads</span>':'<span class="pill" style="background:rgba(139,148,158,.14);color:#9aa4af">No ad pixels found</span>';
+    const chips=trk.length?trk.map(x=>`<span class="chip">${ads.includes(x)?'🎯 ':'📊 '}${esc(x)}</span>`).join(''):'<span class="muted">No tags found.</span>';
+    trackHtml=`<div style="margin-top:14px"><div class="subh">🌐 Website tracking (free scan) ${badge}</div>
+      <div class="chips">${chips}</div>
+      ${w.uses_utm?'<div class="muted" style="font-size:12px;margin-top:6px">Uses UTM campaign tracking.</div>':''}</div>`;
+  }
+  return `<div class="card full"><h2>Business &amp; marketing intelligence ${prospectLink}</h2>
+    <div class="bizgrid">
+      <div><div class="subh">🏢 Company</div><div class="kv">${kv(bizRows)}</div>${descr}${techHtml}</div>
+      <div><div class="subh">📈 Website / SEO &amp; ads</div><div class="kv">${kv(seoRows)}</div></div>
+    </div>${trackHtml}${srcNote}</div>`;
+}
+
+function scoreBar(label,v){v=Number(v||0);return `<div class="scrow"><span class="scl">${label}</span><span class="sctrack"><i style="width:${v/5*100}%"></i></span><span class="scn">${v}/5</span></div>`;}
+function ciCard(ev){
+  const ENG={dismissive:'#f87171',neutral:'#8b949e',engaged:'#4ade80',keen:'#22c55e'};
+  const SENT={negative:'#f87171',neutral:'#8b949e',positive:'#4ade80'};
+  const eng=ev.engagement||'neutral', sent=ev.prospect_sentiment||'neutral';
+  const sig=ev.buying_signals||[], objs=ev.objections||[], tips=ev.coaching_tips||[], sc=ev.scorecard||{};
+  const objHtml=objs.length?objs.map(o=>`<div class="obj"><div>${o.handled?'✅':'⚠️'} ${esc(o.objection)}</div><div class="muted" style="font-size:12.5px">↳ ${esc(o.response)||'(no response captured)'}</div></div>`).join(''):'<div class="muted">No objections raised.</div>';
+  return `<div class="card full"><h2>Conversation intelligence</h2>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <span class="pill" style="background:rgba(255,255,255,.06);color:${ENG[eng]||'#8b949e'}">Engagement: ${esc(eng)}</span>
+      <span class="pill" style="background:rgba(255,255,255,.06);color:${SENT[sent]||'#8b949e'}">Sentiment: ${esc(sent)}</span>
+      ${ev.next_step?`<span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">Next step: ${esc(ev.next_step)}</span>`:''}
+    </div>
+    <div class="bizgrid">
+      <div>
+        <div class="subh">🟢 Buying signals</div>
+        ${sig.length?`<ul class="ci">${sig.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>`:'<div class="muted">None.</div>'}
+        <div class="subh" style="margin-top:14px">🛡 Objections &amp; handling</div>${objHtml}
+      </div>
+      <div>
+        <div class="subh">📊 BDE scorecard</div>
+        ${scoreBar('Opening',sc.opening)}${scoreBar('Discovery',sc.discovery)}${scoreBar('Pitch',sc.pitch)}${scoreBar('Objection handling',sc.objection_handling)}${scoreBar('Close',sc.close)}
+        <div class="subh" style="margin-top:14px">🎯 Coaching tips</div>
+        ${tips.length?`<ul class="ci">${tips.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>`:'<div class="muted">—</div>'}
+      </div>
+    </div></div>`;
+}
+
 async function load(){
   let d;
   try{ const r=await fetch('/api/call/'+encodeURIComponent(id)); if(!r.ok)throw new Error(r.status); d=await r.json(); }
   catch(e){ document.getElementById('main').innerHTML='<div class="card full">Could not load call '+esc(id)+' ('+e.message+')</div>'; return; }
   const c=d.call||{}, t=d.transcript||{}, cl=d.classification||{}, ev=cl.evidence||{};
   document.getElementById('title').textContent = (c.bde_name||'?')+'  →  '+(c.dest_number||'');
-  document.getElementById('subtitle').textContent = (c.started_at||'')+'  ·  '+(c.fresh_or_followup||'');
+  document.getElementById('subtitle').innerHTML = esc(c.started_at||'')+'  ·  '+esc(c.fresh_or_followup||'')
+    + (c.dest_number?`  ·  <a class="lnk" href="/prospect/${encodeURIComponent(c.dest_number)}">View prospect (all calls) ↗</a>`:'');
 
   const meta=`<div class="card"><h2>Call</h2><div class="kv">
     <div>BDE</div><div>${esc(c.bde_name)} (ext ${esc(c.bde_extension)})</div>
@@ -95,7 +296,8 @@ async function load(){
     ${stageRow('Lead (interest)', ev.is_lead)}
     ${stageRow('Qualified', ev.qualified)}
     ${stageRow('Meeting Booked', ev.meeting_booked)}
-    ${ev.meeting_confirmation_only?stageRow('Meeting confirmation only (booked earlier)', ev.meeting_confirmation_only):''}
+    ${ev.meeting_rescheduled?stageRow('Rescheduled booking (re-booked an earlier meeting — still counts)', ev.meeting_rescheduled):''}
+    ${ev.meeting_confirmation_only?stageRow('Meeting confirmation only (re-confirmed, no new date)', ev.meeting_confirmation_only):''}
   </div>`;
 
   // The valuable two-way breakdown, side by side.
@@ -110,7 +312,23 @@ async function load(){
   else txBody = '<span class="muted">⚠ No transcript — this call was not recorded.</span>';
   const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${txBody}</div></div>`;
 
-  document.getElementById('main').innerHTML = meta+verdicts+prospect+bde+reasoning+summary+notes+transcript;
+  const tabs=[
+    ['summary','Summary', leadCard(cl,ev) + qualOverrideCard(d) + meta + verdicts + extractedCard(cl,ev)],
+    ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
+    ['biz','Business &amp; marketing', bizCard(d)],
+    ['transcript','Transcript', transcript],
+  ];
+  document.getElementById('main').innerHTML =
+    `<div class="tabs">${tabs.map((t,i)=>`<button class="tab${i===0?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
+    + tabs.map((t,i)=>`<div class="tabpane${i===0?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); document.getElementById('pane-'+b.dataset.pane).classList.add('active');
+  });
+  const qy=document.getElementById('qoYes'); if(qy) qy.onclick=()=>setQualOverride(true);
+  const qn=document.getElementById('qoNo'); if(qn) qn.onclick=()=>setQualOverride(false);
+  const qc=document.getElementById('qoClear'); if(qc) qc.onclick=clearQualOverride;
 }
 load();
 </script>

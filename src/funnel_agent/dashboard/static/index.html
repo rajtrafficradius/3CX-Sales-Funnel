@@ -19,8 +19,27 @@
   .brand img{height:30px;display:block}
   header h1 small{color:var(--muted);font-weight:400;margin-left:8px}
   .spacer{flex:1}
-  select,button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
+  select,button,input[type=date]{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
+  input[type=date]{color-scheme:dark}
   select:focus{outline:1px solid var(--accent)}
+  .delta{font-size:11px;font-weight:700;margin-left:6px}
+  .delta.up{color:#4ade80}.delta.down{color:#f87171}.delta.flat{color:var(--muted)}
+  .bench{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .bench.ok{color:#4ade80}.bench.bad{color:#f87171}
+  #funnelTable td.benchcell,#funnelTable th.benchhead{text-align:left;padding-left:16px;color:var(--muted)}
+  .leadchips{display:flex;gap:10px;flex-wrap:wrap}
+  .leadchip{display:flex;flex-direction:column;gap:2px;min-width:104px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+  .leadchip .n{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+  .leadchip .t{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .leadchip.drill{cursor:pointer}.leadchip.drill:hover{border-color:var(--accent)}
+  /* pipeline table */
+  #pipelineTable{width:100%;border-collapse:collapse;font-size:13px}
+  #pipelineTable th,#pipelineTable td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:center}
+  #pipelineTable th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+  #pipelineTable tr:last-child td{border-bottom:none}
+  #pipelineTable td .drill{cursor:pointer;font-weight:800;font-size:16px;font-variant-numeric:tabular-nums;color:var(--txt);border-bottom:1px dotted var(--muted)}
+  #pipelineTable td .drill:hover{color:var(--accent);border-color:var(--accent)}
+  #pipelineTable td.muted{color:var(--muted)}
   .badge{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:6px 12px;color:var(--txt);font-size:13px}
   /* Realtime LIVE indicator — makes it obvious the dashboard streams live */
   .livebadge{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 10px;border-radius:20px;
@@ -121,7 +140,8 @@
   html.tv,html.tv body{height:100%;overflow:hidden;margin:0}
   html.tv body{display:flex;flex-direction:column}
   html.tv header,html.tv #clsBar{flex:none}
-  html.tv header label,html.tv #bde,html.tv #date,html.tv #reviewBadge,html.tv #tvBtn{display:none}
+  html.tv header label,html.tv #bde,html.tv #period,html.tv #startDate,html.tv #endDate,html.tv #reviewBadge,html.tv #tvBtn,html.tv #calBtn,html.tv #p2Btn,html.tv #dbBtn,html.tv #adminBtn,html.tv #whoami,html.tv #logoutBtn{display:none}
+  .who{font-size:12px;color:var(--muted);white-space:nowrap}
   html.tv #trendCard,html.tv #reviewCard{display:none}        /* show only through the leaderboard */
   html.tv main{max-width:none;flex:1;min-height:0;display:flex;flex-direction:column;gap:1.1vh;padding:1.1vh 1.4vw;overflow:hidden}
   html.tv main>div{margin-top:0!important}
@@ -151,8 +171,22 @@
   <div class="spacer"></div>
   <label class="muted" for="bde">BDE</label>
   <select id="bde"></select>
-  <label class="muted" for="date">Date</label>
-  <select id="date"></select>
+  <label class="muted" for="period">Period</label>
+  <select id="period">
+    <option value="today">Today</option>
+    <option value="week">This week</option>
+    <option value="month">This month</option>
+    <option value="7">Last 7 days</option>
+    <option value="30">Last 30 days</option>
+    <option value="custom">Custom…</option>
+  </select>
+  <input id="startDate" type="date" style="display:none" />
+  <input id="endDate" type="date" style="display:none" />
+  <a class="badge clickable" id="calBtn" href="/calendar" title="Open the calendar">📅 Calendar</a>
+  <a class="badge clickable" id="p2Btn" href="/pipeline2" title="Pipeline 2 — call list / assignments">🔁 Pipeline 2</a>
+  <a class="badge clickable" id="coachBtn" href="/coaching" title="Coaching & development — per-BDE call intelligence">🎓 Coaching</a>
+  <a class="badge clickable" id="dbBtn" href="/database" title="Master prospect database" style="display:none">🗄️ Database</a>
+  <a class="badge clickable" id="adminBtn" href="/admin" title="User management" style="display:none">⚙️ Admin</a>
   <a class="badge clickable" id="tvBtn" href="/?tv=1" target="_blank" title="Open this dashboard full-screen for an office TV">📺 TV mode</a>
   <span class="badge clickable" id="reviewBadge" onclick="scrollToReview()">Review queue: <b id="reviewN">0</b></span>
   <div class="livebadge connecting" id="liveBadge" title="Powered by an AI agent — this dashboard analyses calls and updates in real time">
@@ -161,6 +195,8 @@
     <span class="lb-text" id="lbText">AI LIVE</span>
     <span class="lb-sub" id="lbSub">connecting…</span>
   </div>
+  <span class="who" id="whoami"></span>
+  <a class="badge clickable" id="logoutBtn" href="/logout" title="Sign out">Logout</a>
 </header>
 
 <div id="clsBar" class="clsbar">
@@ -180,14 +216,40 @@
       <div id="funnelChart" class="chart"></div>
     </div>
     <div class="card">
-      <h2>Stages — Fresh / Followup / Total</h2>
+      <h2>Stages — Fresh / Followup / Total <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· vs benchmark (✓ met · ▼ short): Connected 40% · RPC 40% · Pitch 30% · Booked 25% · 75 calls/30min</span></h2>
       <table id="funnelTable"><tbody></tbody></table>
     </div>
   </div>
 
+  <div class="card" id="leadCard" style="margin-top:16px">
+    <h2>Lead quality &amp; pipeline — <span id="leadScope">ALL</span></h2>
+    <div id="leadBody" class="leadchips"></div>
+  </div>
+
+  <div class="card" id="pipelineCard" style="margin-top:16px">
+    <h2>Pipelines — distinct prospects <span class="muted" id="pipelineAnchor" style="font-weight:400"></span>
+      <span id="callbacksToday" style="float:right;font-weight:400"></span></h2>
+    <div style="overflow:auto"><table id="pipelineTable"><thead></thead><tbody></tbody></table></div>
+  </div>
+
   <div class="card" id="leaderboardCard" style="margin-top:16px">
-    <h2>Leaderboard — per-BDE conversion (selected date)</h2>
+    <h2>Leaderboard — per-BDE conversion</h2>
     <div style="overflow:auto"><table id="leaderboard"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" id="channelCard" style="margin-top:16px">
+    <h2>Channel — bookings by dialled number type (mobile vs landline) per BDE</h2>
+    <div style="overflow:auto"><table id="channelTable"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" id="pitchCard" style="margin-top:16px">
+    <h2>Pitch quality — AI scorecard per BDE (0–5) · ⚠ flags weak pitches (≤2)</h2>
+    <div style="overflow:auto"><table id="pitchTable"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" id="rpcCard" style="margin-top:16px">
+    <h2>RPC follow-up worklist — numbers not yet at the decision-maker <span class="muted" id="rpcSummary" style="font-weight:400"></span></h2>
+    <div style="overflow:auto"><table id="rpcTable"><thead></thead><tbody></tbody></table></div>
   </div>
 
   <div class="card" id="trendCard" style="margin-top:16px">
@@ -223,18 +285,62 @@ function tvFullscreen(){ const el=document.documentElement;
 const pillClass = (v,a,b) => v==null?'':v>=a?'p-good':v>=b?'p-mid':'p-bad';
 const pct = v => v==null?'—':v+'%';
 let funnelChart, trendChart;
+let LATEST=null, WIN={start:null,end:null};
+
+const isoLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+// Compute [start,end] from the period picker, anchored on the latest data day.
+function computeWindow(){
+  const p=$('#period').value, cust=p==='custom';
+  $('#startDate').style.display=cust?'':'none'; $('#endDate').style.display=cust?'':'none';
+  if(cust) return {start:$('#startDate').value||LATEST, end:$('#endDate').value||LATEST};
+  const D=LATEST; if(!D) return {start:null,end:null};
+  const d=new Date(D+'T00:00:00');
+  if(p==='7'){const s=new Date(d); s.setDate(s.getDate()-6); return {start:isoLocal(s),end:D};}
+  if(p==='30'){const s=new Date(d); s.setDate(s.getDate()-29); return {start:isoLocal(s),end:D};}
+  if(p==='week'){const s=new Date(d); s.setDate(s.getDate()-((s.getDay()+6)%7)); return {start:isoLocal(s),end:D};}
+  if(p==='month') return {start:isoLocal(new Date(d.getFullYear(),d.getMonth(),1)),end:D};
+  return {start:D,end:D};  // 'today'
+}
+// "vs previous period" delta badge. Shows the % change vs the previous working
+// period and the prior value in a tooltip, so it always reads as a comparison.
+let CMP_WIN=null;  // {start,end} of the comparison period, for tooltips
+function deltaHtml(cur, prev){
+  if(prev==null) return '';
+  cur=cur||0;
+  const diff=cur-prev;
+  const winTxt = CMP_WIN? ` (prev period ${CMP_WIN.start===CMP_WIN.end?CMP_WIN.start:CMP_WIN.start+'…'+CMP_WIN.end})` : '';
+  if(diff===0) return ` <span class="delta flat" title="No change vs previous${winTxt}: ${prev}">•</span>`;
+  const cls=diff>0?'up':'down', arrow=diff>0?'▲':'▼';
+  const pctTxt = prev>0 ? ' '+Math.round(Math.abs(diff)/prev*100)+'%' : '';
+  const title = `Previous period: ${prev}${winTxt} → now ${cur} (${diff>0?'+':''}${diff})`;
+  return ` <span class="delta ${cls}" title="${title}">${arrow}${Math.abs(diff)}${pctTxt}</span>`;
+}
 
 async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(u+' '+r.status);return r.json();}
 
 async function boot(){
   const s = await jget('/api/summary');
+  LATEST = s.dates[0]||null;
   $('#bde').innerHTML = s.bdes.map(b=>`<option>${b}</option>`).join('');
-  $('#date').innerHTML = s.dates.map(d=>`<option>${d}</option>`).join('');
   $('#reviewN').textContent = s.review_count;
+  // Per-user header + scoping: a BDE only sees themselves (hide the picker).
+  const u = s.user || {};
+  $('#whoami').textContent = (u.name||'') + (u.role?(' · '+u.role):'');
+  if(u.role==='bde'){
+    $('#bde').style.display='none';
+    const lbl=document.querySelector('label[for=bde]'); if(lbl) lbl.style.display='none';
+  }
+  if(u.role==='kiosk'){ const lo=$('#logoutBtn'); if(lo) lo.style.display='none'; }
+  if(u.role==='admin'){ const ab=$('#adminBtn'); if(ab) ab.style.display=''; }
+  if(u.role==='admin'||u.role==='bdm'){ const db=$('#dbBtn'); if(db) db.style.display=''; }
+  if(s.dates.length){ const lo=s.dates[s.dates.length-1], hi=s.dates[0];
+    for(const el of ['#startDate','#endDate']){ $(el).min=lo; $(el).max=hi; }
+    $('#startDate').value=hi; $('#endDate').value=hi; }
   funnelChart = echarts.init($('#funnelChart'),'dark',{renderer:'canvas'});
   trendChart = echarts.init($('#trendChart'),'dark');
   funnelChart.getZr().setCursorStyle('default');
-  $('#bde').onchange = refresh; $('#date').onchange = refresh;
+  $('#bde').onchange = refresh; $('#period').onchange = refresh;
+  $('#startDate').onchange = refresh; $('#endDate').onchange = refresh;
   window.addEventListener('resize',()=>{funnelChart.resize();trendChart.resize();});
   if(!s.dates.length){ $('main').innerHTML='<div class="empty">No data yet. Run the pipeline (ingest → classify → aggregate) and refresh.</div>'; return; }
   await refresh();
@@ -242,25 +348,105 @@ async function boot(){
 }
 
 async function refresh(){
-  const date=$('#date').value, bde=$('#bde').value;
-  $('#funnelScope').textContent=bde; $('#trendScope').textContent=bde;
-  const f = await jget(`/api/funnel?date=${date}&bde=${encodeURIComponent(bde)}`);
-  renderKpis(f); renderFunnel(f); renderFunnelTable(f);
-  renderLeaderboard(await jget(`/api/leaderboard?date=${date}`));
+  const bde=$('#bde').value;
+  WIN = computeWindow();
+  if(!WIN.start) return;
+  $('#funnelScope').textContent=bde; $('#trendScope').textContent=bde; $('#leadScope').textContent=bde;
+  const w=`start=${WIN.start}&end=${WIN.end}&bde=${encodeURIComponent(bde)}`;
+  const f = await jget(`/api/funnel?${w}&compare=prev`);
+  CMP_WIN = (f.compare && f.compare.window) || null;
+  renderKpis(f); renderFunnel(f); renderFunnelTable(f); renderLead(f);
+  jget(`/api/callbacks-today?bde=${encodeURIComponent(bde)}`).then(renderCallbacks).catch(()=>{});
+  renderPipelines(await jget(`/api/pipelines?bde=${encodeURIComponent(bde)}`), bde);
+  renderLeaderboard(await jget(`/api/leaderboard?start=${WIN.start}&end=${WIN.end}`));
+  jget(`/api/channel-report?start=${WIN.start}&end=${WIN.end}`).then(renderChannel).catch(()=>{});
+  jget(`/api/pitch-quality?start=${WIN.start}&end=${WIN.end}`).then(renderPitch).catch(()=>{});
+  jget(`/api/rpc-monitor?bde=${encodeURIComponent(bde)}&limit=15`).then(renderRpc).catch(()=>{});
   renderTrend(await jget(`/api/trend?bde=${encodeURIComponent(bde)}&days=30`));
   if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} });
 }
 
 function renderKpis(f){
+  const cmp=f.compare||{}, ps=cmp.stages||{};
+  const stageBy = key => ((f.stages||[]).find(s=>s.key===key) || {total:0}).total;
+  const booked = stageBy('meetings_booked'), qbooked = stageBy('qualified_booked');
   const k=[
-    ['Calls Made', f.calls_made, ''],
-    ['Transcribed', f.transcribed, (f.coverage!=null?f.coverage+'% coverage':'')],
-    ['Connect rate', pct(f.conversion?.connect), 'Connected / Calls Made'],
-    ['Right Party Contact rate', pct(f.conversion?.rpc), 'Right Party Contact / Connected'],
-    ['Meeting Booked rate', pct(f.conversion?.booked), 'Meeting Booked / Full Pitch'],
+    ['Calls Made', fmt(f.calls_made), '', deltaHtml(f.calls_made, cmp.calls_made)],
+    ['Connect rate', pct(f.conversion?.connect), 'Connected / Calls Made', ''],
+    ['Right Party Contact rate', pct(f.conversion?.rpc), 'RPC / Connected', ''],
+    ['Meeting Booked', booked, 'any booking by the BDE', deltaHtml(booked, ps.meetings_booked)],
+    ['Qualified Booked', qbooked, 'booked + qualified (BAPU)', deltaHtml(qbooked, ps.qualified_booked)],
   ];
-  $('#kpis').innerHTML = k.map(([l,v,sub])=>`
-    <div class="card kpi"><div class="v">${fmt(v)}</div><div class="l">${l}</div><div class="sub">${sub||'&nbsp;'}</div></div>`).join('');
+  $('#kpis').innerHTML = k.map(([l,v,sub,d])=>`
+    <div class="card kpi"><div class="v">${fmt(v)}${d||''}</div><div class="l">${l}</div><div class="sub">${sub||'&nbsp;'}</div></div>`).join('');
+}
+
+function renderLead(f){
+  const L=f.lead||{}, prev=(f.compare&&f.compare.lead)||{};
+  const items=[['super_hot','🔥 Super-hot'],['hot','🔥 Hot'],['warm','🌤 Warm'],
+    ['pipeline1','Pipeline 1 · Interested'],['pipeline2','Pipeline 2 · Has agency']];
+  $('#leadBody').innerHTML = items.map(([k,t])=>{
+    const v=L[k]||0;
+    return `<div class="leadchip drill" onclick="openStageList('${k}','${t.replace(/'/g,'')}')">
+      <span class="n">${v}${deltaHtml(v, prev[k])}</span><span class="t">${t}</span></div>`;
+  }).join('');
+}
+
+let _callbacks=[];
+function renderCallbacks(d){
+  _callbacks = d.rows||[];
+  const el=$('#callbacksToday'); if(!el) return;
+  const over = d.overdue>0 ? ` · <span style="color:#f87171">${d.overdue} overdue</span>` : '';
+  el.innerHTML = `<span class="drill" onclick="openCallbacks()" style="color:var(--txt)">📞 ${d.today||0} callback${d.today===1?'':'s'} today</span>${over}`;
+}
+function openCallbacks(){
+  $('#dTitle').textContent = `Callbacks scheduled today — ${_callbacks.length}`;
+  $('#dBody').innerHTML = _callbacks.length ? _callbacks.map(r=>{
+    const when=(r.start_at||'').slice(11,16);
+    const who = r.dest_number || r.title || '';
+    const link = r.dest_number ? `/prospect/${encodeURIComponent(r.dest_number)}` : (r.call_id?`/call/${encodeURIComponent(r.call_id)}`:'#');
+    return `<a class="stageitem" href="${link}" target="_blank"><div><b>${when||'—'}</b> · ${who}</div>
+      <div class="muted">${r.bde_name||''} · ${r.status||''}</div></a>`;
+  }).join('') : '<div class="muted">No callbacks scheduled for today.</div>';
+  $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
+}
+let _pipeBde='ALL';
+function renderPipelines(p, bde){
+  _pipeBde = bde || 'ALL';
+  const thead=$('#pipelineTable thead'), tb=$('#pipelineTable tbody');
+  if(!p || !p.found){ thead.innerHTML=''; tb.innerHTML='<tr><td class="empty" colspan="6">No pipeline data yet</td></tr>'; return; }
+  $('#pipelineAnchor').textContent = '(rolling windows ending '+p.today+')';
+  thead.innerHTML = '<tr><th style="text-align:left">Pipeline</th>'+
+    p.windows.map(([k,lbl])=>`<th>${lbl}</th>`).join('')+'</tr>';
+  tb.innerHTML = p.rows.map(r=>{
+    const cells = p.windows.map(([k,lbl])=>{
+      const v=r.counts[k]||0;
+      return v>0
+        ? `<td><span class="drill" onclick="openPipelineProspects('${r.pipeline}','${k}','${lbl.replace(/'/g,'')}')">${v}</span></td>`
+        : `<td class="muted">0</td>`;
+    }).join('');
+    return `<tr><td style="text-align:left;font-weight:600">${r.label}</td>${cells}</tr>`;
+  }).join('');
+}
+
+async function openPipelineProspects(pipeline, window, wlabel){
+  const d = await jget(`/api/pipeline-prospects?pipeline=${pipeline}&window=${window}&bde=${encodeURIComponent(_pipeBde)}`);
+  const plabel = pipeline==='pipeline1_interested' ? 'Pipeline 1 · Interested' : 'Pipeline 2 · Has agency';
+  $('#dTitle').textContent = `${plabel} — ${wlabel} (${d.count} prospect${d.count===1?'':'s'})`;
+  const TEMP={super_hot:'🔥',hot:'🔥',warm:'🌤'};
+  $('#dBody').innerHTML = d.rows.length
+    ? '<div style="display:flex;flex-direction:column;gap:8px">'+d.rows.map(r=>{
+        const name = r.prospect_company || r.business_name || r.dest_number;
+        const t = (r.lead_temperature && r.lead_temperature!=='none') ? (TEMP[r.lead_temperature]||'')+' ' : '';
+        const when = (r.started_at||'').slice(0,16).replace('T',' ');
+        return `<a class="clickable" style="display:block;padding:9px 11px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:inherit"
+                  href="/prospect/${encodeURIComponent(r.dest_number)}" target="_blank">
+                  <div style="font-weight:600">${t}${name}</div>
+                  <div class="muted" style="font-size:12px">${r.dest_number} · ${r.ncalls} call${r.ncalls===1?'':'s'} · last ${when} · ${r.bde||'—'}</div>
+                </a>`;
+      }).join('')+'</div>'
+    : '<div class="muted">No prospects.</div>';
+  $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
 
 function renderFunnel(f){
@@ -275,19 +461,34 @@ function renderFunnel(f){
   },true);
 }
 
+// Benchmark badge for the Total column (#4): green ✓ when the stage meets its
+// standard, red "▼ N short" with the target when it falls below. Replaces the old
+// vs-previous-period delta, which wasn't actionable.
+function benchHtml(b){
+  if(!b) return '<span class="muted">—</span>';
+  // Calls Made compares a RATE (dials per 30 min of active calling) to the 75 standard.
+  if(b.rate!=null){
+    const cls = b.met ? 'ok' : 'bad', mark = b.met ? '✓' : '▼';
+    return `<span class="bench ${cls}" title="${b.basis}">${mark} ${b.rate}/${b.target_rate} per 30min</span>`;
+  }
+  if(b.met) return `<span class="bench ok" title="meets benchmark${b.target!=null?' (target '+b.target+')':''}">✓ met</span>`;
+  return `<span class="bench bad" title="benchmark ${b.target}${b.ratio?' ('+b.ratio+'% of '+b.prior+')':''}">▼ ${b.short} short <span class="muted" style="font-weight:400">/ ${b.target}</span></span>`;
+}
 function renderFunnelTable(f){
   const tb=$('#funnelTable tbody');
-  if(!f.found){tb.innerHTML='<tr><td class="empty" colspan=5>No data for this BDE/date</td></tr>';return;}
-  const head=`<tr class="funnelrow"><td></td><th>Fresh</th><th>Followup</th><th>Total</th><th>Conv%</th></tr>`;
+  if(!f.found){tb.innerHTML='<tr><td class="empty" colspan=6>No data for this BDE/period</td></tr>';return;}
+  const bench=f.benchmark||{};
+  const head=`<tr class="funnelrow"><td></td><th>Fresh</th><th>Followup</th><th>Total</th><th class="benchhead">vs benchmark</th><th>Conv%</th></tr>`;
   tb.innerHTML = head + f.stages.map(s=>`
     <tr class="funnelrow"><td>${s.stage}</td><td>${s.fresh}</td><td>${s.followup}</td>
     <td><b class="${s.total>0?'drill':''}" ${s.total>0?`onclick="openStageList('${s.key}','${s.stage.replace(/'/g,"")}')"`:''}>${s.total}</b></td>
+    <td class="benchcell">${benchHtml(bench[s.key])}</td>
     <td>${s.conv==null?'—':'<span class="pill '+pillClass(s.conv,50,20)+'">'+s.conv+'%</span>'}</td></tr>`).join('');
 }
 
 async function openStageList(stage,label,bdeOverride){
-  const date=$('#date').value, bde=bdeOverride||$('#bde').value;
-  const base=`/api/stage-calls?date=${date}&bde=${encodeURIComponent(bde)}&track=combined`;
+  const bde=bdeOverride||$('#bde').value;
+  const base=`/api/stage-calls?start=${WIN.start}&end=${WIN.end}&bde=${encodeURIComponent(bde)}&track=combined`;
   const d=await jget(`${base}&stage=${stage}`);
   let toggle='';
   if(stage==='connected'||stage==='unconnected'){
@@ -295,6 +496,17 @@ async function openStageList(stage,label,bdeOverride){
     let oc='';
     try{ const od=await jget(`${base}&stage=${other}&limit=1`); oc=` (${od.count})`; }catch(e){}
     toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('${other}','${other.charAt(0).toUpperCase()+other.slice(1)}',${jsq(bde)})">→ view ${other} calls${oc}</span></div>`;
+  }
+  // Meeting Booked drawer: link to reschedules/confirmations (NOT counted in the funnel,
+  // shown for reference only — the booking was already counted when first made).
+  if(stage==='meetings_booked'||stage==='already_booked'){
+    if(stage==='meetings_booked'){
+      let ac='';
+      try{ const ad=await jget(`${base}&stage=already_booked&limit=1`); ac=` (${ad.count})`; }catch(e){}
+      toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('already_booked','Rescheduled / confirmed (not counted)',${jsq(bde)})">→ view rescheduled / confirmed${ac}</span></div>`;
+    } else {
+      toggle=`<div class="stagetoggle"><span class="muted">Reschedules &amp; confirmations of meetings already booked earlier — shown for reference, NOT counted again.</span> <span class="drill" onclick="openStageList('meetings_booked','Meeting Booked',${jsq(bde)})">→ back to new bookings</span></div>`;
+    }
   }
   const more = d.shown < d.count ? ` <span class="muted">(showing ${d.shown} of ${d.count})</span>` : '';
   $('#dTitle').innerHTML=`${label}${bde&&bde!=='ALL'?' · '+bde:''} — ${d.count} call(s)${more}`;
@@ -306,14 +518,51 @@ async function openStageList(stage,label,bdeOverride){
   $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
 
+function renderRpc(d){
+  const tb=$('#rpcTable'); if(!tb) return;
+  const s=d.summary||{}, rows=d.rows||[];
+  $('#rpcSummary').innerHTML = `· ${s.open||0} open · ${s.mobile_double_tap||0} need double-tap · ${s.needs_sms_vm||0} need SMS+VM · ${s.gatekeeper||0} gatekeeper-blocked`;
+  const CH={mobile:'📱',landline:'☎️',tollfree:'📞'};
+  tb.querySelector('thead').innerHTML='<tr><th style="text-align:left">Prospect</th><th>Ch</th><th>Attempts</th><th>Last BDE</th><th style="text-align:left">Required next action</th></tr>';
+  tb.querySelector('tbody').innerHTML = rows.length
+    ? rows.map(r=>{const col=r.urgency==='high'?'#f87171':'#fbbf24';
+        return `<tr><td style="text-align:left"><a class="clickable" style="color:inherit;text-decoration:none" href="/prospect/${encodeURIComponent(r.dest_number||r.dest9)}" target="_blank">${esc(r.business_name||r.dest_number||r.dest9)}</a></td>
+        <td>${CH[r.channel]||''}</td><td>${r.attempts} <span class="muted" style="font-size:11px">(${r.answered} ans)</span></td>
+        <td>${esc(r.last_bde||'—')}</td><td style="text-align:left;color:${col}">${esc(r.required_action)}</td></tr>`;}).join('')
+    : '<tr><td colspan="5" class="muted">All dialled numbers have reached a decision-maker. 🎉</td></tr>';
+}
+function renderPitch(d){
+  const tb=$('#pitchTable'); if(!tb) return;
+  const rows=d.rows||[];
+  const sc=v=>{ if(v==null) return '<span class="muted">—</span>'; const n=Number(v);
+    const col=n>=3.5?'#4ade80':n>=2.5?'#fbbf24':'#f87171'; return `<span style="color:${col};font-weight:700">${n}</span>`; };
+  tb.querySelector('thead').innerHTML='<tr><th style="text-align:left">BDE</th><th>Pitched</th><th>Opening</th><th>Discovery</th><th>Pitch</th><th>Objection</th><th>Close</th><th>⚠ Weak</th></tr>';
+  tb.querySelector('tbody').innerHTML = rows.length
+    ? rows.map(r=>`<tr><td style="text-align:left;font-weight:600">${r.bde}</td>
+        <td>${r.pitched}</td><td>${sc(r.opening)}</td><td>${sc(r.discovery)}</td><td>${sc(r.pitch)}</td>
+        <td>${sc(r.objection)}</td><td>${sc(r.close)}</td>
+        <td>${r.weak_pitches>0?`<span style="color:#f87171;font-weight:700">${r.weak_pitches}</span>`:'<span class="muted">0</span>'}</td></tr>`).join('')
+    : '<tr><td colspan="8" class="muted">No pitched calls in this period.</td></tr>';
+}
+function renderChannel(d){
+  const tb=$('#channelTable'); if(!tb) return;
+  const rows=d.rows||[];
+  const cell=ch=>{const c=ch||{};const b=c.booked||0,ca=c.calls||0;
+    return `<td style="text-align:right">${b>0?'<b>'+b+'</b>':'<span class="muted">0</span>'} <span class="muted" style="font-size:11px">/${ca}</span></td>`;};
+  tb.querySelector('thead').innerHTML='<tr><th style="text-align:left">BDE</th><th>📱 Mobile booked/calls</th><th>☎️ Landline</th><th>📞 Tollfree</th></tr>';
+  tb.querySelector('tbody').innerHTML = rows.length
+    ? rows.map(r=>`<tr><td style="text-align:left;font-weight:600">${r.bde}</td>${cell(r.mobile)}${cell(r.landline)}${cell(r.tollfree)}</tr>`).join('')
+    : '<tr><td colspan="4" class="muted">No data for this period.</td></tr>';
+}
 function renderLeaderboard(d){
   // [header, dataKey, drillStageKey|null]
   const cols=[['BDE','bde_name',null],['Calls','calls_made','calls_made'],['Connected','connected','connected'],
     ['Right Party Contact','rpc_connect','rpc_connect'],['Full Pitch','full_pitch','full_pitch'],['Meeting Booked','meetings_booked','meetings_booked'],
-    ['Conn%','conv_connect',null],['Right Party Contact %','conv_rpc',null],['Full Pitch %','conv_pitch',null],['Meeting Booked %','conv_booked',null]];
+    ['🔥 Hot','hot','hot'],['🔥 Super-hot','super_hot','super_hot'],
+    ['Conn%','conv_connect',null],['RPC %','conv_rpc',null],['Pitch %','conv_pitch',null],['Booked %','conv_booked',null]];
   $('#leaderboard thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
   const body=$('#leaderboard tbody');
-  if(!d.rows.length){body.innerHTML='<tr><td class="empty" colspan="10">No BDE activity for this date</td></tr>';return;}
+  if(!d.rows.length){body.innerHTML=`<tr><td class="empty" colspan="${cols.length}">No BDE activity for this period</td></tr>`;return;}
   body.innerHTML=d.rows.map(r=>'<tr>'+cols.map(([label,k,stage])=>{
     if(k==='bde_name')return `<td>${r[k]}</td>`;
     if(k.startsWith('conv_')){const v=r[k];return `<td><span class="pill ${pillClass(v,50,20)}">${pct(v)}</span></td>`;}
@@ -433,17 +682,13 @@ async function autoRefresh(){
   try{
     const s=await jget('/api/summary');
     $('#reviewN').textContent = s.review_count;
-    const curD=$('#date').value, optD=[...$('#date').options].map(o=>o.value).join(',');
-    if(s.dates.join(',')!==optD){
-      $('#date').innerHTML = s.dates.map(d=>`<option>${d}</option>`).join('');
-      $('#date').value = s.dates.includes(curD) ? curD : (s.dates[0]||'');
-    }
+    if(s.dates[0]){ LATEST=s.dates[0]; for(const el of ['#startDate','#endDate']) $(el).max=s.dates[0]; }
     const curB=$('#bde').value, optB=[...$('#bde').options].map(o=>o.value).join(',');
     if(s.bdes.join(',')!==optB){
       $('#bde').innerHTML = s.bdes.map(b=>`<option>${b}</option>`).join('');
       $('#bde').value = s.bdes.includes(curB) ? curB : 'ALL';
     }
-    if(TV){ if(s.dates[0]) $('#date').value=s.dates[0]; $('#bde').value='ALL'; }  // TV: always latest day + overall
+    if(TV){ $('#period').value='today'; $('#bde').value='ALL'; }  // TV: always latest day + overall
     await refresh();
   }catch(e){}
 }

@@ -16,14 +16,25 @@ FULL_PITCH_DEFINITION = (
 )
 
 # ---- PLACEHOLDER 2: the "Qualified" bar ------------------------------------
+# BUDGET REALITY (AUD, monthly unless stated). Traffic Radius is a full-service
+# digital-marketing agency: a workable client typically invests a few thousand a
+# month. ~$2,000/month is a GOOD qualifying budget; ~$10,000/month is a STRONG /
+# premium budget — that is a great client we want, NEVER "too small". Even
+# ~$1,000/month (~$12k/year) of genuine ongoing investment is workable. Only a
+# NEAR-ZERO budget disqualifies (hobby/side business, a few hundred dollars total,
+# "~$1,000 a YEAR" or less, plainly can't afford / won't spend anything).
 QUALIFICATION_BAR = (
-    "a real, viable business at/above the revenue floor, has a website, speaking to "
-    "someone with decision-making authority, AND able & willing to invest in marketing. "
-    'A "baby"/non-viable prospect is NOT qualified — e.g. a hobby or side business, a '
-    "very small marketing budget (a few hundred / ~$1,000 a year), someone who clearly "
-    "cannot afford the service or is unwilling to spend, or who is openly sceptical there "
-    "is enough market to justify spending. Disqualify these even if they are friendly or "
-    "agree to a meeting"
+    "a real, viable business, speaking to someone with decision-making authority, with a "
+    "genuine marketing need we can help with, AND a workable marketing budget. "
+    "BUDGET REALITY (AUD, per month unless they clearly say otherwise): a marketing spend of "
+    "roughly $2,000/month or more is a GOOD, qualifying budget; about $10,000/month is a STRONG / "
+    "premium budget — ALWAYS treat $10k/month as qualified on budget, never as 'too small' or "
+    "'under the bar'. Even ~$1,000/month (~$12k a year) of genuine ongoing investment is workable. "
+    'A "baby"/non-viable prospect is NOT qualified — a hobby or side business, a near-zero budget '
+    "(a few hundred dollars total, ~$1,000 a YEAR or less), someone who plainly cannot afford the "
+    "service or is unwilling to spend anything at all. Disqualify those even if they are friendly "
+    "or agree to a meeting; but do NOT disqualify a real business merely because its budget is "
+    '"only" a few thousand dollars a month — that is a normal, qualifying client'
 )
 
 SYSTEM_PROMPT = f"""\
@@ -74,27 +85,187 @@ Stage definitions (in funnel order):
   (not mere politeness like "send me an email"). Secondary signal.
 - qualified: TRUE only if the conversation evidences the qualification bar:
   {QUALIFICATION_BAR}.
+  AUTHORITY IS NECESSARY BUT NOT SUFFICIENT: being the decision-maker alone does NOT qualify a
+  lead. Qualification requires authority PLUS real substance — at minimum a genuine digital-
+  marketing need/problem we can help with (or a clear growth aspiration) AND a workable budget
+  signal (which may be auto-validated below). A decision-maker who reveals no problem, no
+  aspiration and no budget signal is NOT qualified, however senior they are.
   If a criterion is neither confirmed nor contradicted, set value=false and lower confidence.
-- meeting_booked (the funnel's "Lead"): TRUE only if there is a SCHEDULED marketing AUDIT /
-  STRATEGY SESSION for this prospect — a real appointment for that session (a specific day/time,
-  the kind that warrants a calendar invite). It must be the audit / strategy session, NOT just
-  another phone call. A mere agreement to a follow-up or callback ("call me back Monday", "ring
-  me next week", "send me an email", "let's talk when I'm back") is NOT a meeting booked — set
-  FALSE even if the prospect was friendly and agreed to talk again. "Booked", not "held".
-- meeting_confirmation_only: set TRUE only when meeting_booked is TRUE AND this call did NOT
-  create that booking — i.e. the appointment had ALREADY been agreed on an EARLIER call and the
-  purpose of THIS call was simply to confirm / re-confirm / reschedule it. Tell-tale signs: the
-  BDE says they "spoke yesterday / last week", references an appointment "we made / scheduled",
-  asks only to "confirm the time", and does NOT re-deliver the pitch. If the booking was created
-  DURING this call (the prospect agreed to schedule the session here for the first time), set
-  FALSE. When in doubt and a full pitch happened on THIS call, set FALSE.
+  CARRY-OVER on follow-ups: if the transcript shows this call is a FOLLOW-UP or RESCHEDULE of a
+  strategy session the prospect had ALREADY agreed to on a prior call (e.g. "we booked a meeting
+  last week / on the 9th", "you couldn't make it, let's reschedule"), the qualification was
+  established on that earlier call. Do NOT set qualified=false merely because budget / needs /
+  urgency were not RE-discussed on a short scheduling call. If the person is the decision-maker
+  (rpc_connect) and is actively honoring/rescheduling that agreed session, treat them as
+  qualified=TRUE (prior commitment + authority), and likewise infer the BAPU flags that the prior
+  agreement implies (at least authority + problem). This does NOT apply to a FRESH call where the
+  prospect is not the decision-maker or never previously agreed to a session.
+- meeting_booked (the funnel's "Lead"): TRUE only if there is a FIRMLY SCHEDULED marketing AUDIT /
+  STRATEGY SESSION for this prospect — a specific day/time mutually agreed, the kind that warrants
+  a calendar invite, that is NOT later retracted on the same call. It must be the audit / strategy
+  session, NOT just another phone call. A mere agreement to a follow-up or callback ("call me back
+  Monday", "ring me next week", "send me an email", "let's talk when I'm back") is NOT a meeting
+  booked. "Booked", not "held".
+  CRITICAL — judge the END STATE of the call, not an early hopeful moment. Set `booking_status`:
+    * "firm" — a specific day AND (ideally) time was agreed and STILL STANDS at the end of the call.
+      Only then may meeting_booked be TRUE.
+    * "tentative" — only a vague/half-agreement ("maybe next week", "tell me a time later", a day
+      floated but never pinned, or the call ended unresolved/confused about the time). meeting_booked
+      = FALSE.
+    * "cancelled_or_declined" — a slot was floated but the prospect then CANCELLED, backed out, said
+      they can't do it, or the arrangement fell apart (e.g. wrong/disputed details, "sorry, I can't",
+      confusion that ends the booking). meeting_booked = FALSE. Do NOT count a collapsed booking.
+    * "none" — no appointment discussed at all.
+  Put the agreed day/time (if any) in `meeting_datetime` in the prospect's words.
+- meeting_confirmation_only: set TRUE only when meeting_booked is TRUE AND this call merely
+  RE-CONFIRMS an appointment ALREADY agreed on an EARLIER call, with NO new date/time set here —
+  the purpose was just to confirm the existing time. Tell-tale signs: the BDE references an
+  appointment "we made / scheduled", asks only to "confirm the time / make sure you're still on",
+  and does NOT set a new date and does NOT re-deliver the pitch. If a NEW date/time was set on
+  this call (whether a first booking OR a reschedule), set FALSE.
+- meeting_rescheduled: set TRUE only when meeting_booked is TRUE (i.e. booking_status="firm") AND
+  this call RE-BOOKS / MOVES a meeting that had ALREADY been agreed on an EARLIER call to a NEW
+  date/time (the prospect missed, postponed, or changed the original — e.g. "you couldn't make the
+  9th, let's do next week", "let's reschedule"). This flags the booking as a re-booking of an
+  existing commitment (it is shown for reference but NOT counted again in the funnel — the original
+  booking was already counted). When meeting_rescheduled is TRUE, meeting_confirmation_only MUST be
+  FALSE. Set FALSE for a brand-new first-time booking (no earlier meeting existed) and for a pure
+  re-confirmation (no new date set). When in doubt between confirmation_only and rescheduled, prefer
+  rescheduled if any new date/time was agreed on this call.
 
 Also set call_outcome (voicemail | gatekeeper | wrong_number | conversation | other) and a
 one-line overall_notes.
 
 Funnel monotonicity (respect it): no Full Pitch without rpc_connect; no meeting_booked without a
-real conversation; no meeting_confirmation_only without meeting_booked. When the transcript is
-too short or garbled to judge, prefer false + low confidence.
+real conversation; no meeting_confirmation_only or meeting_rescheduled without meeting_booked; and
+meeting_confirmation_only and meeting_rescheduled are mutually exclusive (never both TRUE). When
+the transcript is too short or garbled to judge, prefer false + low confidence.
+
+LEAD QUALIFICATION — BANT + AO. Judge each from what the PROSPECT actually revealed on THIS call.
+Quote real evidence; if a signal is neither confirmed nor contradicted, set value=false + low
+confidence (do NOT assume) — EXCEPT where the auto-validation rule below applies.
+- budget: TRUE if there is a real signal they can and will invest in marketing at a workable
+  level (a stated budget, current spend with an agency / on ads, or clear willingness to invest).
+  BUDGET REALITY (AUD, per month unless stated): ~$2,000/month or more is a GOOD budget; about
+  $10,000/month is a STRONG / premium budget — mark TRUE and NEVER describe $10k/month as "too
+  small" or below the bar. Roughly $1,000/month (~$12k/year) of genuine ongoing spend also counts.
+  FALSE only for a near-zero / hobby budget ("no money", "can't afford", a few hundred dollars
+  total, "~$1,000 a year" or less), or no signal at all. Do not penalise a real business just for
+  having "only" a few thousand a month to spend.
+- authority: TRUE if the person on the call is a decision-maker who can say yes (owner / principal
+  / manager with buying power). FALSE for a gatekeeper/employee, or if unclear. (This mirrors
+  rpc_connect but is judged specifically as buying authority.)
+- problem: TRUE only if there is a genuine DIGITAL-MARKETING problem / need we can actually help
+  with — poor online presence, not ranking, not enough leads/enquiries, weak website, unhappy with
+  current marketing results, paying for ads but poor conversions, wants more growth. It MUST be
+  grounded in what the PROSPECT said about THEIR situation — NOT a problem merely asserted by the
+  BDE in the pitch, and NOT an unrelated business issue (staffing, supply, pricing, premises, etc.).
+  If the only "problem" came from the BDE's script and the prospect didn't confirm a marketing
+  need, set problem=FALSE. Put the prospect's actual marketing problem (their words) in
+  `problem_summary` ("" if none).
+- urgency: TRUE if there is time pressure or a desire to act soon (a deadline, a campaign coming,
+  "need this sorted", booked a session this week). FALSE for "maybe someday" / no urgency.
+- aspiration: TRUE if the prospect shows ambition to grow / improve / do better — wants more
+  customers, expansion, a better online presence, to beat competitors — even if they didn't frame
+  it as an acute "problem". FALSE if they are indifferent or just want to be left alone.
+- open_to_listening: TRUE if the prospect is genuinely willing to hear us out or engage further
+  (asks questions, agrees to a session/info, "tell me more", lets the pitch run) — NOT a flat
+  brush-off. FALSE for "not interested", hostile, or hangs up.
+
+AUTO-VALIDATION (infer signals from BEHAVIOUR, not just explicit statements). Set these factual
+flags, then APPLY the rule:
+- runs_paid_ads: TRUE if the prospect indicates they currently run ANY paid advertising — Google
+  Ads / sponsored ads / Meta/Facebook/Instagram ads / shopping ads / "boosting posts" for spend.
+- has_marketing_agency: TRUE if the prospect indicates an agency / freelancer / "someone" currently
+  does their marketing or SEO or ads.
+  RULE: if runs_paid_ads OR has_marketing_agency is TRUE, the prospect is DEMONSTRABLY investing in
+  marketing — so treat budget=TRUE and aspiration=TRUE (they clearly want results and are willing
+  to spend), even if they never stated a dollar figure. Reference this in the budget/aspiration
+  evidence (e.g. "auto-validated: already running Meta ads / already has an agency"). This does NOT
+  by itself make them qualified (they still need authority + a marketing need/aspiration), and it
+  does NOT change pipeline routing.
+
+DO-NOT-CONTACT (set `do_not_contact`): TRUE if the prospect was RUDE / hostile about being
+called, or EXPLICITLY asked to be removed / not contacted again ("take me off your list", "stop
+calling me", "don't call here again", "remove this number"). This auto-activates DND so we stop
+calling them. FALSE for an ordinary "not interested" or "we're happy with our agency" without any
+request to stop — those are normal Pipeline-2 outcomes, not DND.
+
+PIPELINE (set `pipeline`):
+- "pipeline1_interested": the prospect is INTERESTED — engaged positively, agreed to a callback,
+  a next step, or a meeting. This is our active pipeline.
+- "pipeline2_existing_agency": the prospect is NOT interested specifically because they are
+  ALREADY working with a marketing agency / already have someone doing it. (Capture these
+  separately; do not assign a temperature to them.)
+- "none": neither — voicemail, gatekeeper, wrong number, flat "not interested" with no agency
+  reason, or no real conversation.
+
+PIPELINE 2 CADENCE (only when pipeline == "pipeline2_existing_agency"; otherwise contract_end="" and
+recommended_cadence_days=0). A Pipeline-2 prospect can't switch until their current agency contract
+ends, and calling them too often makes them rude. From what the prospect actually said, capture:
+- contract_end: their own words about when the agency arrangement could change — e.g. "contract ends
+  in March", "we're locked in for another 6 months", "just signed a 12-month deal", "month-to-month",
+  "reviewing it at EOFY". "" if they gave no timing signal.
+- recommended_cadence_days: how many days until we should call again, judged from the call:
+    * If they named/implied a contract-end date, set the cadence so the next call lands shortly BEFORE
+      it (e.g. ends in ~6 months ≈ 150; ends next month ≈ 20; "just signed 12 months" ≈ 300).
+    * If they were openly rude / hostile about being called, back off (≈ 90).
+    * If they gave no date but weren't hostile, fish for the info about monthly (≈ 30).
+    * 0 if you truly cannot tell (the engine then uses its default).
+  Use whole days.
+
+BUSINESS IDENTIFICATION — capture this AGGRESSIVELY. It powers ALL marketing
+intelligence (SEO, ads, company, revenue are looked up by the website), so work hard
+to fill these from any clue in the transcript — but never fabricate a wrong value:
+- prospect_company: the business name from ANY signal — the prospect's or BDE's intro
+  ("this is Sam from <Company>", "thanks for calling <Company>", "we're <Company>"), the
+  voicemail/IVR greeting, an email address, or a clearly-named brand/product. Capture it
+  even when the call is short. Use "" ONLY if no business name appears anywhere.
+- prospect_website: a bare domain like "acme.com.au". Fill it when:
+    • the prospect states it ("our website is…", "find us at…", "dub-dub-dub dot…"), OR
+    • it is unambiguously derivable from an EMAIL address heard on the call
+      (jane@acmeplumbing.com.au → acmeplumbing.com.au), OR
+    • the business name maps to an obvious, well-known exact domain you are highly confident in.
+  If you are NOT confident of the exact domain, leave it "" — a wrong domain pulls the wrong
+  company's data. (Still always capture prospect_company above so the website can be matched
+  later from the master database.) Prefer .com.au for Australian businesses.
+- prospect_industry: the trade/sector if evident (e.g. "plumber", "dental clinic"), else "".
+
+CONTACT DETAILS & FACTS — extract EVERYTHING valuable the prospect states. The transcript often
+contains the prospect's name, mobile, and email spoken aloud — CAPTURE THEM. Never invent; only
+record what was actually said.
+- prospect_contact_name: the prospect's own name as stated ("this is Jean", "Jane speaking",
+  "you make the decisions, right Jean?"). "" if never said.
+- prospect_mobile: a mobile/phone number the prospect gives, as digits (strip spaces; if they
+  correct themselves, use the FINAL corrected number). "" if none given.
+- prospect_email: an email the prospect gives or spells (e.g. "sales at recons dot com dot au"
+  -> "sales@recons.com.au"). "" if none.
+- key_facts: a list capturing EVERY other valuable fact the prospect revealed that isn't already a
+  field above — e.g. turnover/revenue, number of staff, locations/branches, named competitors,
+  what they currently spend, who currently does their marketing, products/services, timelines,
+  decision process. Short factual phrases ("does its own Meta posting", "supplies recycled timber
+  flooring", "competitor: Euro Oak Flooring"). [] only if the prospect truly revealed nothing.
+
+CALLBACK:
+- callback_requested: TRUE if the prospect asked to be called back / agreed to a specific
+  follow-up call time. callback_when: the time they mentioned in their words (e.g. "next Tuesday
+  afternoon", "after 5pm Friday"); "" if none.
+
+CONVERSATION INTELLIGENCE (for coaching — base strictly on the transcript):
+- objections: each meaningful objection the prospect raised, with how the BDE responded and
+  whether it was handled convincingly. [] if none.
+- buying_signals: short phrases capturing positive interest signals the prospect gave. [] if none.
+- engagement: overall how engaged the prospect was — dismissive | neutral | engaged | keen.
+- prospect_sentiment: negative | neutral | positive.
+- next_step: the concrete agreed next step ("" if none).
+- coaching_tips: 1–3 specific, actionable things THIS BDE could have done better (discovery,
+  objection handling, asking for the meeting, etc.). [] only if the call was genuinely flawless.
+  IMPORTANT: if a real person was reached (rpc_connect true) but you could NOT determine the
+  prospect's website (prospect_website is ""), ALWAYS include a tip telling the BDE to ask for
+  and confirm the business name + website before ending the call — capturing it unlocks the
+  prospect's full marketing intelligence and is a required data point.
+- scorecard: rate the BDE 0–5 on opening, discovery, pitch, objection_handling, close. Use 0 when
+  a phase did not happen (e.g. no close attempted).
 """
 
 

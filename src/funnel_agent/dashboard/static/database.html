@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prospect Database — Traffic Radius</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6;
+        --ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6}
+  header a{color:var(--accent);text-decoration:none;font-size:13px}
+  header h1{font-size:17px;margin:0;font-weight:700}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0}
+  .brand img{height:24px;display:block}
+  .spacer{flex:1}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+  main{max-width:1480px;margin:0 auto;padding:18px 22px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+  .stat .n{font-size:22px;font-weight:760}
+  .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  input,select{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:9px 12px;font:inherit;font-size:13px}
+  input:focus,select:focus{outline:1px solid var(--accent)}
+  #search{flex:1;min-width:240px}
+  button{font:inherit;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:8px 13px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)} button:disabled{opacity:.4;cursor:default}
+  .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{position:sticky;top:0;background:#141b24;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);z-index:1}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:rgba(59,130,246,.07)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700}
+  .p1{background:rgba(59,130,246,.16);color:#7cb0ff}.p2{background:rgba(168,85,247,.16);color:#c79bf7}
+  .ok{background:rgba(34,197,94,.16);color:#86efac}.none{background:rgba(148,163,184,.14);color:#cbd5e1}
+  .muted{color:var(--muted)}
+  .dom{color:var(--accent)}
+  .pager{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin-top:12px;color:var(--muted);font-size:13px}
+  .flash{animation:flash 1.2s ease}@keyframes flash{0%{background:rgba(34,197,94,.18)}100%{background:transparent}}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
+  <a href="/">&larr; Dashboard</a>
+  <h1>Prospect Database</h1>
+  <span class="spacer"></span>
+  <span class="live"><span class="dot"></span><span id="liveText">live</span></span>
+  <a href="/logout" style="font-size:13px">Sign out</a>
+</header>
+
+<main>
+  <div class="stats" id="stats"></div>
+  <div class="bar">
+    <input id="search" type="search" placeholder="Search business name, website, or phone…" autocomplete="off" />
+    <select id="enriched">
+      <option value="">All enrichment</option>
+      <option value="yes">Enriched</option>
+      <option value="no">Not enriched</option>
+    </select>
+    <select id="pipeline">
+      <option value="">All pipelines</option>
+      <option value="pipeline1_interested">Pipeline 1 · Interested</option>
+      <option value="pipeline2_existing_agency">Pipeline 2 · Has agency</option>
+    </select>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>Business</th><th>Website</th><th>Industry</th><th>Location</th>
+        <th class="num">Businesses</th><th class="num">Total revenue</th><th class="num">Employees</th>
+        <th class="num">Contacts</th><th>Phone</th><th>Enriched</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="10" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager">
+    <span id="rangeText"></span>
+    <button id="prev">‹ Prev</button>
+    <button id="next">Next ›</button>
+  </div>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
+let offset=0, limit=50, total=0, lastToken=null;
+
+function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
+async function loadStats(){
+  try{
+    const s=await fetch('/api/database/stats').then(r=>r.json());
+    $('#stats').innerHTML = statCard(fmtN(s.businesses),'Businesses')+statCard(fmtN(s.domains),'Domains')
+      +statCard(fmtN(s.no_domain),'No website')+statCard(fmtN(s.with_phone),'With phone')+statCard(fmtN(s.enriched),'Enriched');
+    if(lastToken!==null && s.token!==lastToken){ $('#liveText').textContent='updated'; loadRows(true); setTimeout(()=>$('#liveText').textContent='live',1500); }
+    lastToken = s.token;
+  }catch(e){ $('#liveText').textContent='offline'; }
+}
+
+// Revenue stored in millions USD; show as $X.XM / $X.XB.
+function fmtRev(m){
+  if(m==null||m==='') return '<span class="muted">—</span>';
+  const v=Number(m); if(!isFinite(v)||v<=0) return '<span class="muted">—</span>';
+  if(v>=1000) return '$'+(v/1000).toLocaleString(undefined,{maximumFractionDigits:1})+'B';
+  if(v>=1) return '$'+v.toLocaleString(undefined,{maximumFractionDigits:1})+'M';
+  return '$'+(v*1000).toLocaleString(undefined,{maximumFractionDigits:0})+'K';
+}
+function rowHtml(r){
+  const enr = r.enriched?'<span class="pill ok">enriched</span>':'<span class="pill none">—</span>';
+  const multi = r.businesses>1?` <span class="muted" style="font-size:11px">+${r.businesses-1} more</span>`:'';
+  // Domain rows open the prospect page by domain; no-domain rows by phone (if any).
+  const key = encodeURIComponent(r.domain || r.phone || '');
+  const click = key?`onclick="window.open('/prospect/${key}','_blank')" style="cursor:pointer"`:'';
+  return `<tr ${click}>
+    <td><b>${esc(r.name||'—')}</b>${multi}</td>
+    <td>${r.domain?`<span class="dom">${esc(r.domain)}</span>`:'<span class="muted">—</span>'}</td>
+    <td>${esc(r.industry||'—')}</td>
+    <td>${esc(r.location||'—')}</td>
+    <td class="num">${fmtN(r.businesses)}</td>
+    <td class="num">${fmtRev(r.total_revenue)}</td>
+    <td class="num">${fmtN(r.employees)}</td>
+    <td class="num">${fmtN(r.contacts)}</td>
+    <td>${esc(r.phone||'—')}</td>
+    <td>${enr}</td>
+  </tr>`;
+}
+
+async function loadRows(flash){
+  const q=$('#search').value.trim(), en=$('#enriched').value, pl=$('#pipeline').value;
+  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&pipeline=${pl}&limit=${limit}&offset=${offset}`;
+  let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
+  total=d.total;
+  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="10" class="muted">No matching businesses.</td></tr>';
+  if(flash) $('#rows').classList.add('flash'), setTimeout(()=>$('#rows').classList.remove('flash'),1200);
+  const from = total?offset+1:0, to=Math.min(offset+limit,total);
+  $('#rangeText').textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`;
+  $('#prev').disabled = offset<=0; $('#next').disabled = offset+limit>=total;
+}
+
+let searchTimer;
+$('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();},250); });
+$('#enriched').onchange=()=>{offset=0;loadRows();};
+$('#pipeline').onchange=()=>{offset=0;loadRows();};
+$('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
+$('#next').onclick=()=>{ offset+=limit; loadRows(); };
+
+// realtime: SSE refresh + a stats poll that detects DB changes and reloads.
+loadStats(); loadRows();
+try{ const es=new EventSource('/api/events'); es.addEventListener('refresh',()=>loadStats()); }catch(e){}
+setInterval(loadStats, 8000);
+</script>
+</body>
+</html>

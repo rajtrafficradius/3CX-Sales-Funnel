@@ -16,6 +16,7 @@ from psycopg_pool import ConnectionPool
 from .aggregate import aggregate_day
 from .classify.classifier import classify_day
 from .config import Settings
+from .enrich import enrich_day
 from .logging import get_logger
 from .sources import Source
 
@@ -82,13 +83,26 @@ def classify_window(
     """Process every day in [start, end] in `order`, advancing the watermark."""
     days = _days(start, end, order)
     totals = {"days": 0, "calls": 0, "transcribed": 0, "stt_transcribed": 0,
-              "classified": 0, "needs_review": 0}
+              "classified": 0, "needs_review": 0, "enriched": 0}
     log.info("window_start", start=str(start), end=str(end), order=order, days=len(days))
 
     for day in days:
         ing = source.ingest_day(analytics_pool, settings, day)
         stt = source.transcribe_missing(analytics_pool, settings, day)  # fill 3CX gaps
         cls = classify_day(analytics_pool, settings, day)
+        # Marketing enrichment needs the AI-extracted website, so it runs AFTER
+        # classify and only fetches new/stale domains (cheap; never spends Apollo credits).
+        enr = {"enriched": 0}
+        if settings.enrich_missing:
+            try:
+                enr = enrich_day(analytics_pool, settings, day)
+            except Exception as exc:  # enrichment must never block the funnel
+                log.warning("enrich_day_failed", day=str(day), error=str(exc)[:160])
+        try:  # auto-assign interested-prospect callbacks to the BDE calendar
+            from .calendar import sync_callbacks_for_day
+            sync_callbacks_for_day(analytics_pool, day)
+        except Exception as exc:
+            log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
         aggregate_day(analytics_pool, settings, day)
         set_state(analytics_pool, day)
 
@@ -98,6 +112,7 @@ def classify_window(
         totals["stt_transcribed"] += stt["transcribed"]
         totals["classified"] += cls["classified"]
         totals["needs_review"] += cls["needs_review"]
+        totals["enriched"] += enr.get("enriched", 0)
         log.info("window_day_done", day=str(day), calls=ing["calls"],
                  transcribed=ing["transcribed"], stt=stt["transcribed"],
                  classified=cls["classified"], needs_review=cls["needs_review"])

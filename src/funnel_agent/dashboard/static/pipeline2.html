@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pipeline 2 — call list & assignments</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6;
+        --ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:13px}
+  header h1{font-size:17px;margin:0;font-weight:680}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0}
+  .brand img{height:24px;display:block}
+  .spacer{flex:1}
+  main{max-width:1180px;margin:0 auto;padding:20px 22px}
+  .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .intro{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 16px;margin-bottom:16px;color:var(--muted);font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  tr.due td{background:rgba(245,158,11,.06)}
+  a.lnk{color:var(--accent);text-decoration:none}a.lnk:hover{text-decoration:underline}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700}
+  .pill.due{background:rgba(245,158,11,.18);color:#fbbf24}.pill.wait{background:rgba(148,163,184,.14);color:#cbd5e1}
+  .pill.ovr{background:rgba(168,85,247,.16);color:#c79bf7}
+  select,input,button{font:inherit;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px}
+  button{cursor:pointer}button:hover{border-color:var(--accent)}
+  button.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border:none;color:#fff;font-weight:700}
+  button.small{padding:5px 9px;font-size:12px}
+  .muted{color:var(--muted)}
+  .assign{display:flex;gap:5px;align-items:center}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1f2937;border:1px solid var(--line);padding:11px 18px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:20}
+  .toast.show{opacity:1}.toast.err{border-color:rgba(239,68,68,.5);color:#fca5a5}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
+  <a href="/">&larr; Dashboard</a>
+  <h1 id="title">Pipeline 2 — call list</h1>
+  <div class="spacer"></div>
+  <a class="lnk" href="/logout">Sign out</a>
+</header>
+
+<main>
+  <div class="intro" id="intro">
+    <b>Pipeline 2 — prospects already with an agency.</b> We keep calling with a
+    <b>different BDE each attempt</b> until they book. Cadence defaults to monthly
+    (later: scheduled around any contract-end date the prospect mentions). The BDM
+    can reassign anyone.
+  </div>
+  <div class="bar">
+    <label class="muted">BDE
+      <select id="bdeFilter"><option value="ALL">All</option></select>
+    </label>
+    <label class="muted"><input type="checkbox" id="dueOnly" /> Due only</label>
+    <span class="spacer"></span>
+    <button class="primary" id="syncBtn" style="display:none">↻ Sync assignments</button>
+  </div>
+  <table id="tbl"><thead></thead><tbody><tr><td class="muted">Loading…</td></tr></tbody></table>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let CAN=false, ROSTER=[];
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className='toast show'+(e?' err':'');setTimeout(()=>t.className='toast'+(e?' err':''),2500);}
+const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'2-digit'}); };
+const isDue=s=>{ if(!s) return true; return new Date(s) <= new Date(); };
+
+async function api(u,o){ const r=await fetch(u,o); let j={}; try{j=await r.json();}catch(e){} if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
+
+async function load(){
+  const due = $('#dueOnly').checked ? '&due_only=true' : '';
+  const bde = $('#bdeFilter').value;
+  let d;
+  try{ d = await api(`/api/pipeline2?bde=${encodeURIComponent(bde)}${due}`); }
+  catch(e){ $('#tbl tbody').innerHTML=`<tr><td class="muted">${esc(e.message)}</td></tr>`; return; }
+  CAN = d.can_assign; ROSTER = d.roster||[];
+  $('#title').textContent = CAN ? 'Pipeline 2 — assignment board' : 'Pipeline 2 — my call list';
+  $('#syncBtn').style.display = CAN ? '' : 'none';
+  if($('#bdeFilter').options.length<=1 && CAN){
+    $('#bdeFilter').innerHTML = '<option value="ALL">All BDEs</option>'+ROSTER.map(b=>`<option>${esc(b)}</option>`).join('');
+  }
+  if(!CAN){ $('#bdeFilter').parentElement.style.display='none'; }
+
+  const cols = CAN
+    ? ['Prospect','Last caller','Next BDE','Due','Contract / cadence','Attempts','Status','Reassign']
+    : ['Prospect','Last caller','Due','Contract / cadence','Attempts','Status'];
+  $('#tbl thead').innerHTML = '<tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr>';
+  const tb=$('#tbl tbody');
+  if(!d.rows.length){ tb.innerHTML=`<tr><td colspan="${cols.length}" class="muted">No Pipeline-2 prospects ${$('#dueOnly').checked?'are due':'assigned'}.</td></tr>`; return; }
+
+  tb.innerHTML = d.rows.map(r=>{
+    const due = isDue(r.next_action_at);
+    const name = esc(r.business_name || r.dest_number || '?');
+    const prospect = `<a class="lnk" href="/prospect/${encodeURIComponent(r.dest_number||r.dest9)}" target="_blank">${name}</a>
+      <div class="muted" style="font-size:11.5px">${esc(r.dest_number||'')}${r.domain?' · '+esc(r.domain):''}</div>`;
+    const status = r.dnd
+      ? `<span class="pill" style="background:rgba(239,68,68,.18);color:#fca5a5" title="${esc(r.dnd_reason||'')}${r.dnd_by?' ('+esc(r.dnd_by)+')':''}">🚫 DND</span>`
+      : (due?`<span class="pill due">Due now</span>`:`<span class="pill wait">Scheduled</span>`)
+        + (r.override_by?` <span class="pill ovr" title="manually set by ${esc(r.override_by)}">override</span>`:'');
+    const contract = r.contract_end
+      ? `<span title="AI cadence ~${r.cadence_days||30}d">📄 ${esc(r.contract_end)}</span>`
+      : `<span class="muted">~${r.cadence_days||30}d cadence</span>`;
+    const base = [prospect, esc(r.last_bde||'—')];
+    if(CAN) base.push(`<b>${esc(r.assigned_bde||'—')}</b>`);
+    base.push(fmtDate(r.next_action_at), contract, r.attempts, status);
+    if(CAN){
+      const opts = ROSTER.map(b=>`<option ${b===r.assigned_bde?'selected':''}>${esc(b)}</option>`).join('');
+      const dndBtn = r.dnd
+        ? `<button class="small dndbtn" data-d="${esc(r.dest9)}" data-on="0" title="Remove DND">Un-DND</button>`
+        : `<button class="small dndbtn" data-d="${esc(r.dest9)}" data-on="1" title="Mark do-not-call">🚫 DND</button>`;
+      base.push(`<div class="assign">
+        <select data-d="${esc(r.dest9)}" class="rsel">${opts}</select>
+        <button class="small rbtn" data-d="${esc(r.dest9)}">Set</button>${dndBtn}</div>`);
+    }
+    return `<tr class="${due?'due':''}">`+base.map(c=>`<td>${c}</td>`).join('')+'</tr>';
+  }).join('');
+}
+
+document.addEventListener('click', async e=>{
+  const dnd=e.target.closest('.dndbtn');
+  if(dnd){
+    const dest9=dnd.dataset.d, on=dnd.dataset.on==='1';
+    let reason='';
+    if(on){ reason=prompt('Reason for DND (do not call):','Asked to be removed'); if(reason===null) return; }
+    try{ await api(`/api/pipeline2/${encodeURIComponent(dest9)}/dnd`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dnd:on,reason})});
+      toast(on?'Marked DND':'DND removed'); load(); }catch(err){ toast('Error',true); }
+    return;
+  }
+  const b=e.target.closest('.rbtn'); if(!b) return;
+  const dest9=b.dataset.d;
+  const bde=document.querySelector(`.rsel[data-d="${CSS.escape(dest9)}"]`).value;
+  try{ await api(`/api/pipeline2/${encodeURIComponent(dest9)}/assign`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bde})});
+    toast(`Assigned to ${bde}`); load(); }
+  catch(err){ toast(err.message,true); }
+});
+$('#syncBtn').onclick = async ()=>{ try{ const j=await api('/api/pipeline2/sync',{method:'POST'}); toast(`Synced: ${j.stats.prospects} prospects, ${j.stats.reassigned} reassigned`); load(); }catch(e){ toast(e.message,true); } };
+$('#dueOnly').onchange = load;
+$('#bdeFilter').onchange = load;
+load();
+</script>
+</body>
+</html>

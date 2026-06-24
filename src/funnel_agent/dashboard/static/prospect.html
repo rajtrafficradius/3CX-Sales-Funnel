@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prospect — 3CX Funnel</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6;
+        --ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:13px}
+  header h1{font-size:17px;margin:0;font-weight:680}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .brand img{height:26px;display:block}
+  main{max-width:1140px;margin:0 auto;padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{font-size:12px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .kv{display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:13px}
+  .kv div:nth-child(odd){color:var(--muted)}
+  .muted{color:var(--muted)}
+  a.lnk{color:var(--accent);text-decoration:none}
+  a.lnk:hover{text-decoration:underline}
+  .pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
+  .yes{background:rgba(34,197,94,.16);color:#4ade80}.no{background:rgba(239,68,68,.14);color:#f87171}
+  .neutral{background:rgba(255,255,255,.06);color:#8b949e}
+  .info{background:rgba(59,130,246,.16);color:#60a5fa}
+  /* hero */
+  .hero{grid-column:1/-1;background:linear-gradient(180deg,#19212d,#141a23);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .hero .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .hero h1{font-size:22px;margin:0;font-weight:760}
+  .hero .dom{color:var(--accent);font-size:13px}
+  .hero .stats{display:flex;gap:26px;flex-wrap:wrap;margin-top:14px}
+  .hero .stat .n{font-size:21px;font-weight:760}
+  .hero .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .tbadge{padding:5px 14px;border-radius:20px;font-weight:800;font-size:13px;letter-spacing:.5px}
+  .badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  /* metrics grid */
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+  .metric{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+  .metric .n{font-size:18px;font-weight:720}
+  .metric .l{font-size:11px;color:var(--muted);margin-top:2px}
+  .metric .src{font-size:9.5px;color:var(--muted);opacity:.7;text-transform:uppercase;letter-spacing:.4px;margin-top:3px}
+  .subh{font-weight:700;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 8px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:11.5px;color:var(--muted)}
+  .bizgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:700px){.bizgrid{grid-template-columns:1fr}}
+  /* contacts */
+  .contact{display:flex;gap:10px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
+  .contact:last-child{border-bottom:none}
+  .contact .nm{font-weight:650}
+  .contact .ti{color:var(--muted);font-size:12px}
+  .contact .ph{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+  /* add phone */
+  .addphone{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .addphone input{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
+  button{font:inherit;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#0b0f15;color:var(--txt);padding:8px 13px}
+  button.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border:none;color:#fff;font-weight:700}
+  button:hover{filter:brightness(1.08)}
+  /* timeline */
+  .tl{position:relative;padding-left:22px}
+  .tl::before{content:"";position:absolute;left:7px;top:4px;bottom:4px;width:2px;background:var(--line)}
+  .ev{position:relative;margin-bottom:14px}
+  .ev::before{content:"";position:absolute;left:-19px;top:5px;width:11px;height:11px;border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+  .ev.booked::before{background:var(--ok)} .ev.vm::before{background:var(--muted)} .ev.noconnect::before{background:#475569}
+  .evhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .evhead .dt{font-weight:650} .evhead .bde{color:var(--accent);font-size:12.5px}
+  .evbody{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-top:7px}
+  .bapus{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .bapu{padding:3px 9px;border-radius:7px;font-weight:700;font-size:11px;border:1px solid}
+  .bapu.on{background:rgba(34,197,94,.15);color:#4ade80;border-color:rgba(34,197,94,.4)}
+  .bapu.off{background:rgba(239,68,68,.10);color:#f87171;border-color:rgba(239,68,68,.3)}
+  .small{font-size:12.5px} .mt6{margin-top:6px}
+  ul.ci{margin:5px 0;padding-left:18px;font-size:12.5px}ul.ci li{margin:2px 0}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1f2937;border:1px solid var(--line);padding:11px 18px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:20}
+  .toast.show{opacity:1}.toast.err{border-color:rgba(239,68,68,.5);color:#fca5a5}
+  /* tabs */
+  .tabs{grid-column:1/-1;display:flex;gap:4px;border-bottom:1px solid var(--line);margin:4px 0 2px;flex-wrap:wrap}
+  .tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;border-radius:0}
+  .tab:hover{color:var(--txt)}
+  .tab.active{color:var(--txt);border-bottom-color:var(--accent)}
+  .tabpane{grid-column:1/-1;display:none}
+  .tabpane.active{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.tabpane.active{grid-template-columns:1fr}}
+  .bizrow{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--panel2)}
+  .bizrow .nm{font-weight:680;font-size:14px}
+  .bizrow .meta{color:var(--muted);font-size:12px;margin-top:2px}
+  .trk{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:7px;font-size:12px;font-weight:600;border:1px solid var(--line);background:var(--panel2);margin:3px 4px 0 0}
+  .trk.ads{background:rgba(239,68,68,.14);color:#fca5a5;border-color:rgba(239,68,68,.35)}
+  .trk.tk{background:rgba(59,130,246,.13);color:#93c5fd;border-color:rgba(59,130,246,.3)}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
+  <a href="/">&larr; Dashboard</a>
+  <h1>Prospect</h1>
+</header>
+<main id="main"><div class="card full muted">Loading…</div></main>
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY = decodeURIComponent(location.pathname.split('/prospect/')[1]||'');
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
+const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
+            warm:['🌤 WARM','#fbbf24','rgba(251,191,36,.16)'],none:['',' ',' ']};
+const PIPE={pipeline1_interested:['Pipeline 1 · Interested (callback)','#60a5fa'],
+            pipeline2_existing_agency:['Pipeline 2 · Already with an agency','#c79bf7'],none:['No pipeline','#8b949e']};
+function toast(m,e){const t=document.getElementById('toast');t.textContent=m;t.className='toast show'+(e?' err':'');setTimeout(()=>t.className='toast'+(e?' err':''),2600);}
+
+function metric(n,l,src){ return `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div>${src?`<div class="src">${src}</div>`:''}</div>`; }
+
+function heroCard(d){
+  const m=d.master||{}, ro=d.rollup||{}, calls=d.calls||[];
+  // Prefer the AI-extracted company name from the latest call that has one.
+  let company=null;
+  for(let i=calls.length-1;i>=0;i--){ if(calls[i].prospect_company){company=calls[i].prospect_company;break;} }
+  const name=company||m.business_name||d.domain||KEY;
+  const [plbl,pcol]=PIPE[ro.pipeline]||PIPE.none;
+  const [tlbl,tcol,tbg]=TEMP[ro.temperature]||TEMP.none;
+  const badges=[];
+  if(ro.ever_booked) badges.push(`<span class="pill yes">📅 Meeting booked</span>`);
+  if(ro.ever_qualified) badges.push(`<span class="pill yes">✓ Qualified</span>`);
+  if(ro.ever_rpc) badges.push(`<span class="pill info">Reached decision-maker</span>`);
+  if(ro.callback_requested) badges.push(`<span class="pill info">📞 Callback requested</span>`);
+  if(m.assigned_bde) badges.push(`<span class="pill neutral">Assigned: ${esc(m.assigned_bde)}</span>`);
+  const temp = (ro.temperature&&tlbl)?`<span class="tbadge" style="background:${tbg};color:${tcol}">${tlbl}</span>`:'';
+  return `<div class="hero">
+    <div class="top">
+      <h1>${esc(name)}</h1>
+      ${temp}
+      <span class="pill" style="background:rgba(255,255,255,.06);color:${pcol}">${esc(plbl)}</span>
+    </div>
+    ${d.domain?`<div class="dom"><a class="lnk" href="https://${esc(d.domain)}" target="_blank">${esc(d.domain)} ↗</a>${m.location?' · '+esc(m.location):''}</div>`:(m.location?`<div class="dom">${esc(m.location)}</div>`:'')}
+    <div class="stats">
+      <div class="stat"><div class="n">${ro.calls||0}</div><div class="l">Calls</div></div>
+      <div class="stat"><div class="n">${(ro.bdes||[]).length}</div><div class="l">BDEs called</div></div>
+      <div class="stat"><div class="n">${fmtDate(ro.first_call)}</div><div class="l">First call</div></div>
+      <div class="stat"><div class="n">${fmtDate(ro.last_call)}</div><div class="l">Last call</div></div>
+    </div>
+    <div class="badges">${badges.join('')||'<span class="muted small">No funnel milestones yet.</span>'}</div>
+  </div>`;
+}
+
+function contactsCard(d){
+  const m=d.master||{};
+  const hasWebsite=!!m.domain;
+  const cs=[];
+  const push=(nm,ti,mob,ph)=>{ if(nm||mob||ph) cs.push({nm,ti,ph:[mob,ph].filter(Boolean).join(' · ')}); };
+  push(m.contact1_name,m.contact1_title,m.contact1_mobile,m.contact1_phone);
+  push(m.contact2_name,m.contact2_title,m.contact2_mobile,m.contact2_phone);
+  (m.extra_contacts||[]).forEach(c=>push(c.name,c.title,c.mobile,c.phone));
+  const rows=cs.map(c=>`<div class="contact"><div><div class="nm">${esc(c.nm)||'—'}</div><div class="ti">${esc(c.ti)||''}</div></div><div class="ph">${esc(c.ph)||'—'}</div></div>`).join('');
+  const top = hasWebsite
+    ? `<div class="kv">
+         <div>Website</div><div><a class="lnk" href="https://${esc(m.domain)}" target="_blank">${esc(m.domain)}</a></div>
+         <div>Location</div><div>${esc(m.location)||'—'}</div>
+       </div>
+       <div class="subh">Decision-makers (master DB)</div>
+       ${rows||'<div class="muted small">No contacts on file.</div>'}`
+    : `<div class="muted small" style="margin-bottom:4px">⚠ No website on file for this prospect — that's why there's no marketing data. Add the website below and it'll fetch SEO, ads, company &amp; revenue instantly.</div>`;
+  return `<div class="card"><h2>Business &amp; contacts</h2>
+    ${top}
+    ${addWebsiteForm(hasWebsite)}
+    ${addPhoneForm(true)}
+  </div>`;
+}
+function addWebsiteForm(hasWebsite){
+  return `<div class="subh">${hasWebsite?'Update website':'🌐 Add website — unlocks marketing data'}</div>
+    <div class="addphone">
+      <input id="awSite" placeholder="e.g. acme.com.au" style="flex:1;min-width:140px"/>
+      <input id="awName" placeholder="Business name (optional)" style="width:170px"/>
+      <button class="primary" id="awBtn">Save &amp; enrich</button>
+    </div>
+    <div class="muted small mt6">Saves the website and immediately fetches SEMrush + Apollo data for this prospect.</div>`;
+}
+function addPhoneForm(haveMaster){
+  return `<div class="subh" style="margin-top:14px">Add a phone number</div>
+    <div class="addphone">
+      <input id="apName" placeholder="Contact name (optional)" style="flex:1;min-width:120px"/>
+      <input id="apPhone" placeholder="Phone / mobile" style="width:150px"/>
+      <button class="primary" id="apBtn" ${haveMaster?'':'disabled title="no master prospect to attach to"'}>Add</button>
+    </div>
+    <div class="muted small mt6">Saved to the master prospect record for everyone.</div>`;
+}
+async function addWebsite(){
+  const site=document.getElementById('awSite').value.trim();
+  const name=document.getElementById('awName').value.trim();
+  if(!site){ toast('Enter a website',true); return; }
+  const btn=document.getElementById('awBtn'); btn.disabled=true; btn.textContent='Enriching…';
+  try{
+    const r=await fetch(`/api/prospect/${encodeURIComponent(KEY)}/set-website`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({website:site,business_name:name})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status);
+    toast(j.enriched?'Website saved — marketing data fetched ✓':'Website saved (no SEMrush/Apollo data found for it)'); load();
+  }catch(e){ toast(e.message,true); btn.disabled=false; btn.textContent='Save & enrich'; }
+}
+
+// Merge master-DB SEO metrics with live enrichment (enrichment wins; master fills gaps).
+function marketingCard(d){
+  const m=d.master||{}, e=d.enrichment||{}, sm=(e&&e.semrush)||{}, ap=(e&&e.apollo)||{};
+  const pick=(en,ma)=>{ if(en!=null&&en!=='') return [en,'SEMrush']; if(ma!=null&&ma!=='') return [ma,'Master DB']; return [null,null]; };
+  const [otraf,otrafS]=pick(sm.organic_traffic,m.organic_traffic);
+  const [okw,okwS]=pick(sm.organic_keywords,m.organic_keywords);
+  const [ocost,ocostS]=pick(sm.organic_cost,m.organic_cost);
+  const [adkw,adkwS]=pick(sm.paid_keywords,m.adwords_keywords);
+  const mset=[];
+  if(otraf!=null) mset.push(metric(fmtN(otraf),'Organic traffic /mo',otrafS));
+  if(okw!=null) mset.push(metric(fmtN(okw),'Organic keywords',okwS));
+  if(ocost!=null) mset.push(metric('$'+fmtN(ocost),'Traffic value /mo',ocostS));
+  if(adkw!=null) mset.push(metric(fmtN(adkw),'Google Ads keywords',adkwS));
+  if(sm.authority_score!=null) mset.push(metric(sm.authority_score+'/100','Authority score','SEMrush'));
+  if(sm.backlinks!=null) mset.push(metric(fmtN(sm.backlinks),'Backlinks','SEMrush'));
+  if(sm.referring_domains!=null) mset.push(metric(fmtN(sm.referring_domains),'Referring domains','SEMrush'));
+  if(m.competitor_relevance!=null&&m.competitor_relevance!=='') mset.push(metric(esc(m.competitor_relevance),'Competitor relevance','Master DB'));
+
+  // Apollo (free company data)
+  const rev=ap.annual_revenue_printed||(ap.annual_revenue?'$'+fmtN(ap.annual_revenue):null);
+  const ocostForRev = sm.organic_cost ?? m.organic_cost;
+  const revEst = (!rev && ocostForRev) ? '≈ $'+fmtN(ocostForRev*12)+' /yr (est. from SEO value)' : null;
+  const loc=[ap.city,ap.state,ap.country].filter(Boolean).join(', ');
+  const aRows=[['Industry',esc(ap.industry)],['Est. revenue',rev?esc(rev):(revEst?`<span class="muted">${esc(revEst)}</span>`:null)],
+    ['Employees',ap.employees!=null?fmtN(ap.employees):null],['Founded',ap.founded_year],
+    ['HQ',esc(loc)],['Phone',esc(ap.phone)],['LinkedIn',ap.linkedin_url?`<a class="lnk" href="${esc(ap.linkedin_url)}" target="_blank">profile ↗</a>`:null]]
+    .filter(r=>r[1]!=null&&r[1]!=='');
+  const aHtml=aRows.length?`<div class="kv">${aRows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`:'<div class="muted small">Apollo company data not fetched yet.</div>';
+  const tech=(ap.technologies||[]).slice(0,14);
+  const techHtml=tech.length?`<div class="subh">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
+  const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
+  const freshness = !d.domain
+    ? `<div class="muted small mt6">⚠ No website on file — add it in <b>Business &amp; contacts</b> to fetch SEO, ads, company &amp; revenue.</div>`
+    : (e&&e.fetched_at?`<div class="muted small mt6">Enrichment fetched ${fmtDate(e.fetched_at)} · status ${esc(e.status)||'—'}</div>`
+    : `<div class="muted small mt6">Showing master-DB metrics. Live SEMrush/Apollo enrichment not run for this domain yet.</div>`);
+  return `<div class="card"><h2>Marketing intelligence</h2>
+    <div class="subh" style="margin-top:0">📈 SEO &amp; ads</div>
+    ${mset.length?`<div class="metrics">${mset.join('')}</div>`:'<div class="muted small">No SEO metrics available.</div>'}
+    <div class="subh">🏢 Company — Apollo (free data)</div>${aHtml}${descr}${techHtml}
+    ${freshness}
+  </div>`;
+}
+
+// ---- Business data (the GIVEN data — companies under this domain) ----
+function fmtRevM(m){ if(m==null||m==='')return null; const v=Number(m); if(!isFinite(v)||v<=0)return null;
+  return v>=1000?'$'+(v/1000).toLocaleString(undefined,{maximumFractionDigits:1})+'B'
+    : v>=1?'$'+v.toLocaleString(undefined,{maximumFractionDigits:1})+'M'
+    : '$'+(v*1000).toLocaleString(undefined,{maximumFractionDigits:0})+'K'; }
+function businessDataCard(d){
+  const cos=d.companies||[], sum=d.company_summary;
+  if(!cos.length) return `<div class="card full"><h2>Business data (given)</h2>
+    <div class="muted small">No record for this prospect in the uploaded business data${d.domain?' ('+esc(d.domain)+')':''}.</div></div>`;
+  const sm = sum?`<div class="metrics" style="margin-bottom:14px">
+    ${metric(fmtN(sum.businesses),'Businesses')}
+    ${sum.total_revenue_musd!=null?metric(fmtRevM(sum.total_revenue_musd)||'—','Total revenue'):''}
+    ${sum.employees?metric(fmtN(sum.employees),'Employees (max)'):''}
+    ${sum.industry?metric(esc(sum.industry),'Industry'):''}
+  </div>`:'';
+  const rows = cos.map(c=>{
+    const contacts=(c.contacts||[]).map(x=>`${esc(x.name)}${x.role?' <span class="muted">('+esc(x.role)+')</span>':''}`).join(' · ');
+    const meta=[c.company_profile,c.year_started?'est. '+c.year_started:null,
+      c.employees?fmtN(c.employees)+' staff':null, fmtRevM(c.revenue_musd)?'rev '+fmtRevM(c.revenue_musd):null,
+      [c.suburb,c.state,c.postal_code].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+    const extra=[c.parent_company?'Parent: '+esc(c.parent_company):null, c.subsidiaries?esc(c.subsidiaries):null,
+      c.branches?esc(c.branches):null].filter(Boolean).join(' · ');
+    return `<div class="bizrow">
+      <div class="nm">${esc(c.company_name)}</div>
+      <div class="meta">${esc(c.industry||'')}${c.sub_industry?' · '+esc(c.sub_industry):''}</div>
+      <div class="meta">${meta}</div>
+      ${c.address?`<div class="meta">${esc(c.address)}</div>`:''}
+      ${extra?`<div class="meta">${extra}</div>`:''}
+      ${contacts?`<div class="small mt6"><b>Contacts:</b> ${contacts}</div>`:''}
+    </div>`;
+  }).join('');
+  return `<div class="card full"><h2>Business data (given) — ${cos.length} record${cos.length>1?'s':''} for this domain</h2>
+    ${sm}${rows}</div>`;
+}
+
+// ---- Digital marketing: website tracking pixels + paid-ads detection (FREE) ----
+function websiteCard(d){
+  const w=(d.enrichment&&d.enrichment.website)||null;
+  const btn=`<button class="primary" id="ewBtn" ${d.domain?'':'disabled title="no website on file"'}>🌐 Enrich website now (free)</button>`;
+  if(!w||!w.found){
+    return `<div class="card"><h2>Digital marketing — website &amp; tracking</h2>
+      <div class="muted small">No website scan yet${d.domain?' for '+esc(d.domain):''}. This is a FREE scan: detects Google Tag Manager, GA4, Google Ads, Meta Pixel, LinkedIn, TikTok &amp; more to confirm paid-ads activity, and pulls emails/socials.</div>
+      <div class="addphone">${btn}</div></div>`;
+  }
+  const trk=Object.values(w.trackers||{});
+  const ads=w.paid_ad_platforms||[];
+  const adsBadge = w.runs_paid_ads
+    ? `<span class="pill yes">✓ Running paid ads</span>`
+    : `<span class="pill neutral">No ad pixels detected</span>`;
+  const trkHtml = trk.length
+    ? trk.map(t=>{const isAd=ads.includes(t);return `<span class="trk ${isAd?'ads':'tk'}">${isAd?'🎯':'📊'} ${esc(t)}</span>`;}).join('')
+    : '<span class="muted small">No tracking tags found in the homepage source.</span>';
+  const emails=(w.emails||[]).slice(0,6).map(e=>`<a class="lnk" href="mailto:${esc(e)}">${esc(e)}</a>`).join(' · ');
+  const socials=Object.entries(w.socials||{}).map(([k,u])=>`<a class="lnk" href="${esc(u)}" target="_blank">${esc(k)} ↗</a>`).join(' · ');
+  return `<div class="card"><h2>Digital marketing — website &amp; tracking</h2>
+    <div style="margin-bottom:8px">${adsBadge}${w.uses_utm?' <span class="pill info">Uses UTM tracking</span>':''}</div>
+    <div class="subh" style="margin-top:4px">Tracking / pixels detected</div>
+    <div>${trkHtml}</div>
+    ${ads.length?`<div class="small mt6"><b>Paid-ads signals:</b> ${ads.map(esc).join(', ')}</div>`:''}
+    ${emails?`<div class="small mt6"><b>Emails:</b> ${emails}</div>`:''}
+    ${socials?`<div class="small mt6"><b>Socials:</b> ${socials}</div>`:''}
+    <div class="muted small mt6">Scanned ${fmtDate(d.enrichment.fetched_at)} · <a class="lnk" href="https://${esc(d.domain)}" target="_blank">${esc(d.domain)} ↗</a></div>
+    <div class="addphone" style="margin-top:10px">${btn}</div>
+  </div>`;
+}
+async function enrichWebsite(){
+  const btn=document.getElementById('ewBtn'); if(!btn)return; btn.disabled=true; btn.textContent='Scanning…';
+  try{
+    const r=await fetch(`/api/prospect/${encodeURIComponent(KEY)}/enrich-website`,{method:'POST'});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status);
+    toast(j.website&&j.website.found?'Website scanned ✓':'Could not reach the website'); load();
+  }catch(e){ toast(e.message,true); btn.disabled=false; btn.textContent='🌐 Enrich website now (free)'; }
+}
+
+function bapu(label,v){const on=v&&v.value;return v?`<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`:'';}
+function callEvent(c){
+  const ev=(c.evidence&&typeof c.evidence==='object')?c.evidence:{};
+  const connected = c.answered && (c.talk_seconds>=15) && c.call_outcome!=='voicemail';
+  const booked = c.meeting_booked && !c.meeting_confirmation;
+  let cls='ev'; if(booked)cls+=' booked'; else if(c.call_outcome==='voicemail')cls+=' vm'; else if(!connected)cls+=' noconnect';
+  const tags=[];
+  if(booked) tags.push(`<span class="pill yes">📅 Booked${c.meeting_rescheduled?' (resched)':''}</span>`);
+  if(c.meeting_confirmation) tags.push(`<span class="pill neutral">Confirmation call</span>`);
+  if(c.qualified) tags.push(`<span class="pill yes">Qualified</span>`);
+  if(c.lead_temperature&&c.lead_temperature!=='none'){const[l,col,bg]=TEMP[c.lead_temperature];tags.push(`<span class="pill" style="background:${bg};color:${col}">${l}</span>`);}
+  if(c.callback_requested) tags.push(`<span class="pill info">📞 Callback${c.callback_when?': '+esc(c.callback_when):''}</span>`);
+  const bapus = (c.budget!=null||c.authority!=null) ?
+    `<div class="bapus">${bapu('Budget',ev.budget)}${bapu('Authority',ev.authority)}${bapu('Problem',ev.problem)}${bapu('Urgency',ev.urgency)}${bapu('Aspiration',ev.aspiration)}${bapu('Open',ev.open_to_listening)}</div>`
+    + ((ev.runs_paid_ads||ev.has_marketing_agency)?`<div class="small mt6 muted">Auto-validated: ${[ev.runs_paid_ads?'runs paid ads':null,ev.has_marketing_agency?'has an agency':null].filter(Boolean).join(' · ')}</div>`:'')
+    : '';
+  const sig=(ev.buying_signals||[]).slice(0,4), objs=(ev.objections||[]).slice(0,3);
+  const sigHtml=sig.length?`<div class="small mt6"><b>Buying signals:</b><ul class="ci">${sig.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>`:'';
+  const objHtml=objs.length?`<div class="small mt6"><b>Objections:</b><ul class="ci">${objs.map(o=>`<li>${o.handled?'✅':'⚠️'} ${esc(o.objection)}</li>`).join('')}</ul></div>`:'';
+  const next=ev.next_step?`<div class="small mt6"><b>Next step:</b> ${esc(ev.next_step)}</div>`:'';
+  const contract=ev.contract_end?`<div class="small mt6"><b>📄 Contract signal:</b> ${esc(ev.contract_end)}${ev.recommended_cadence_days?` · suggest next call in ~${ev.recommended_cadence_days} days`:''}</div>`:'';
+  const who=ev.who_answered?`<span class="muted small">· ${esc(ev.who_answered)}</span>`:'';
+  const summ=c.transcript_summary||ev.prospect_summary||'';
+  return `<div class="${cls}">
+    <div class="evhead">
+      <span class="dt">${fmtDate(c.started_at)}</span>
+      <span class="bde">${esc(c.bde_name)||esc(c.bde_extension)||'?'}</span>
+      <span class="muted small">${c.talk_seconds||0}s · ${esc(c.call_outcome)||(connected?'connected':'no connect')}</span>${who}
+      <a class="lnk small" style="margin-left:auto" href="/call/${encodeURIComponent(c.call_id)}" target="_blank">Open call ↗</a>
+    </div>
+    ${tags.length||bapus||summ||sigHtml||objHtml||next||contract?`<div class="evbody">
+      ${tags.length?`<div style="display:flex;gap:6px;flex-wrap:wrap">${tags.join('')}</div>`:''}
+      ${bapus}
+      ${summ?`<div class="small mt6">${esc(summ)}</div>`:''}
+      ${sigHtml}${objHtml}${next}${contract}
+    </div>`:''}
+  </div>`;
+}
+
+function timelineCard(d){
+  const calls=(d.calls||[]).slice().reverse(); // newest first
+  if(!calls.length) return `<div class="card full"><h2>Call history</h2><div class="muted">No calls.</div></div>`;
+  return `<div class="card full"><h2>Call history — ${calls.length} call${calls.length>1?'s':''} across ${(d.rollup.bdes||[]).length} BDE(s)</h2>
+    <div class="tl">${calls.map(callEvent).join('')}</div></div>`;
+}
+
+async function addPhone(){
+  const name=document.getElementById('apName').value;
+  const phone=document.getElementById('apPhone').value;
+  if(!phone){ toast('Enter a phone number',true); return; }
+  try{
+    const r=await fetch(`/api/prospect/${encodeURIComponent(KEY)}/add-phone`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,phone})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status);
+    toast('Phone added'); load();
+  }catch(e){ toast(e.message,true); }
+}
+
+async function load(){
+  let d;
+  try{ const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)); d=await r.json(); if(!r.ok) throw new Error(d.error||r.status); }
+  catch(e){ document.getElementById('main').innerHTML='<div class="card full">Could not load prospect ('+esc(e.message)+')</div>'; return; }
+  if(!d.found){ document.getElementById('main').innerHTML='<div class="card full">No prospect or calls found for <b>'+esc(KEY)+'</b>.</div>'; return; }
+  document.querySelector('header h1').textContent = (d.master&&d.master.business_name)||d.domain||KEY;
+  // Tabbed layout: Overview | Business data | Digital marketing | Calls
+  const tabs=[
+    ['overview','Overview', contactsCard(d)],
+    ['business','Business data', businessDataCard(d)],
+    ['digital','Digital marketing', websiteCard(d)+marketingCard(d)],
+    ['calls','Calls ('+((d.calls||[]).length)+')', timelineCard(d)],
+  ];
+  document.getElementById('main').innerHTML =
+    heroCard(d)
+    + `<div class="tabs">${tabs.map((t,i)=>`<button class="tab${i===0?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
+    + tabs.map((t,i)=>`<div class="tabpane${i===0?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); document.getElementById('pane-'+b.dataset.pane).classList.add('active');
+  });
+  const ab=document.getElementById('apBtn'); if(ab) ab.onclick=addPhone;
+  const wb=document.getElementById('awBtn'); if(wb) wb.onclick=addWebsite;
+  const eb=document.getElementById('ewBtn'); if(eb) eb.onclick=enrichWebsite;
+}
+load();
+</script>
+</body>
+</html>

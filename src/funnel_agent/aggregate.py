@@ -20,7 +20,9 @@ log = get_logger(__name__)
 TRACKS = ("fresh", "followup", "combined")
 _ZERO = {
     "calls_made": 0, "connected": 0, "transcribed": 0, "rpc_connect": 0,
-    "full_pitch": 0, "leads": 0, "qualified": 0, "meetings_booked": 0, "meetings_done": 0,
+    "full_pitch": 0, "leads": 0, "qualified": 0, "meetings_booked": 0,
+    "qualified_booked": 0, "meetings_done": 0,
+    "warm": 0, "hot": 0, "super_hot": 0, "pipeline1": 0, "pipeline2": 0,
 }
 
 # Per-(scope, track) aggregation via GROUPING SETS:
@@ -45,19 +47,49 @@ WITH base AS (
                    AND cl.rpc_connect AND cl.is_lead THEN 1 ELSE 0 END) AS leads,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.rpc_connect AND cl.is_lead AND cl.qualified THEN 1 ELSE 0 END) AS qualified,
-        -- A counted booking requires reaching the decision-maker (RPC) AND being a
-        -- GENUINELY NEW, QUALIFIED booking: it must be qualified (no "baby"/non-viable
-        -- prospects) and NOT a meeting_confirmation_only call (which just re-confirms a
-        -- booking made on an earlier call — that would double-count the same meeting).
+        -- Meeting Booked = the BDE booked a GENUINELY NEW meeting (a real scheduled
+        -- session), regardless of decision-maker / qualification — credit the booking
+        -- even if the prospect isn't the decision-maker (e.g. an interested gatekeeper).
+        -- EXCLUDES both confirmation-only calls (re-confirming an earlier booking) AND
+        -- reschedules of an already-booked meeting: the booking was already counted on
+        -- the day it was first made, so re-confirming/moving it must NOT count again.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   AND cl.rpc_connect AND cl.meeting_booked AND cl.qualified
-                   AND NOT COALESCE(cl.meeting_confirmation, false) THEN 1 ELSE 0 END) AS meetings_booked,
+                   AND cl.meeting_booked
+                   AND NOT COALESCE(cl.meeting_confirmation, false)
+                   AND NOT COALESCE(cl.meeting_rescheduled, false) THEN 1 ELSE 0 END) AS meetings_booked,
+        -- Qualified Booked = the strict subset: a new booking where the prospect is
+        -- QUALIFIED. Effective qualification = a BDM/admin OVERRIDE if present (#4b),
+        -- else the AI verdict. Qualification is a PROSPECT-level fact: it counts if this
+        -- call is (effectively) qualified OR ANY other in-scope call to the same number is.
+        -- Same exclusion: confirmation/reschedule of an existing booking is not re-counted.
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false)
+                   AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND (COALESCE(qo.qualified, cl.qualified) OR EXISTS (
+                         SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
+                         LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id
+                         WHERE c2.dest_number = c.dest_number AND c2.in_scope
+                           AND COALESCE(qo2.qualified, cl2.qualified)))
+              THEN 1 ELSE 0 END) AS qualified_booked,
         -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.
         (CASE WHEN EXISTS (SELECT 1 FROM meetings m
                            WHERE m.call_id = c.call_id AND m.meeting_done)
-              THEN 1 ELSE 0 END) AS meetings_done
+              THEN 1 ELSE 0 END) AS meetings_done,
+        -- Lead quality (interested pipeline) + pipeline routing. Nested under
+        -- "connected" (a real live human); temperature is only set for Pipeline 1.
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.pipeline = 'pipeline1_interested' THEN 1 ELSE 0 END) AS pipeline1,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.pipeline = 'pipeline2_existing_agency' THEN 1 ELSE 0 END) AS pipeline2,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.lead_temperature = 'warm' THEN 1 ELSE 0 END) AS warm,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.lead_temperature = 'hot' THEN 1 ELSE 0 END) AS hot,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.lead_temperature = 'super_hot' THEN 1 ELSE 0 END) AS super_hot
     FROM calls c
     LEFT JOIN classifications cl ON cl.call_id = c.call_id
+    LEFT JOIN qualification_overrides qo ON qo.call_id = c.call_id
     WHERE c.in_scope
       AND c.started_at >= %(start)s AND c.started_at < %(end)s
 )
@@ -73,7 +105,13 @@ SELECT
     SUM(leads)        AS leads,
     SUM(qualified)    AS qualified,
     SUM(meetings_booked) AS meetings_booked,
-    SUM(meetings_done)   AS meetings_done
+    SUM(qualified_booked) AS qualified_booked,
+    SUM(meetings_done)   AS meetings_done,
+    SUM(pipeline1)       AS pipeline1,
+    SUM(pipeline2)       AS pipeline2,
+    SUM(warm)            AS warm,
+    SUM(hot)             AS hot,
+    SUM(super_hot)       AS super_hot
 FROM base
 GROUP BY GROUPING SETS ((bde, ff), (bde), (ff), ())
 """
@@ -127,11 +165,13 @@ def aggregate_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:
                 """
                 INSERT INTO daily_funnel (
                     report_date, bde_name, track, calls_made, connected, transcribed,
-                    rpc_connect, full_pitch, leads, qualified, meetings_booked, meetings_done)
+                    rpc_connect, full_pitch, leads, qualified, meetings_booked, qualified_booked,
+                    meetings_done, warm, hot, super_hot, pipeline1, pipeline2)
                 VALUES (
                     %(report_date)s, %(bde_name)s, %(track)s, %(calls_made)s, %(connected)s,
                     %(transcribed)s, %(rpc_connect)s, %(full_pitch)s, %(leads)s,
-                    %(qualified)s, %(meetings_booked)s, %(meetings_done)s)
+                    %(qualified)s, %(meetings_booked)s, %(qualified_booked)s, %(meetings_done)s,
+                    %(warm)s, %(hot)s, %(super_hot)s, %(pipeline1)s, %(pipeline2)s)
                 """,
                 rows_to_write,
             )

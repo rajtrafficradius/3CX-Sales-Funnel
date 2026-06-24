@@ -94,20 +94,61 @@ class Settings(BaseSettings):
     # calls for free; we only pay to fill genuine gaps (and on intraday refreshes).
     transcribe_min_age_minutes: int = 15
 
+    # --- Marketing enrichment (per-domain, cached in the `enrichment` table) ---
+    semrush_api_key: str = ""        # SEMRUSH_API_KEY
+    apollo_api_key: str = ""         # APOLLO_API_KEY
+    # Apollo guardrail: the client only ever calls organizations/enrich (free company
+    # data). It NEVER calls people/match/search or sends reveal_* params (those burn
+    # credits). apollo_enabled is a hard kill-switch; apollo_max_per_day caps lookups.
+    apollo_enabled: bool = True
+    apollo_max_per_day: int = 500
+    enrich_missing: bool = True      # run the enrich step in the pipeline
+    enrich_workers: int = 4          # parallel domain lookups
+    enrich_refresh_days: int = 30    # re-fetch a cached domain only if older than this
+
+    # --- Dashboard auth / kiosk ---
+    # CSV of manager logins (see everyone); seeded by `users-sync`.
+    manager_emails: str = "raj@trafficradius.com.au"
+    # If set, an always-on office TV can load /?tv=1&token=<KIOSK_TOKEN> for a
+    # read-only ALL view without a personal login (sets a kiosk cookie).
+    kiosk_token: str = ""
+
     # --- Behaviour ---
     backfill_start: str = ""  # 'YYYY-MM-DD' or blank => auto-detect
     daily_lookback_days: int = 3
     rpc_min_talk_seconds: int = 25
     tz: str = "Australia/Melbourne"
+    # Pipeline 2 (already-with-agency): default WEEKLY BDE rotation cadence. A
+    # contract-end signal from the AI still overrides this per-prospect (don't pester
+    # someone locked into a long contract). Env: PIPELINE2_DEFAULT_CADENCE_DAYS.
+    pipeline2_default_cadence_days: int = 7
 
     # --- Roster in-scope rule ---
+    # PRIMARY rule (preferred): BDE names. BDEs keep one stable name but rotate across
+    # many extensions (mobile, landline, new numbers). Any 3CX line whose name matches
+    # one of these is in-scope and rolls up under that BDE — so new numbers are captured
+    # automatically and a person's lines are merged. e.g. "Bharat,Sunil,Syed,Dilip".
+    roster_inscope_names: str = ""
     roster_inscope_groups: str = ""
     roster_inscope_extensions: str = ""
-    roster_exclude_extensions: str = ""  # always out-of-scope, overrides groups (e.g. admins)
+    roster_exclude_extensions: str = ""  # always out-of-scope, overrides everything (e.g. admins)
     # Merge a secondary extension into a primary BDE (e.g. a BDE's landline / 2nd
     # line -> their main line) so each person appears once with combined totals.
     # Format: "secondaryExt:primaryExt,secondaryExt:primaryExt"  e.g. "303:302,182:184,190:252".
     roster_merge_map: str = ""
+
+    # --- WhatsApp nurturing (Meta Cloud API) — #13 ---
+    # Business-initiated messages require PRE-APPROVED templates in Meta Business Manager.
+    # Leave blank to run in DRY-RUN (the engine schedules + logs messages but doesn't send).
+    whatsapp_enabled: bool = False
+    whatsapp_phone_number_id: str = ""      # Meta WABA phone number ID
+    whatsapp_access_token: str = ""         # permanent system-user access token
+    whatsapp_api_version: str = "v21.0"
+    # Approved template names for each step of the meeting-confirmation sequence.
+    whatsapp_tpl_confirm: str = "meeting_confirmed"     # immediately on booking
+    whatsapp_tpl_value: str = "meeting_value"           # what you'll get
+    whatsapp_tpl_reminder: str = "meeting_reminder"     # +2h: authority/FOMO + confirm
+    whatsapp_reschedule_url: str = ""                   # link sent if they don't confirm
 
     # --- Report email (optional) ---
     smtp_host: str = ""
@@ -145,6 +186,10 @@ class Settings(BaseSettings):
         return "https://" + v
 
     @property
+    def inscope_names(self) -> list[str]:
+        return _csv(self.roster_inscope_names)
+
+    @property
     def inscope_groups(self) -> list[str]:
         return _csv(self.roster_inscope_groups)
 
@@ -155,6 +200,10 @@ class Settings(BaseSettings):
     @property
     def exclude_extensions(self) -> list[str]:
         return _csv(self.roster_exclude_extensions)
+
+    @property
+    def manager_email_list(self) -> list[str]:
+        return _csv(self.manager_emails)
 
     @property
     def merge_map(self) -> dict[str, str]:

@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
+from datetime import date as _date, timedelta
 from importlib import resources
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from psycopg.types.json import Json
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
+                               Response, StreamingResponse)
 
+from ..auth import (can_manage_pipeline, create_session, create_user,
+                    delete_session, delete_user, get_user_by_email, is_admin,
+                    list_users, set_password_by_id, update_user,
+                    user_for_session, verify_password)
 from ..config import Settings, get_settings
 from ..db.analytics import make_analytics_pool
 
@@ -20,8 +28,24 @@ STAGES = [
     ("Connected", "connected"),
     ("Right Party Contact", "rpc_connect"),
     ("Full Pitch", "full_pitch"),
-    ("Lead (Meeting Booked)", "meetings_booked"),
+    ("Meeting Booked", "meetings_booked"),          # any new booking the BDE made
+    ("Qualified Booked Meetings", "qualified_booked"),  # strict subset: also qualified (BAPU)
 ]
+
+
+# ---- Performance benchmarks (#4) ----
+# Each conversion stage has a minimum expected ratio of the PRIOR stage. These are
+# scale-invariant, so they apply identically to the ALL view and to a single BDE.
+# Shown in the funnel Total column: if actual < target the cell flags how far short.
+#   {stage_key: (ratio, prior_stage_key, label_pct)}
+BENCHMARK_RATIOS = {
+    "connected":       (0.40, "calls_made"),   # 40% of calls made
+    "rpc_connect":     (0.40, "connected"),    # 40% of connected
+    "full_pitch":      (0.30, "rpc_connect"),  # 30% of RPC
+    "meetings_booked": (0.25, "full_pitch"),   # 25% of full pitch
+}
+# Calls-Made activity benchmark: 75 dials per 30 min of active calling.
+CALLS_PER_30MIN = 75
 
 
 def _pct(num: int, den: int) -> float | None:
@@ -51,10 +75,173 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cur.execute(sql, params)
             return cur.fetchall()
 
+    def _static(name: str) -> str:
+        return resources.files("funnel_agent.dashboard").joinpath(
+            f"static/{name}").read_text(encoding="utf-8")
+
+    # ---- auth: per-person login + role-based scoping --------------------- #
+    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png"}
+
+    @app.middleware("http")
+    async def auth_mw(request: Request, call_next):
+        path = request.url.path
+        user = None
+        # Kiosk: an office TV may pass ?token=<KIOSK_TOKEN> once (then a cookie) for
+        # a read-only ALL view without a personal login.
+        ktok = settings.kiosk_token
+        via_query_token = bool(ktok) and request.query_params.get("token") == ktok
+        if ktok and (via_query_token or request.cookies.get("fa_kiosk") == ktok):
+            user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
+        if user is None and (token := request.cookies.get("fa_session")):
+            user = await run_in_threadpool(user_for_session, pool, token)
+        request.state.user = user
+
+        if path not in _PUBLIC and user is None:
+            if path.startswith("/api"):
+                return JSONResponse({"error": "auth required"}, status_code=401)
+            return RedirectResponse("/login", status_code=302)
+
+        resp = await call_next(request)
+        if via_query_token:
+            resp.set_cookie("fa_kiosk", ktok, max_age=31536000, httponly=True, samesite="lax")
+        return resp
+
+    def _scoped_bde(request: Request, requested: str | None) -> str:
+        """BDEs are forced to their own data; managers/kiosk see what they ask for."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "bde":
+            return u.get("bde_name") or "__none__"
+        return requested or "ALL"
+
+    def _is_bde(request: Request) -> bool:
+        return (getattr(request.state, "user", None) or {}).get("role") == "bde"
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_page() -> str:
+        return _static("login.html")
+
+    @app.post("/login")
+    async def login_post(request: Request):
+        # Parse the urlencoded form manually (avoids the python-multipart dependency).
+        from urllib.parse import parse_qs
+        body = (await request.body()).decode("utf-8")
+        data = {k: v[0] for k, v in parse_qs(body).items()}
+        email = (data.get("email") or "").strip()
+        pw = data.get("password") or ""
+        u = await run_in_threadpool(get_user_by_email, pool, email)
+        if not u or not u.get("active") or not verify_password(pw, u["password_hash"]):
+            return RedirectResponse("/login?e=1", status_code=302)
+        token, _exp = await run_in_threadpool(create_session, pool, u["id"])
+        resp = RedirectResponse("/", status_code=302)
+        resp.set_cookie("fa_session", token, max_age=2592000, httponly=True, samesite="lax")
+        return resp
+
+    @app.get("/logout")
+    async def logout(request: Request):
+        await run_in_threadpool(delete_session, pool, request.cookies.get("fa_session"))
+        resp = RedirectResponse("/login", status_code=302)
+        resp.delete_cookie("fa_session")
+        return resp
+
+    @app.get("/api/me")
+    def me(request: Request) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        return JSONResponse({"email": u.get("email"), "name": u.get("name"),
+                             "role": u.get("role"), "bde_name": u.get("bde_name"),
+                             "is_admin": is_admin(u)})
+
+    # ---- admin: user management (admin role only) ----------------------- #
+    def _require_admin(request: Request) -> dict:
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(status_code=403, detail="admin access required")
+        return u
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_page(request: Request):
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            # Non-admins are bounced back to the dashboard rather than shown the panel.
+            return RedirectResponse("/", status_code=302)
+        return _static("admin.html")
+
+    @app.get("/api/admin/users")
+    def admin_list_users(request: Request) -> JSONResponse:
+        _require_admin(request)
+        rows = list_users(pool)
+        for r in rows:
+            r["created_at"] = str(r["created_at"]) if r.get("created_at") else None
+        return JSONResponse({"users": jsonable_encoder(rows)})
+
+    async def _form(request: Request) -> dict:
+        """Parse a urlencoded or JSON body (no python-multipart dependency)."""
+        ctype = request.headers.get("content-type", "")
+        raw = (await request.body()).decode("utf-8")
+        if "application/json" in ctype:
+            import json
+            return json.loads(raw or "{}")
+        from urllib.parse import parse_qs
+        return {k: v[0] for k, v in parse_qs(raw).items()}
+
+    @app.post("/api/admin/users")
+    async def admin_create_user(request: Request) -> JSONResponse:
+        _require_admin(request)
+        d = await _form(request)
+        try:
+            row = await run_in_threadpool(
+                create_user, pool,
+                email=d.get("email", ""), name=d.get("name", ""),
+                role=d.get("role", "bde"), bde_name=d.get("bde_name"),
+                password=d.get("password", ""),
+                must_change=str(d.get("must_change", "true")).lower() in ("1", "true", "yes", "on"),
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "user": jsonable_encoder(row)})
+
+    @app.post("/api/admin/users/{user_id}")
+    async def admin_update_user(user_id: int, request: Request) -> JSONResponse:
+        _require_admin(request)
+        d = await _form(request)
+        active = d.get("active")
+        active_val = None if active is None else str(active).lower() in ("1", "true", "yes", "on")
+        try:
+            ok = await run_in_threadpool(
+                update_user, pool, user_id,
+                name=d.get("name"), role=d.get("role"),
+                bde_name=d.get("bde_name"), active=active_val,
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": ok})
+
+    @app.post("/api/admin/users/{user_id}/password")
+    async def admin_set_password(user_id: int, request: Request) -> JSONResponse:
+        _require_admin(request)
+        d = await _form(request)
+        pw = d.get("password") or ""
+        if len(pw) < 6:
+            return JSONResponse({"error": "password must be at least 6 characters"}, status_code=400)
+        must = str(d.get("must_change", "false")).lower() in ("1", "true", "yes", "on")
+        ok = await run_in_threadpool(set_password_by_id, pool, user_id, pw, must_change=must)
+        return JSONResponse({"ok": ok})
+
+    @app.post("/api/admin/users/{user_id}/delete")
+    async def admin_delete_user(user_id: int, request: Request) -> JSONResponse:
+        admin = _require_admin(request)
+        if admin.get("id") == user_id:
+            return JSONResponse({"error": "you cannot delete your own account"}, status_code=400)
+        ok = await run_in_threadpool(delete_user, pool, user_id)
+        return JSONResponse({"ok": ok})
+
     # ---- pages ---------------------------------------------------------- #
+    # Dashboard pages embed their JS/CSS inline, so a stale cached page = stale UI.
+    # Serve the app HTML with no-cache so a refresh always picks up new code.
+    _NOCACHE = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return _index_html()
+    def index() -> HTMLResponse:
+        return HTMLResponse(_index_html(), headers=_NOCACHE)
 
     @app.get("/tv", response_class=HTMLResponse)
     def tv_page() -> str:
@@ -141,30 +328,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         })
 
     @app.get("/api/summary")
-    def summary() -> JSONResponse:
+    def summary(request: Request) -> JSONResponse:
+        # Only days with actual activity — so "today" anchors to the last working day
+        # and the picker never offers empty weekend/future rows.
         dates = [str(r["report_date"]) for r in q(
-            "SELECT DISTINCT report_date FROM daily_funnel ORDER BY report_date DESC")]
-        bdes = [r["bde_name"] for r in q(
-            "SELECT DISTINCT bde_name FROM daily_funnel WHERE bde_name <> 'ALL' "
-            "ORDER BY bde_name")]
+            "SELECT report_date FROM daily_funnel WHERE bde_name='ALL' AND track='combined' "
+            "AND COALESCE(calls_made,0) > 0 ORDER BY report_date DESC")]
+        if _is_bde(request):  # a BDE only ever sees themselves
+            own = _scoped_bde(request, None)
+            bdes = [own]
+        else:
+            bdes = ["ALL", *[r["bde_name"] for r in q(
+                "SELECT DISTINCT bde_name FROM daily_funnel WHERE bde_name <> 'ALL' ORDER BY bde_name")]]
         review = q("SELECT count(*) AS n FROM classifications WHERE needs_human_review")
+        u = getattr(request.state, "user", None) or {}
         return JSONResponse({
             "dates": dates,
-            "bdes": ["ALL", *bdes],
+            "bdes": bdes,
             "review_count": review[0]["n"] if review else 0,
             "stages": [s[0] for s in STAGES],
+            "user": {"name": u.get("name"), "role": u.get("role"), "bde_name": u.get("bde_name")},
         })
 
-    @app.get("/api/funnel")
-    def funnel(date: str, bde: str = "ALL") -> JSONResponse:
+    # Columns we sum over a date range (daily_funnel is purely additive per day).
+    _SUM_COLS = ("calls_made", "connected", "transcribed", "rpc_connect", "full_pitch",
+                 "leads", "qualified", "meetings_booked", "qualified_booked", "meetings_done",
+                 "warm", "hot", "super_hot", "pipeline1", "pipeline2")
+    _LEAD_COLS = ("warm", "hot", "super_hot", "pipeline1", "pipeline2")
+
+    def _latest_date() -> str | None:
+        # Last day with actual activity (ignores empty future/weekend rows).
+        r = q("SELECT max(report_date) AS d FROM daily_funnel WHERE bde_name='ALL' "
+              "AND track='combined' AND COALESCE(calls_made,0) > 0")
+        if r and r[0]["d"]:
+            return str(r[0]["d"])
+        r = q("SELECT max(report_date) AS d FROM daily_funnel")
+        return str(r[0]["d"]) if r and r[0]["d"] else None
+
+    def _resolve_window(date: str | None, start: str | None, end: str | None):
+        """A single `date` OR a `start`+`end` range OR (default) the latest day."""
+        if start and end:
+            return start, end
+        if date:
+            return date, date
+        d = _latest_date()
+        return d, d
+
+    def _sums_by_track(bde: str, start: str, end: str) -> dict:
+        cols = ", ".join(f"COALESCE(SUM({c}),0) AS {c}" for c in _SUM_COLS)
         rows = q(
-            "SELECT * FROM daily_funnel WHERE report_date=%s AND bde_name=%s",
-            (date, bde),
+            f"SELECT track, {cols} FROM daily_funnel "
+            "WHERE bde_name=%s AND report_date BETWEEN %s AND %s GROUP BY track",
+            (bde, start, end),
         )
-        tracks = {r["track"]: r for r in rows}
+        return {r["track"]: r for r in rows}
+
+    def _prev_window(start: str, end: str):
+        """The previous equal-length period that actually has activity — ends on the
+        last working day BEFORE `start` (skips weekends/empty days), so a Monday is
+        compared to the previous Friday rather than to a dead Sunday."""
+        s, e = _date.fromisoformat(start), _date.fromisoformat(end)
+        length = (e - s).days + 1
+        r = q("SELECT max(report_date) AS d FROM daily_funnel WHERE bde_name='ALL' "
+              "AND track='combined' AND COALESCE(calls_made,0) > 0 AND report_date < %s", (start,))
+        pe = r[0]["d"] if r and r[0]["d"] else (s - timedelta(days=1))
+        ps = pe - timedelta(days=length - 1)
+        return ps.isoformat(), pe.isoformat()
+
+    def _calls_made_target(bde: str, start: str, end: str) -> int:
+        """Benchmark target for Calls Made = 75 dials / 30 min of ACTIVE calling time.
+        Active time = time spent in continuous calling SESSIONS, computed as the sum of
+        gaps between consecutive calls that are <= SESSION_GAP_MIN (longer gaps = lunch /
+        meetings / off-the-phone and are NOT counted). This avoids over-targeting from a
+        first->last span full of idle time. Summed per BDE per day, then across BDEs for
+        ALL, so the target scales with who actually dialled and for how long."""
+        SESSION_GAP_MIN = 15
+        where = ["c.in_scope", "c.started_at >= %s::date", "c.started_at < (%s::date + 1)"]
+        params: list = [start, end]
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %s")
+            params.append(bde)
+        rows = q(
+            "WITH ordered AS (SELECT EXTRACT(EPOCH FROM (c.started_at - LAG(c.started_at) OVER ("
+            "  PARTITION BY COALESCE(c.bde_name, c.bde_extension), c.started_at::date "
+            "  ORDER BY c.started_at)))/60.0 AS gap_min "
+            "FROM calls c WHERE " + " AND ".join(where) + ") "
+            "SELECT COALESCE(SUM(CASE WHEN gap_min > 0 AND gap_min <= %s THEN gap_min ELSE 0 END),0) AS active_min "
+            "FROM ordered",
+            tuple(params) + (SESSION_GAP_MIN,),
+        )
+        active_min = float(rows[0]["active_min"] or 0) if rows else 0.0
+        target = int(round(CALLS_PER_30MIN * active_min / 30.0))
+        return target, active_min
+
+    @app.get("/api/funnel")
+    def funnel(request: Request, date: str | None = None, start: str | None = None,
+               end: str | None = None, bde: str = "ALL", compare: str = "") -> JSONResponse:
+        bde = _scoped_bde(request, bde)
+        start, end = _resolve_window(date, start, end)
+        if not start:
+            return JSONResponse({"found": False, "stages": [], "conversion": {}})
+        tracks = _sums_by_track(bde, start, end)
         if not tracks:
-            return JSONResponse({"found": False, "tracks": {}, "stages": [], "conversion": {}})
-        c = tracks.get("combined", {})
+            return JSONResponse({"found": False, "stages": [], "conversion": {},
+                                 "window": {"start": start, "end": end}})
 
         def col(t: str, key: str) -> int:
             return int((tracks.get(t) or {}).get(key) or 0)
@@ -180,44 +447,270 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "conv": (_pct(tot, prev) if prev else None),
             })
             prev = tot
-        cm = c.get("calls_made") or 0
+        cm = col("combined", "calls_made")
         conv = {
-            "connect": _pct(c.get("connected") or 0, cm),
-            "rpc": _pct(c.get("rpc_connect") or 0, c.get("connected") or 0),
-            "pitch": _pct(c.get("full_pitch") or 0, c.get("rpc_connect") or 0),
-            "booked": _pct(c.get("meetings_booked") or 0, c.get("full_pitch") or 0),
+            "connect": _pct(col("combined", "connected"), cm),
+            "rpc": _pct(col("combined", "rpc_connect"), col("combined", "connected")),
+            "pitch": _pct(col("combined", "full_pitch"), col("combined", "rpc_connect")),
+            "booked": _pct(col("combined", "meetings_booked"), col("combined", "full_pitch")),
         }
-        coverage = _pct(c.get("transcribed") or 0, cm)
-        return JSONResponse({
-            "found": True, "stages": stage_rows, "conversion": conv, "coverage": coverage,
-            "calls_made": int(cm), "transcribed": int(c.get("transcribed") or 0),
-        })
+        # ---- Benchmark targets per stage (#4): flag stages below the standard. ----
+        totals = {key: col("combined", key) for _, key in STAGES}
+        bench: dict = {}
+        cm_target, active_min = _calls_made_target(bde, start, end)
+        if cm_target:
+            # Achieved dials per 30 min of active calling — the comparable rate vs 75.
+            rate = round(30.0 * totals["calls_made"] / active_min, 1) if active_min else None
+            bench["calls_made"] = {
+                "target": cm_target, "actual": totals["calls_made"],
+                "met": totals["calls_made"] >= cm_target,
+                "short": max(0, cm_target - totals["calls_made"]),
+                "rate": rate, "target_rate": CALLS_PER_30MIN,
+                "basis": f"{CALLS_PER_30MIN} dials / 30min active calling",
+            }
+        for key, (ratio, prior) in BENCHMARK_RATIOS.items():
+            target = int(round(ratio * totals.get(prior, 0)))
+            actual = totals.get(key, 0)
+            bench[key] = {
+                "target": target, "actual": actual, "ratio": int(ratio * 100),
+                "prior": prior, "met": actual >= target, "short": max(0, target - actual),
+            }
+        out = {
+            "found": True, "window": {"start": start, "end": end},
+            "stages": stage_rows, "conversion": conv, "benchmark": bench,
+            "coverage": _pct(col("combined", "transcribed"), cm),
+            "calls_made": cm, "transcribed": col("combined", "transcribed"),
+            "lead": {k: col("combined", k) for k in _LEAD_COLS},
+        }
+        if compare == "prev":
+            ps, pe = _prev_window(start, end)
+            pt = _sums_by_track(bde, ps, pe).get("combined") or {}
+            out["compare"] = {
+                "window": {"start": ps, "end": pe},
+                "stages": {key: int(pt.get(key) or 0) for _, key in STAGES},
+                "calls_made": int(pt.get("calls_made") or 0),
+                "lead": {k: int(pt.get(k) or 0) for k in _LEAD_COLS},
+            }
+        return JSONResponse(out)
+
+    @app.get("/coaching", response_class=HTMLResponse)
+    def coaching_page() -> HTMLResponse:
+        return HTMLResponse(_static("coaching.html"), headers=_NOCACHE)
+
+    @app.get("/api/rpc-monitor")
+    def rpc_monitor(request: Request, bde: str = "ALL", limit: int = 300) -> JSONResponse:
+        """#10b — RPC follow-up worklist + enforcement. For every dialled number NOT yet
+        connected to the decision-maker, show the attempt sequence and the REQUIRED next
+        action so the BDE keeps working it: mobile 1st no-answer -> call again (double-tap);
+        mobile 2+ no-answer -> SMS + voicemail; gatekeeper reached -> get DM name + callback.
+        Persists per number until RPC is reached."""
+        scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
+        params: dict = {"thr": settings.rpc_min_talk_seconds, "lim": limit}
+        bde_filter = ""
+        if scope and scope != "ALL":
+            bde_filter = "AND COALESCE(c.bde_name,c.bde_extension) = %(bde)s"
+            params["bde"] = scope
+        conn = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail'"
+        digits = "right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)"
+        chan = (f"CASE WHEN regexp_replace(c.dest_number,'[^0-9]','','g') ~ '1(3|8)00' THEN 'tollfree' "
+                f"WHEN {digits} ~ '^4' THEN 'mobile' ELSE 'landline' END")
+        rows = q(
+            f"SELECT {digits} AS dest9, max(c.dest_number) AS dest_number, "
+            f"max({chan}) AS channel, count(*) AS attempts, "
+            f"count(*) FILTER (WHERE c.answered) AS answered, "
+            f"bool_or({conn} AND cl.rpc_connect) AS ever_rpc, "
+            f"bool_or(cl.call_outcome='gatekeeper' OR cl.evidence->>'who_answered' ILIKE '%%gatekeeper%%') AS hit_gatekeeper, "
+            "max(c.started_at) AS last_attempt, "
+            "(array_agg(COALESCE(c.bde_name,c.bde_extension) ORDER BY c.started_at DESC))[1] AS last_bde, "
+            "(array_remove(array_agg(NULLIF(cl.prospect_company,'') ORDER BY c.started_at DESC), NULL))[1] AS business_name, "
+            "(array_remove(array_agg(NULLIF(cl.callback_when,'') ORDER BY c.started_at DESC), NULL))[1] AS callback_when "
+            "FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+            f"WHERE c.in_scope AND c.dest_number IS NOT NULL AND c.dest_number<>'' {bde_filter} "
+            f"GROUP BY {digits} "
+            # only numbers NOT yet connected to the decision-maker (the worklist)
+            f"HAVING NOT bool_or({conn} AND cl.rpc_connect) "
+            "ORDER BY max(c.started_at) DESC LIMIT %(lim)s",
+            params,
+        )
+        out = []
+        for r in rows:
+            ch, att, ans = r["channel"], int(r["attempts"] or 0), int(r["answered"] or 0)
+            if r["hit_gatekeeper"]:
+                action, urg = "Gatekeeper reached — get the decision-maker's name & best callback time, then retry", "high"
+            elif ch == "mobile" and ans == 0 and att <= 1:
+                action, urg = "Double-tap: call again now (mobile, 1 missed)", "high"
+            elif ch == "mobile" and ans == 0 and att >= 2:
+                action, urg = "Send a text + leave a voicemail, then schedule a retry", "high"
+            elif ans > 0:
+                action, urg = "Answered but not the decision-maker — ask for the owner / decision-maker", "med"
+            else:
+                action, urg = "Keep trying — vary the call time until you reach the decision-maker", "med"
+            r["last_attempt"] = str(r["last_attempt"]) if r.get("last_attempt") else None
+            out.append({**r, "required_action": action, "urgency": urg})
+        summary = {"open": len(out),
+                   "mobile_double_tap": sum(1 for x in out if "Double-tap" in x["required_action"]),
+                   "needs_sms_vm": sum(1 for x in out if "text" in x["required_action"]),
+                   "gatekeeper": sum(1 for x in out if x["hit_gatekeeper"])}
+        return JSONResponse(jsonable_encoder({"summary": summary, "rows": out}))
+
+    @app.get("/api/coaching")
+    def coaching(request: Request, bde: str, date: str | None = None, start: str | None = None,
+                 end: str | None = None) -> JSONResponse:
+        """#10a — feedback / coaching intelligence for one BDE: a training & development
+        view built from the AI's per-call analysis. Shows scorecard averages, the trend
+        vs the earlier half of the period, what they do DIFFERENTLY on calls they book
+        (the winning behaviours), recurring coaching tips, and unhandled objections."""
+        start, end = _resolve_window(date, start, end)
+        if _is_bde(request):
+            bde = _scoped_bde(request, None)  # a BDE only sees their own coaching
+        if not bde or bde == "ALL":
+            return JSONResponse({"error": "pick a BDE"}, status_code=400)
+        base = ("FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+                "WHERE c.in_scope AND COALESCE(c.bde_name,c.bde_extension)=%(bde)s "
+                "AND c.started_at >= %(s)s::date AND c.started_at < (%(e)s::date + 1) AND cl.rpc_connect")
+        p = {"bde": bde, "s": start, "e": end}
+        dims = ["opening", "discovery", "pitch", "objection_handling", "close"]
+        avg = ", ".join(f"round(avg((cl.evidence->'scorecard'->>'{d}')::numeric),2) AS {d}" for d in dims)
+        overall = q(f"SELECT count(*) AS pitched, "
+                    f"count(*) FILTER (WHERE cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation,false) "
+                    f"AND NOT COALESCE(cl.meeting_rescheduled,false)) AS booked, {avg} {base} "
+                    "AND cl.evidence ? 'scorecard'", p)
+        ov = overall[0] if overall else {}
+        # Booked vs non-booked behaviour: what they do differently when they win.
+        def _avg_for(cond):
+            r = q(f"SELECT {avg} {base} AND cl.evidence ? 'scorecard' AND {cond}", p)
+            return r[0] if r else {}
+        booked_cond = "cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation,false) AND NOT COALESCE(cl.meeting_rescheduled,false)"
+        won = _avg_for(booked_cond)
+        lost = _avg_for(f"NOT ({booked_cond})")
+        # Trend: recent half vs earlier half of the window.
+        mid = q("SELECT (%(s)s::date + ((%(e)s::date - %(s)s::date)/2)) AS m", p)[0]["m"]
+        p2 = {**p, "m": str(mid)}
+        recent = q(f"SELECT {avg} {base} AND cl.evidence ? 'scorecard' AND c.started_at >= %(m)s::date", p2)
+        earlier = q(f"SELECT {avg} {base} AND cl.evidence ? 'scorecard' AND c.started_at < %(m)s::date", p2)
+        # Recurring coaching tips + unhandled objections (most frequent).
+        tips = q("SELECT lower(trim(t.tip)) AS tip, count(*) AS n FROM calls c "
+                 "JOIN classifications cl ON cl.call_id=c.call_id, "
+                 "jsonb_array_elements_text(COALESCE(cl.evidence->'coaching_tips','[]'::jsonb)) AS t(tip) "
+                 "WHERE c.in_scope AND COALESCE(c.bde_name,c.bde_extension)=%(bde)s "
+                 "AND c.started_at >= %(s)s::date AND c.started_at < (%(e)s::date + 1) "
+                 "GROUP BY 1 ORDER BY n DESC LIMIT 8", p)
+        objs = q("SELECT lower(trim(o.obj->>'objection')) AS objection, count(*) AS n FROM calls c "
+                 "JOIN classifications cl ON cl.call_id=c.call_id, "
+                 "jsonb_array_elements(COALESCE(cl.evidence->'objections','[]'::jsonb)) AS o(obj) "
+                 "WHERE c.in_scope AND COALESCE(c.bde_name,c.bde_extension)=%(bde)s "
+                 "AND c.started_at >= %(s)s::date AND c.started_at < (%(e)s::date + 1) "
+                 "AND COALESCE((o.obj->>'handled')::boolean, false) = false "
+                 "GROUP BY 1 ORDER BY n DESC LIMIT 8", p)
+        return JSONResponse(jsonable_encoder({
+            "bde": bde, "window": {"start": start, "end": end},
+            "overall": ov, "booked": won, "not_booked": lost,
+            "trend": {"recent": recent[0] if recent else {}, "earlier": earlier[0] if earlier else {}},
+            "dims": dims,
+            "recurring_tips": [t for t in tips if t["tip"]],
+            "unhandled_objections": [o for o in objs if o["objection"]],
+        }))
+
+    @app.get("/api/pitch-quality")
+    def pitch_quality(request: Request, date: str | None = None, start: str | None = None,
+                      end: str | None = None) -> JSONResponse:
+        """#12 — per-BDE pitch-quality intelligence from the AI scorecard (0-5 on opening,
+        discovery, pitch, objection handling, close). Flags weak pitches: an RPC-connected
+        call where the pitch score <= 2. Averages over calls that reached a decision-maker."""
+        start, end = _resolve_window(date, start, end)
+        if not start:
+            return JSONResponse({"rows": []})
+        bde = _scoped_bde(request, "ALL") if _is_bde(request) else "ALL"
+        where = ["c.in_scope", "c.started_at >= %(s)s::date", "c.started_at < (%(e)s::date + 1)",
+                 "cl.rpc_connect", "cl.evidence ? 'scorecard'"]
+        params: dict = {"s": start, "e": end}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        sc = lambda k: f"(cl.evidence->'scorecard'->>'{k}')::numeric"
+        rows = q(
+            f"SELECT COALESCE(c.bde_name,c.bde_extension) AS bde, count(*) AS pitched, "
+            f"round(avg({sc('opening')}),1) AS opening, round(avg({sc('discovery')}),1) AS discovery, "
+            f"round(avg({sc('pitch')}),1) AS pitch, round(avg({sc('objection_handling')}),1) AS objection, "
+            f"round(avg({sc('close')}),1) AS close, "
+            f"count(*) FILTER (WHERE {sc('pitch')} <= 2) AS weak_pitches "
+            "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            f"WHERE {' AND '.join(where)} GROUP BY 1 ORDER BY pitch ASC NULLS FIRST",
+            params,
+        )
+        return JSONResponse(jsonable_encoder({"window": {"start": start, "end": end}, "rows": rows}))
+
+    @app.get("/api/channel-report")
+    def channel_report(request: Request, date: str | None = None, start: str | None = None,
+                       end: str | None = None) -> JSONResponse:
+        """#11 — per-BDE outcomes split by the DIALLED number type: mobile (04x) vs
+        landline (02/03/07/08) vs tollfree (1300/1800). Shows where bookings come from."""
+        start, end = _resolve_window(date, start, end)
+        if not start:
+            return JSONResponse({"rows": []})
+        bde = _scoped_bde(request, "ALL") if _is_bde(request) else "ALL"
+        where = ["c.in_scope", "c.started_at >= %(s)s::date", "c.started_at < (%(e)s::date + 1)"]
+        params: dict = {"s": start, "e": end, "thr": settings.rpc_min_talk_seconds}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        digits = "regexp_replace(c.dest_number,'[^0-9]','','g')"
+        channel = (f"CASE WHEN {digits} ~ '1(3|8)00' THEN 'tollfree' "
+                   f"WHEN right({digits},9) ~ '^4' THEN 'mobile' ELSE 'landline' END")
+        booked = ("c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail' "
+                  "AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation,false) "
+                  "AND NOT COALESCE(cl.meeting_rescheduled,false)")
+        conn = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail'"
+        rows = q(
+            f"SELECT COALESCE(c.bde_name,c.bde_extension) AS bde, {channel} AS channel, "
+            f"count(*) AS calls, count(*) FILTER (WHERE {conn}) AS connected, "
+            f"count(*) FILTER (WHERE {booked}) AS booked "
+            "FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+            f"WHERE {' AND '.join(where)} GROUP BY 1,2 ORDER BY 1,2",
+            params,
+        )
+        # pivot per BDE → {mobile:{...}, landline:{...}, tollfree:{...}}
+        bdes: dict = {}
+        for r in rows:
+            b = bdes.setdefault(r["bde"], {"bde": r["bde"], "mobile": {}, "landline": {}, "tollfree": {}})
+            b[r["channel"]] = {"calls": r["calls"], "connected": r["connected"], "booked": r["booked"]}
+        return JSONResponse(jsonable_encoder({"window": {"start": start, "end": end},
+                                              "rows": sorted(bdes.values(), key=lambda x: x["bde"])}))
 
     @app.get("/api/leaderboard")
-    def leaderboard(date: str) -> JSONResponse:
+    def leaderboard(request: Request, date: str | None = None, start: str | None = None,
+                    end: str | None = None) -> JSONResponse:
+        start, end = _resolve_window(date, start, end)
+        if not start:
+            return JSONResponse({"rows": []})
+        lb_cols = ("calls_made", "connected", "transcribed", "rpc_connect", "full_pitch",
+                   "leads", "qualified", "meetings_booked", "qualified_booked", *_LEAD_COLS)
+        cols = ", ".join(f"COALESCE(SUM({c}),0) AS {c}" for c in lb_cols)
+        where = ["track='combined'", "bde_name<>'ALL'", "report_date BETWEEN %s AND %s"]
+        params: list = [start, end]
+        if _is_bde(request):  # a BDE sees only their own row
+            where.append("bde_name = %s")
+            params.append(_scoped_bde(request, None))
         rows = q(
-            "SELECT bde_name, calls_made, connected, transcribed, rpc_connect, "
-            "full_pitch, leads, qualified, meetings_booked FROM daily_funnel "
-            "WHERE report_date=%s AND track='combined' AND bde_name<>'ALL' "
-            "ORDER BY leads DESC, calls_made DESC",
-            (date,),
+            f"SELECT bde_name, {cols} FROM daily_funnel WHERE {' AND '.join(where)} "
+            "GROUP BY bde_name ORDER BY SUM(meetings_booked) DESC, SUM(calls_made) DESC",
+            tuple(params),
         )
         out = []
         for r in rows:
             out.append({
-                **{k: int(r[k] or 0) for k in
-                   ("calls_made", "connected", "transcribed", "rpc_connect",
-                    "full_pitch", "leads", "qualified", "meetings_booked")},
+                **{k: int(r[k] or 0) for k in lb_cols},
                 "bde_name": r["bde_name"],
                 "conv_connect": _pct(r["connected"] or 0, r["calls_made"] or 0),
                 "conv_rpc": _pct(r["rpc_connect"] or 0, r["connected"] or 0),
                 "conv_pitch": _pct(r["full_pitch"] or 0, r["rpc_connect"] or 0),
                 "conv_booked": _pct(r["meetings_booked"] or 0, r["full_pitch"] or 0),
             })
-        return JSONResponse({"rows": out})
+        return JSONResponse({"rows": out, "window": {"start": start, "end": end}})
 
     @app.get("/api/trend")
-    def trend(bde: str = "ALL", days: int = 30) -> JSONResponse:
+    def trend(request: Request, bde: str = "ALL", days: int = 30) -> JSONResponse:
+        bde = _scoped_bde(request, bde)
         rows = q(
             "SELECT report_date, calls_made, transcribed, rpc_connect, full_pitch, "
             "leads, qualified, meetings_booked FROM daily_funnel "
@@ -235,16 +728,104 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         })
 
+    # ---- pipeline tables (distinct prospects per window) ---------------- #
+    _PIPE_WINDOWS = [("today", "Today", 0), ("d3", "Last 3 days", 2),
+                     ("d7", "Last 7 days", 6), ("d14", "Last 14 days", 13),
+                     ("d30", "Last 30 days", 29)]
+    _PIPE_ROWS = [("pipeline1_interested", "Pipeline 1 · Interested (callback)"),
+                  ("pipeline2_existing_agency", "Pipeline 2 · Already with an agency")]
+    # last 9 significant digits of the dialled number = the distinct-prospect key
+    _DEST9_SQL = "right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9)"
+
+    def _pipe_anchor() -> str | None:
+        r = q("SELECT max(started_at::date) AS d FROM calls WHERE in_scope")
+        return str(r[0]["d"]) if r and r[0]["d"] else None
+
+    @app.get("/api/pipelines")
+    def pipelines(request: Request, bde: str = "ALL") -> JSONResponse:
+        """P1/P2 rows × today/3d/7d/14d/30d, each cell = DISTINCT prospects."""
+        bde = _scoped_bde(request, bde)
+        today = _pipe_anchor()
+        if not today:
+            return JSONResponse({"found": False, "rows": []})
+        where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
+                 "cl.pipeline IN ('pipeline1_interested','pipeline2_existing_agency')",
+                 "c.started_at >= (%(today)s::date - 29)", "c.started_at < (%(today)s::date + 1)"]
+        params: dict = {"today": today}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        filt = ", ".join(
+            f"count(DISTINCT dest9) FILTER (WHERE d >= %(today)s::date - {off}) AS {k}"
+            for k, _lbl, off in _PIPE_WINDOWS
+        )
+        rows = q(
+            f"WITH p AS (SELECT cl.pipeline AS pl, {_DEST9_SQL} AS dest9, c.started_at::date AS d "
+            "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            f"WHERE {' AND '.join(where)}) "
+            f"SELECT pl, {filt} FROM p GROUP BY pl",
+            params,
+        )
+        bypl = {r["pl"]: r for r in rows}
+        out_rows = []
+        for pl, label in _PIPE_ROWS:
+            r = bypl.get(pl) or {}
+            out_rows.append({"pipeline": pl, "label": label,
+                             "counts": {k: int(r.get(k) or 0) for k, _l, _o in _PIPE_WINDOWS}})
+        return JSONResponse({"found": True, "today": today,
+                             "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
+                             "rows": out_rows})
+
+    @app.get("/api/pipeline-prospects")
+    def pipeline_prospects(request: Request, pipeline: str, window: str = "d30",
+                           bde: str = "ALL") -> JSONResponse:
+        """The distinct prospects behind a pipeline-table cell (drill-down)."""
+        bde = _scoped_bde(request, bde)
+        today = _pipe_anchor()
+        off = dict((k, o) for k, _l, o in _PIPE_WINDOWS).get(window, 29)
+        if not today or pipeline not in dict(_PIPE_ROWS):
+            return JSONResponse({"rows": []})
+        where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
+                 "cl.pipeline = %(pl)s",
+                 "c.started_at >= (%(today)s::date - %(off)s)", "c.started_at < (%(today)s::date + 1)"]
+        params: dict = {"pl": pipeline, "today": today, "off": off}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        rows = q(
+            f"WITH p AS (SELECT {_DEST9_SQL} AS dest9, c.dest_number, c.started_at, "
+            "  COALESCE(c.bde_name, c.bde_extension) AS bde, cl.prospect_company, cl.lead_temperature, "
+            f"  row_number() OVER (PARTITION BY {_DEST9_SQL} ORDER BY c.started_at DESC) AS rn, "
+            f"  count(*) OVER (PARTITION BY {_DEST9_SQL}) AS ncalls "
+            "  FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            f"  WHERE {' AND '.join(where)}) "
+            "SELECT p.dest_number, p.started_at, p.bde, p.prospect_company, p.lead_temperature, p.ncalls, "
+            "       pr.business_name, pr.domain "
+            "FROM p LEFT JOIN prospects pr ON p.dest9 = ANY(pr.phones_norm) "
+            "WHERE p.rn = 1 ORDER BY p.started_at DESC",
+            params,
+        )
+        for r in rows:
+            r["started_at"] = str(r["started_at"]) if r["started_at"] else None
+        return JSONResponse({"pipeline": pipeline, "window": window,
+                             "count": len(rows), "rows": jsonable_encoder(rows)})
+
     @app.get("/api/review-queue")
-    def review_queue(limit: int = 50) -> JSONResponse:
+    def review_queue(request: Request, limit: int = 50) -> JSONResponse:
+        where = ["cl.needs_human_review"]
+        params: list = []
+        if _is_bde(request):
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %s")
+            params.append(_scoped_bde(request, None))
+        params.append(limit)
         rows = q(
             "SELECT cl.call_id, c.bde_name, c.dest_number, c.started_at, cl.call_outcome, "
             "cl.full_pitch, cl.is_lead, cl.qualified, cl.meeting_booked, "
             "LEAST(cl.pitch_confidence, cl.lead_confidence, cl.qual_confidence) AS min_conf, "
             "cl.model "
             "FROM classifications cl JOIN calls c ON c.call_id = cl.call_id "
-            "WHERE cl.needs_human_review ORDER BY min_conf ASC NULLS FIRST LIMIT %s",
-            (limit,),
+            f"WHERE {' AND '.join(where)} ORDER BY min_conf ASC NULLS FIRST LIMIT %s",
+            tuple(params),
         )
         for r in rows:
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
@@ -260,26 +841,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "unconnected": f"NOT ({_CONN})",
         "rpc_connect": f"{_CONN} AND cl.rpc_connect",
         "full_pitch": f"{_CONN} AND cl.rpc_connect AND cl.full_pitch",
-        # A counted booking = new + qualified (matches aggregate.py meetings_booked).
-        "meetings_booked": f"{_CONN} AND cl.rpc_connect AND cl.meeting_booked AND cl.qualified "
-                           "AND NOT COALESCE(cl.meeting_confirmation, false)",
-        # Bookings that DON'T count, surfaced for transparency / validation.
-        "meeting_confirmation": f"{_CONN} AND cl.rpc_connect AND cl.meeting_booked "
+        # Meeting Booked = ANY genuinely NEW booking the BDE made (no decision-maker/
+        # qualified gate). EXCLUDES confirmation-only AND reschedules of an already-booked
+        # meeting — those were counted on the day first booked, so don't re-count.
+        "meetings_booked": f"{_CONN} AND cl.meeting_booked "
+                           "AND NOT COALESCE(cl.meeting_confirmation, false) "
+                           "AND NOT COALESCE(cl.meeting_rescheduled, false)",
+        # Qualified Booked = strict subset (also qualified, BAPU). Qualification is a
+        # PROSPECT-level fact: this call qualified OR any in-scope call to the same number.
+        "qualified_booked": f"{_CONN} AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false) "
+                            "AND NOT COALESCE(cl.meeting_rescheduled, false) "
+                            "AND (COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified) "
+                            "OR EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
+                            "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
+                            "WHERE c2.dest_number=c.dest_number AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified)))",
+        # Reference-only drill-downs (NOT counted in the funnel). The sidebar "Rescheduled /
+        # confirmed" link uses `already_booked`; the two split views are also available.
+        "already_booked": f"{_CONN} AND cl.meeting_booked AND "
+                          "(COALESCE(cl.meeting_confirmation, false) OR COALESCE(cl.meeting_rescheduled, false))",
+        "meeting_confirmation": f"{_CONN} AND cl.meeting_booked "
                                 "AND COALESCE(cl.meeting_confirmation, false)",
-        "booking_unqualified": f"{_CONN} AND cl.rpc_connect AND cl.meeting_booked "
-                               "AND NOT COALESCE(cl.meeting_confirmation, false) AND NOT COALESCE(cl.qualified, false)",
+        "meeting_rescheduled": f"{_CONN} AND cl.meeting_booked "
+                               "AND COALESCE(cl.meeting_rescheduled, false)",
+        "booking_unqualified": f"{_CONN} AND cl.meeting_booked "
+                               "AND NOT COALESCE(cl.meeting_confirmation, false) "
+                               "AND NOT COALESCE(cl.meeting_rescheduled, false) AND NOT COALESCE(cl.qualified, false)",
         "lead": f"{_CONN} AND cl.rpc_connect AND cl.is_lead",
         "qualified": f"{_CONN} AND cl.rpc_connect AND cl.is_lead AND cl.qualified",
+        # Lead quality + pipeline routing (interested pipeline only carries temperature).
+        "warm": f"{_CONN} AND cl.lead_temperature = 'warm'",
+        "hot": f"{_CONN} AND cl.lead_temperature = 'hot'",
+        "super_hot": f"{_CONN} AND cl.lead_temperature = 'super_hot'",
+        "pipeline1": f"{_CONN} AND cl.pipeline = 'pipeline1_interested'",
+        "pipeline2": f"{_CONN} AND cl.pipeline = 'pipeline2_existing_agency'",
     }
 
     @app.get("/api/stage-calls")
-    def stage_calls(date: str, stage: str, bde: str = "ALL",
+    def stage_calls(request: Request, stage: str, date: str | None = None,
+                    start: str | None = None, end: str | None = None, bde: str = "ALL",
                     track: str = "combined", limit: int = 100000) -> JSONResponse:
-        """List the individual calls behind a funnel-stage count (for validation)."""
+        """List the individual calls behind a funnel-stage count (for validation).
+        Supports a single `date` or a `start`+`end` range."""
+        bde = _scoped_bde(request, bde)
+        start, end = _resolve_window(date, start, end)
         cond = _STAGE_COND.get(stage, "TRUE")
-        where = ["c.in_scope", "c.started_at >= %(d)s::date",
-                 "c.started_at < (%(d)s::date + 1)", f"({cond})"]
-        params: dict = {"d": date, "thr": settings.rpc_min_talk_seconds, "lim": limit}
+        where = ["c.in_scope", "c.started_at >= %(s)s::date",
+                 "c.started_at < (%(e)s::date + 1)", f"({cond})"]
+        params: dict = {"s": start, "e": end, "thr": settings.rpc_min_talk_seconds, "lim": limit}
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
@@ -309,20 +917,596 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "static/call.html").read_text(encoding="utf-8")
 
     @app.get("/api/call/{call_id}")
-    def call_detail(call_id: str) -> JSONResponse:
+    def call_detail(request: Request, call_id: str) -> JSONResponse:
         calls = q("SELECT * FROM calls WHERE call_id=%s", (call_id,))
         if not calls:
             raise HTTPException(404, "call not found")
         call = calls[0]
+        if _is_bde(request):  # a BDE may only open their own calls
+            own = _scoped_bde(request, None)
+            if (call.get("bde_name") or call.get("bde_extension")) != own:
+                raise HTTPException(403, "not your call")
         call["started_at"] = str(call["started_at"]) if call["started_at"] else None
         tr = q("SELECT text, sentiment, summary, diarized FROM transcripts WHERE call_id=%s",
                (call_id,))
         cl = q("SELECT * FROM classifications WHERE call_id=%s", (call_id,))
+        # Resolve the prospect by phone → master DB (reliable), falling back to the
+        # AI-extracted website. This makes the business/marketing card CONSISTENT on
+        # every matched call (master SEO metrics always present) instead of only the
+        # rare calls where the prospect stated their website.
+        from ..prospects import match_prospect_by_phone
+        master = match_prospect_by_phone(pool, call.get("dest_number"))
+        domain = (cl[0].get("prospect_website") if cl else None) or (master.get("domain") if master else None)
+        enr = None
+        if domain:
+            rows = q("SELECT domain, semrush, apollo, website, status, fetched_at FROM enrichment WHERE domain=%s",
+                     (domain,))
+            enr = rows[0] if rows else None
+        ovr = q("SELECT qualified, reason, override_by, created_at FROM qualification_overrides WHERE call_id=%s",
+                (call_id,))
+        u = getattr(request.state, "user", None) or {}
         # jsonable_encoder converts numeric->float and datetime->iso so confidences serialize.
         return JSONResponse(jsonable_encoder({
             "call": call,
             "transcript": tr[0] if tr else None,
             "classification": cl[0] if cl else None,
+            "master": master,
+            "domain": domain,
+            "enrichment": enr,
+            "qual_override": ovr[0] if ovr else None,
+            "can_override": can_manage_pipeline(u),  # BDM/admin only
         }))
+
+    @app.post("/api/call/{call_id}/qualify-override")
+    async def call_qualify_override(request: Request, call_id: str) -> JSONResponse:
+        """#4b — BDM/admin re-qualifies a booked meeting with a MANDATORY reason. The
+        funnel's Qualified Booked count then honours this over the AI verdict."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "BDM / admin access required")
+        d = await _form(request)
+        reason = (d.get("reason") or "").strip()
+        qualified = d.get("qualified")
+        qualified = qualified in (True, "true", "True", "1", 1, "yes")
+        if not reason:
+            return JSONResponse({"error": "a reason is required"}, status_code=400)
+        if not q("SELECT 1 FROM calls WHERE call_id=%s", (call_id,)):
+            raise HTTPException(404, "call not found")
+
+        def _do():
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO qualification_overrides (call_id, qualified, reason, override_by, created_at) "
+                    "VALUES (%s,%s,%s,%s, now()) ON CONFLICT (call_id) DO UPDATE SET "
+                    "qualified=EXCLUDED.qualified, reason=EXCLUDED.reason, override_by=EXCLUDED.override_by, created_at=now()",
+                    (call_id, qualified, reason, u.get("email") or u.get("name")))
+                # re-aggregate the affected day so the funnel updates immediately
+                cur.execute("SELECT started_at::date AS d FROM calls WHERE call_id=%s", (call_id,))
+                row = cur.fetchone()
+                conn.commit()
+            if row and row["d"]:
+                from ..aggregate import aggregate_day
+                aggregate_day(pool, settings, row["d"])
+        await run_in_threadpool(_do)
+        return JSONResponse({"ok": True, "qualified": qualified})
+
+    @app.post("/api/call/{call_id}/qualify-override/clear")
+    async def call_qualify_override_clear(request: Request, call_id: str) -> JSONResponse:
+        """Remove a BDM override → revert to the AI verdict (re-aggregates the day)."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "BDM / admin access required")
+
+        def _do():
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM qualification_overrides WHERE call_id=%s", (call_id,))
+                cur.execute("SELECT started_at::date AS d FROM calls WHERE call_id=%s", (call_id,))
+                row = cur.fetchone()
+                conn.commit()
+            if row and row["d"]:
+                from ..aggregate import aggregate_day
+                aggregate_day(pool, settings, row["d"])
+        await run_in_threadpool(_do)
+        return JSONResponse({"ok": True})
+
+    # ---- consolidated prospect page (one prospect = one page) ----------- #
+    # A prospect is keyed by the dialled number (all calls to it collapse onto one
+    # page) or by website domain. We surface the master-DB firmographics, every
+    # call by every BDE in a timeline, the conversation intelligence, and the
+    # per-domain marketing enrichment — so the next BDE to call sees everything.
+    from ..prospects import clean_domain as _clean_domain
+    from ..prospects import normalize_au_phone as _norm_phone
+
+    # last 9 significant digits of a dialled number, computed in SQL (matches
+    # normalize_au_phone's canonical form for +61/0/bare AU numbers).
+    _DEST9 = "right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9)"
+
+    _PCALL_COLS = (
+        "c.call_id, c.bde_name, c.bde_extension, c.dest_number, c.started_at, "
+        "c.talk_seconds, c.answered, c.fresh_or_followup, c.direction, c.has_transcript, "
+        "cl.call_outcome, cl.rpc_connect, cl.full_pitch, cl.is_lead, cl.qualified, "
+        "cl.meeting_booked, cl.meeting_confirmation, cl.meeting_rescheduled, "
+        "cl.budget, cl.authority, cl.problem, cl.urgency, "
+        "cl.lead_temperature, cl.pipeline, cl.callback_requested, cl.callback_when, "
+        "cl.prospect_company, cl.prospect_website, cl.prospect_industry, "
+        "cl.evidence, cl.model, "
+        "tr.summary AS transcript_summary, tr.sentiment AS transcript_sentiment"
+    )
+
+    def _resolve_prospect(key: str):
+        """Return (master_row|None, domain|None, norm9|None) for a phone/domain key."""
+        key = (key or "").strip()
+        # A domain always contains letters (the TLD); a dialled number never does.
+        looks_domain = bool(re.search(r"[a-zA-Z]", key))
+        if looks_domain:
+            domain = _clean_domain(key)
+            m = q("SELECT * FROM prospects WHERE domain=%s", (domain,))
+            master = m[0] if m else None
+            return master, (master["domain"] if master else domain), None
+        norm = _norm_phone(key)
+        master = None
+        if norm:
+            m = q("SELECT * FROM prospects WHERE %s = ANY(phones_norm) LIMIT 1", (norm,))
+            master = m[0] if m else None
+        return master, (master["domain"] if master else None), norm
+
+    @app.get("/prospect/{key}", response_class=HTMLResponse)
+    def prospect_page(key: str) -> str:
+        return _static("prospect.html")
+
+    @app.get("/api/prospect/{key}")
+    def prospect_detail(request: Request, key: str) -> JSONResponse:
+        master, domain, norm = _resolve_prospect(key)
+        # Gather all in-scope calls that belong to this prospect: same dialled
+        # number (normalized) OR same AI-extracted website.
+        conds, params = [], {"thr": settings.rpc_min_talk_seconds}
+        if norm:
+            conds.append(f"{_DEST9} = %(norm)s")
+            params["norm"] = norm
+        # When resolved via the master DB, also gather every call to ANY of the
+        # prospect's known numbers (so domain-keyed access still finds phone-linked calls).
+        mphones = (master or {}).get("phones_norm") or []
+        if mphones:
+            conds.append(f"{_DEST9} = ANY(%(mphones)s)")
+            params["mphones"] = mphones
+        if domain:
+            conds.append("cl.prospect_website = %(domain)s")
+            params["domain"] = domain
+        # Given business data (companies) for this prospect — fetched early so a DB-browser
+        # click opens the page even when there are no calls yet (pure reference data).
+        companies: list = []
+        if domain:
+            companies = q("SELECT * FROM companies WHERE domain=%s ORDER BY revenue_musd DESC NULLS LAST", (domain,))
+        elif norm:
+            companies = q("SELECT * FROM companies WHERE phone_norm=%s ORDER BY revenue_musd DESC NULLS LAST", (norm,))
+
+        if not conds:
+            return JSONResponse({"found": bool(companies), "companies": jsonable_encoder(companies)})
+        where = "c.in_scope AND (" + " OR ".join(conds) + ")"
+        calls = q(
+            f"SELECT {_PCALL_COLS} FROM calls c "
+            "LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+            "LEFT JOIN transcripts tr ON tr.call_id=c.call_id "
+            f"WHERE {where} ORDER BY c.started_at ASC",
+            params,
+        )
+        if not calls and not master and not companies:
+            return JSONResponse({"found": False})
+
+        # BDE scoping: a BDE may only open a prospect they've actually called
+        # (then they DO see every BDE's calls to it — the rotation hand-off).
+        if _is_bde(request):
+            own = _scoped_bde(request, None)
+            if not any((c.get("bde_name") or c.get("bde_extension")) == own for c in calls):
+                raise HTTPException(403, "not your prospect")
+
+        # Best domain for enrichment: master's, else the most common extracted site.
+        if not domain:
+            sites = [c["prospect_website"] for c in calls if c.get("prospect_website")]
+            domain = max(set(sites), key=sites.count) if sites else None
+        enr = None
+        if domain:
+            rows = q("SELECT domain, semrush, apollo, website, status, fetched_at FROM enrichment WHERE domain=%s",
+                     (domain,))
+            enr = rows[0] if rows else None
+
+        # If the domain was only resolved from the calls above (phone access), fetch the
+        # given business data now (companies were not found by phone earlier).
+        if not companies and domain:
+            companies = q("SELECT * FROM companies WHERE domain=%s ORDER BY revenue_musd DESC NULLS LAST", (domain,))
+        company_summary = None
+        if companies:
+            revs = [float(c["revenue_musd"]) for c in companies if c.get("revenue_musd") is not None]
+            company_summary = {
+                "businesses": len(companies),
+                "total_revenue_musd": round(sum(revs), 2) if revs else None,
+                "industry": next((c.get("industry") for c in companies if c.get("industry")), None),
+                "employees": max((c.get("employees") or 0) for c in companies) or None,
+                "location": next((", ".join(x for x in (c.get("suburb"), c.get("state")) if x)
+                                  for c in companies if c.get("suburb") or c.get("state")), None),
+            }
+
+        # Prospect-level rollup across all calls.
+        def _truthy(c, k):
+            return bool(c.get(k))
+        temps = [c.get("lead_temperature") for c in calls if c.get("lead_temperature") in ("warm", "hot", "super_hot")]
+        temp_rank = {"warm": 1, "hot": 2, "super_hot": 3}
+        best_temp = max(temps, key=lambda t: temp_rank.get(t, 0)) if temps else None
+        pipelines = [c.get("pipeline") for c in calls if c.get("pipeline") in ("pipeline1_interested", "pipeline2_existing_agency")]
+        # latest pipeline wins (calls are ascending) else master's
+        pipeline = pipelines[-1] if pipelines else (master.get("pipeline") if master else None)
+        bdes = []
+        for c in calls:
+            nm = c.get("bde_name") or c.get("bde_extension")
+            if nm and nm not in bdes:
+                bdes.append(nm)
+        rollup = {
+            "calls": len(calls),
+            "bdes": bdes,
+            "first_call": str(calls[0]["started_at"]) if calls else None,
+            "last_call": str(calls[-1]["started_at"]) if calls else None,
+            "ever_booked": any(_truthy(c, "meeting_booked") and not c.get("meeting_confirmation") for c in calls),
+            "ever_qualified": any(_truthy(c, "qualified") for c in calls),
+            "ever_rpc": any(_truthy(c, "rpc_connect") for c in calls),
+            "temperature": best_temp,
+            "pipeline": pipeline,
+            "callback_requested": any(_truthy(c, "callback_requested") for c in calls),
+        }
+        for c in calls:
+            c["started_at"] = str(c["started_at"]) if c.get("started_at") else None
+
+        return JSONResponse(jsonable_encoder({
+            "found": True,
+            "key": key,
+            "domain": domain,
+            "master": master,
+            "enrichment": enr,
+            "companies": companies,
+            "company_summary": company_summary,
+            "rollup": rollup,
+            "calls": calls,
+        }))
+
+    @app.post("/api/prospect/{key}/add-phone")
+    async def prospect_add_phone(request: Request, key: str) -> JSONResponse:
+        """Any signed-in user (not kiosk) can add a phone to a prospect missing one."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        d = await _form(request)
+        phone = (d.get("phone") or "").strip()
+        norm = _norm_phone(phone)
+        if not norm:
+            return JSONResponse({"error": "enter a valid phone number"}, status_code=400)
+        master, domain, _ = _resolve_prospect(key)
+        if not master:
+            return JSONResponse({"error": "no master prospect to attach this to"}, status_code=404)
+
+        def _do():
+            import json
+            entry = {"name": d.get("name") or None, "title": d.get("title") or None,
+                     "mobile": phone, "phone": None,
+                     "added_by": u.get("email"), "added_norm": norm}
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE prospects SET "
+                    "  phones_norm = (SELECT array_agg(DISTINCT x) FROM unnest(phones_norm || %s::text[]) x), "
+                    "  extra_contacts = COALESCE(extra_contacts,'[]'::jsonb) || %s::jsonb, "
+                    "  updated_at = now() "
+                    "WHERE id = %s",
+                    ([norm], json.dumps([entry]), master["id"]),
+                )
+                conn.commit()
+        await run_in_threadpool(_do)
+        return JSONResponse({"ok": True, "normalized": norm})
+
+    @app.post("/api/prospect/{key}/enrich-website")
+    async def prospect_enrich_website(request: Request, key: str) -> JSONResponse:
+        """FREE 'Enrich now' for website intelligence: fetch the site and detect
+        tracking pixels (GTM/GA4/Meta/Google Ads/etc.), paid-ads activity, emails &
+        socials. No paid API. Stores into enrichment.website keyed by domain."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        _master, domain, _norm = _resolve_prospect(key)
+        if not domain:
+            return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
+
+        def _do() -> dict:
+            from ..enrichment.website import fetch_website_intel
+            intel = fetch_website_intel(domain)
+            status = "ok" if intel.get("found") else (intel.get("status") or "error")
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO enrichment (domain, website, status, fetched_at) "
+                    "VALUES (%s, %s, %s, now()) "
+                    "ON CONFLICT (domain) DO UPDATE SET website = EXCLUDED.website, "
+                    "  status = COALESCE(enrichment.status, EXCLUDED.status), fetched_at = now()",
+                    (domain, Json(intel), status),
+                )
+                conn.commit()
+            return intel
+        intel = await run_in_threadpool(_do)
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "website": intel}))
+
+    @app.post("/api/prospect/{key}/set-website")
+    async def prospect_set_website(request: Request, key: str) -> JSONResponse:
+        """Set a prospect's website (any signed-in user) → immediately enrich it.
+        This is how the ~1,000 called-but-no-website prospects get marketing data."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        d = await _form(request)
+        website = _clean_domain(d.get("website"))
+        name = (d.get("business_name") or "").strip() or None
+        if not website or "." not in website:
+            return JSONResponse({"error": "enter a valid website, e.g. acme.com.au"}, status_code=400)
+        master, _dom, norm = _resolve_prospect(key)
+
+        def _do() -> dict:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT id FROM prospects WHERE domain=%s", (website,))
+                existing = cur.fetchone()
+                if master and existing and existing["id"] != master["id"]:
+                    # this website already belongs to another prospect → attach the
+                    # phone there and remove the now-redundant phone-only capture row.
+                    if norm:
+                        cur.execute(
+                            "UPDATE prospects SET phones_norm = "
+                            "(SELECT array_agg(DISTINCT x) FROM unnest(phones_norm || %s::text[]) x), "
+                            "updated_at=now() WHERE id=%s", ([norm], existing["id"]))
+                    if master.get("source") == "call_capture":
+                        cur.execute("DELETE FROM prospects WHERE id=%s", (master["id"],))
+                elif master:
+                    cur.execute(
+                        "UPDATE prospects SET domain=%s, business_name=COALESCE(business_name,%s), "
+                        "updated_at=now() WHERE id=%s", (website, name, master["id"]))
+                elif existing:
+                    if norm:
+                        cur.execute(
+                            "UPDATE prospects SET phones_norm = "
+                            "(SELECT array_agg(DISTINCT x) FROM unnest(phones_norm || %s::text[]) x), "
+                            "updated_at=now() WHERE id=%s", ([norm], existing["id"]))
+                else:
+                    cur.execute(
+                        "INSERT INTO prospects (domain, business_name, phones_norm, source, updated_at) "
+                        "VALUES (%s,%s,%s,'manual',now())",
+                        (website, name, [norm] if norm else []))
+                conn.commit()
+            return {}
+
+        await run_in_threadpool(_do)
+        from ..enrich import enrich_single
+        res = await run_in_threadpool(enrich_single, pool, settings, website)
+        return JSONResponse({"ok": True, "domain": website, "enriched": bool(res.get("ok"))})
+
+    # ---- Master prospect database browser (admin + BDM only, realtime) -- #
+    def _require_db_access(request: Request) -> dict:
+        u = getattr(request.state, "user", None) or {}
+        if not (is_admin(u) or u.get("role") == "bdm"):
+            raise HTTPException(status_code=403, detail="admin / BDM access required")
+        return u
+
+    @app.get("/database", response_class=HTMLResponse)
+    def database_page(request: Request):
+        u = getattr(request.state, "user", None) or {}
+        if not (is_admin(u) or u.get("role") == "bdm"):
+            return RedirectResponse("/", status_code=302)
+        return _static("database.html")
+
+    @app.get("/api/database/prospects")
+    def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
+                           enriched: str = "", pipeline: str = "") -> JSONResponse:
+        """The Database browser: the GIVEN business data (companies), STATIC columns only,
+        GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
+        Businesses with no domain are listed individually. Dynamic metrics (SEO/Apollo/
+        website tracking) are NOT shown here — they live on the prospect page (#1)."""
+        _require_db_access(request)
+        limit = max(1, min(limit, 200))
+        term = search.strip().lower()
+        digits = re.sub(r"[^0-9]", "", search)
+        params: dict = {"lim": limit, "off": offset}
+        sd = sn = ""  # search filters for the domain / no-domain branches
+        if term:
+            params["like"] = f"%{term}%"
+            sd = " AND (lower(co.company_name) LIKE %(like)s OR lower(co.domain) LIKE %(like)s"
+            sn = " AND (lower(co.company_name) LIKE %(like)s"
+            if digits:
+                params["qd"] = f"%{digits}%"
+                sd += " OR co.phone_norm LIKE %(qd)s"
+                sn += " OR co.phone_norm LIKE %(qd)s"
+            sd += ")"; sn += ")"
+        enr_filter = ""
+        if enriched == "yes":
+            enr_filter = "WHERE ge.enriched"
+        elif enriched == "no":
+            enr_filter = "WHERE NOT ge.enriched"
+        cte = f"""
+        WITH g AS (
+          SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,
+                 sum(co.revenue_musd) AS total_revenue, max(co.employees) AS employees,
+                 (array_agg(co.company_name ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS name,
+                 (array_agg(co.industry ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS industry,
+                 (array_agg(NULLIF(concat_ws(', ', co.suburb, co.state), '') ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS location,
+                 (array_remove(array_agg(co.phone_norm ORDER BY co.revenue_musd DESC NULLS LAST), NULL))[1] AS phone,
+                 sum(jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))) AS contacts
+          FROM companies co WHERE co.domain IS NOT NULL {sd}
+          GROUP BY co.domain
+          UNION ALL
+          SELECT NULL, 'nodomain', 1, co.revenue_musd, co.employees, co.company_name, co.industry,
+                 NULLIF(concat_ws(', ', co.suburb, co.state), ''), co.phone_norm,
+                 jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))
+          FROM companies co WHERE co.domain IS NULL {sn}
+        ), ge AS (
+          SELECT g.*, (e.status IS NOT NULL) AS enriched FROM g LEFT JOIN enrichment e ON e.domain = g.domain
+        )
+        """
+        total = q(cte + f"SELECT count(*) AS n FROM ge {enr_filter}", params)[0]["n"]
+        rows = q(
+            cte + f"SELECT * FROM ge {enr_filter} "
+            "ORDER BY total_revenue DESC NULLS LAST, businesses DESC, name "
+            "LIMIT %(lim)s OFFSET %(off)s",
+            params,
+        )
+        return JSONResponse(jsonable_encoder({"total": total, "limit": limit, "offset": offset, "rows": rows}))
+
+    @app.get("/api/database/stats")
+    def database_stats(request: Request) -> JSONResponse:
+        _require_db_access(request)
+        r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
+              "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
+              "(SELECT count(*) FROM companies WHERE domain IS NULL) AS no_domain, "
+              "(SELECT count(*) FROM companies WHERE phone_norm IS NOT NULL) AS with_phone, "
+              "(SELECT count(*) FROM enrichment WHERE status='ok') AS enriched")[0]
+        # a freshness fingerprint so the client can poll cheaply for changes
+        f = q("SELECT (SELECT count(*) FROM companies) AS cc, "
+              "(SELECT max(created_at) FROM companies) AS cu, "
+              "(SELECT max(fetched_at) FROM enrichment) AS eu")[0]
+        token = f"{f['cc']}|{f['cu']}|{f['eu']}"
+        return JSONResponse(jsonable_encoder({**r, "token": token}))
+
+    # ---- Pipeline 2 assignment board (rotation + cadence) --------------- #
+    @app.get("/pipeline2", response_class=HTMLResponse)
+    def pipeline2_page() -> str:
+        return _static("pipeline2.html")
+
+    @app.get("/api/pipeline2")
+    def pipeline2_list(request: Request, bde: str = "ALL", due_only: bool = False) -> JSONResponse:
+        from ..pipeline2 import list_pipeline2
+        scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
+        rows = list_pipeline2(pool, bde=(None if scope == "ALL" else scope), due_only=due_only)
+        u = getattr(request.state, "user", None) or {}
+        return JSONResponse(jsonable_encoder({
+            "rows": rows, "can_assign": can_manage_pipeline(u),
+            "roster": [r["bde_name"] for r in q(
+                "SELECT DISTINCT COALESCE(bde_name, extension) AS bde_name FROM bde_agents "
+                "WHERE in_scope AND active ORDER BY 1")],
+        }))
+
+    @app.post("/api/pipeline2/sync")
+    async def pipeline2_sync_ep(request: Request) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "manager access required")
+        from ..pipeline2 import sync_pipeline2
+        stats = await run_in_threadpool(
+            lambda: sync_pipeline2(pool, default_cadence_days=settings.pipeline2_default_cadence_days))
+        return JSONResponse({"ok": True, "stats": stats})
+
+    @app.post("/api/pipeline2/{dest9}/assign")
+    async def pipeline2_assign_ep(dest9: str, request: Request) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "manager access required")
+        from ..pipeline2 import assign_prospect
+        d = await _form(request)
+        bde = (d.get("bde") or "").strip()
+        if not bde:
+            return JSONResponse({"error": "pick a BDE"}, status_code=400)
+        ok = await run_in_threadpool(
+            assign_prospect, pool, dest9, bde, by=u.get("email") or "manager",
+            next_action_at=d.get("next_action_at") or None, notes=d.get("notes"))
+        return JSONResponse({"ok": ok})
+
+    @app.post("/api/pipeline2/{dest9}/dnd")
+    async def pipeline2_dnd_ep(dest9: str, request: Request) -> JSONResponse:
+        """#5 — BDM/admin manually sets or clears DND on a Pipeline-2 prospect. A manual
+        DND persists across syncs; clearing reverts to the AI signal on next sync."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "manager access required")
+        d = await _form(request)
+        on = d.get("dnd") in (True, "true", "True", "1", 1, "yes")
+        reason = (d.get("reason") or "").strip() or "Manual DND by BDM"
+        by = u.get("email") or u.get("name") or "bdm"
+
+        def _do():
+            with pool.connection() as conn, conn.cursor() as cur:
+                if on:
+                    cur.execute(
+                        "UPDATE prospect_pipeline SET dnd=true, dnd_reason=%s, dnd_by=%s, "
+                        "dnd_at=now(), next_action_at=NULL, updated_at=now() WHERE dest9=%s",
+                        (reason, by, dest9))
+                else:
+                    cur.execute(
+                        "UPDATE prospect_pipeline SET dnd=false, dnd_reason=NULL, dnd_by=NULL, "
+                        "dnd_at=NULL, updated_at=now() WHERE dest9=%s", (dest9,))
+                conn.commit()
+        await run_in_threadpool(_do)
+        return JSONResponse({"ok": True, "dnd": on})
+
+    # ---- calendar ------------------------------------------------------- #
+    @app.get("/calendar", response_class=HTMLResponse)
+    def calendar_page() -> str:
+        return _static("calendar.html")
+
+    def _cal_scope(request: Request, requested_bde: str | None) -> str | None:
+        """Returns the bde_name to filter events by, or None for all (manager/kiosk)."""
+        if _is_bde(request):
+            return _scoped_bde(request, None)
+        return requested_bde or None  # manager: optional filter
+
+    @app.get("/api/calendar")
+    def calendar_list(request: Request, start: str, end: str, bde: str | None = None) -> JSONResponse:
+        from ..calendar import list_events
+        rows = list_events(pool, start, end, _cal_scope(request, bde if bde and bde != "ALL" else None))
+        return JSONResponse(jsonable_encoder({"events": rows}))
+
+    @app.get("/api/callbacks-today")
+    def callbacks_today(request: Request, bde: str = "ALL") -> JSONResponse:
+        """How many callbacks are scheduled for today (+ overdue), with the list (#8)."""
+        scope = _cal_scope(request, bde if bde and bde != "ALL" else None)
+        where = ["type = 'callback'"]
+        params: list = []
+        if scope:
+            where.append("bde_name = %s")
+            params.append(scope)
+        wc = " AND ".join(where)
+        today_n = q(f"SELECT count(*) AS n FROM calendar_events WHERE {wc} AND start_at::date = current_date "
+                    "AND status <> 'cancelled'", tuple(params))[0]["n"]
+        overdue_n = q(f"SELECT count(*) AS n FROM calendar_events WHERE {wc} AND start_at::date < current_date "
+                      "AND status = 'pending'", tuple(params))[0]["n"]
+        rows = q(f"SELECT id, bde_name, title, start_at, dest_number, call_id, status "
+                 f"FROM calendar_events WHERE {wc} AND start_at::date = current_date AND status <> 'cancelled' "
+                 "ORDER BY start_at", tuple(params))
+        for r in rows:
+            r["start_at"] = str(r["start_at"]) if r.get("start_at") else None
+        return JSONResponse(jsonable_encoder({"today": today_n, "overdue": overdue_n, "rows": rows}))
+
+    @app.post("/api/calendar")
+    async def calendar_create(request: Request) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        from ..calendar import create_event
+        b = await request.json()
+        owner = _scoped_bde(request, b.get("bde_name")) if _is_bde(request) else (b.get("bde_name") or None)
+        eid = await run_in_threadpool(
+            create_event, pool, bde_name=owner, type=b.get("type", "meeting"),
+            title=b.get("title", "Untitled"), start_at=b.get("start_at"),
+            end_at=b.get("end_at"), notes=b.get("notes"), dest_number=b.get("dest_number"),
+            created_by=u.get("email"))
+        return JSONResponse({"id": eid})
+
+    @app.post("/api/calendar/{eid}/update")
+    async def calendar_update(request: Request, eid: int) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        from ..calendar import update_event
+        fields = await request.json()
+        ok = await run_in_threadpool(update_event, pool, eid, fields,
+                                     restrict_bde=_scoped_bde(request, None) if _is_bde(request) else None)
+        return JSONResponse({"ok": ok})
+
+    @app.post("/api/calendar/{eid}/delete")
+    async def calendar_delete(request: Request, eid: int) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        from ..calendar import delete_event
+        ok = await run_in_threadpool(delete_event, pool, eid,
+                                     restrict_bde=_scoped_bde(request, None) if _is_bde(request) else None)
+        return JSONResponse({"ok": ok})
 
     return app

@@ -17,7 +17,7 @@ from psycopg_pool import ConnectionPool
 from ..config import Settings
 from ..logging import get_logger
 from .prompt import SYSTEM_PROMPT, build_user_message
-from .schema import CallClassification, StageVerdict
+from .schema import CallClassification, Scorecard, StageVerdict
 
 log = get_logger(__name__)
 
@@ -114,11 +114,128 @@ def monotonicity_violation(v: CallClassification) -> bool:
         return True
     if v.meeting_confirmation_only.value and not v.meeting_booked.value:
         return True
+    if v.meeting_rescheduled.value and not v.meeting_booked.value:
+        return True
+    if v.meeting_confirmation_only.value and v.meeting_rescheduled.value:
+        return True
     return False
 
 
 def min_quality_confidence(v: CallClassification) -> float:
     return min(getattr(v, stage).confidence for stage in QUALITY_STAGES)
+
+
+def normalize_domain(website: str | None) -> str | None:
+    """Reduce an LLM-extracted website to a bare, lower-case domain for use as the
+    enrichment cache key (and a clean display value). Returns None when there's no
+    usable domain. Shared by the classifier and the enrichment step so cache keys match.
+    """
+    import re
+
+    s = (website or "").strip().lower()
+    if not s:
+        return None
+    s = re.sub(r"^[a-z]+://", "", s)          # strip scheme
+    s = s.split("/")[0].split("?")[0]          # drop path/query
+    s = s.split("@")[-1]                        # drop any user@ prefix
+    if s.startswith("www."):
+        s = s[4:]
+    s = s.strip().strip(".")
+    # must look like a domain (has a dot, no spaces)
+    if "." not in s or " " in s or len(s) < 4:
+        return None
+    return s
+
+
+def derive_temperature(v: CallClassification) -> str:
+    """Lead temperature from BAPU flags — only for the interested pipeline.
+
+    warm = Authority+Problem; hot = +Urgency; super_hot = +Budget (all four).
+    Pipeline 2 (already with an agency) and everything else get no temperature.
+    """
+    if v.pipeline != "pipeline1_interested":
+        return "none"
+    a, p, u, b = v.authority.value, v.problem.value, v.urgency.value, v.budget.value
+    if a and p and u and b:
+        return "super_hot"
+    if a and p and u:
+        return "hot"
+    if a and p:
+        return "warm"
+    return "none"
+
+
+def apply_auto_validation(v: CallClassification) -> None:
+    """Auto-validate budget + aspiration from BEHAVIOUR (#6).
+
+    If the prospect ALREADY runs paid ads or ALREADY has a marketing agency, they are
+    demonstrably investing in marketing — so budget and aspiration are TRUE even if they
+    never stated a figure. The prompt is told to do this, but we also enforce it here so
+    the structured flags are deterministic (the prompt sometimes leaves budget=false).
+    Mutates v.
+    """
+    if v.runs_paid_ads or v.has_marketing_agency:
+        why = "already running paid ads" if v.runs_paid_ads else "already has a marketing agency"
+        if not v.budget.value:
+            v.budget = StageVerdict(value=True, confidence=max(v.budget.confidence, 0.7),
+                                    evidence=f"Auto-validated: {why} — demonstrably investing in marketing.")
+        if not v.aspiration.value:
+            v.aspiration = StageVerdict(value=True, confidence=max(v.aspiration.confidence, 0.6),
+                                        evidence=f"Auto-validated: {why} — clearly wants marketing results.")
+
+
+def enforce_booking_firmness(v: CallClassification) -> None:
+    """A booking only counts when it is FIRM (#7a — the Jesudas case).
+
+    The model sets booking_status; if it is not 'firm' (tentative, cancelled/declined, or
+    none) then meeting_booked must be FALSE — a half-agreed or collapsed appointment is not
+    a booking. Reschedule/confirmation flags also require a firm booking. Mutates v.
+    """
+    if v.meeting_booked.value and v.booking_status != "firm":
+        reason = {
+            "tentative": "Not booked — only a tentative/half-agreement, no firm date/time held.",
+            "cancelled_or_declined": "Not booked — the prospect cancelled / backed out; the appointment collapsed.",
+            "none": "Not booked — no appointment was actually scheduled.",
+        }.get(v.booking_status, "Not booked — booking not firm.")
+        v.meeting_booked = StageVerdict(value=False, confidence=max(v.meeting_booked.confidence, 0.8),
+                                        evidence=reason)
+    if not v.meeting_booked.value:
+        if v.meeting_confirmation_only.value:
+            v.meeting_confirmation_only = StageVerdict(value=False, confidence=v.meeting_confirmation_only.confidence,
+                                                       evidence="No firm booking on this call.")
+        if v.meeting_rescheduled.value:
+            v.meeting_rescheduled = StageVerdict(value=False, confidence=v.meeting_rescheduled.confidence,
+                                                 evidence="No firm booking on this call.")
+
+
+def enforce_decision_maker_gate(v: CallClassification) -> None:
+    """Qualification rules (#7a). Mutates v.
+
+    (1) NECESSARY: a non-decision-maker is NEVER 'qualified' — qualification requires buying
+        authority. A friendly gatekeeper with budget + a real problem is NOT qualified.
+    (2) NOT-SUFFICIENT: authority ALONE does not qualify. If the decision-maker revealed no
+        budget (incl. auto-validated), no problem, no urgency and no aspiration, demote to
+        not-qualified — being senior is not the same as being a qualified opportunity.
+    Run AFTER apply_auto_validation so a prospect already spending on ads/agency keeps budget.
+    """
+    if v.qualified.value and not v.authority.value:
+        v.qualified = StageVerdict(
+            value=False,
+            confidence=max(v.qualified.confidence, 0.8),
+            evidence=(
+                "Not qualified — the person on the call is not the decision-maker (no buying "
+                "authority); qualification cannot be established regardless of budget or need."
+            ),
+        )
+    elif v.qualified.value and not (v.budget.value or v.problem.value or v.urgency.value or v.aspiration.value):
+        v.qualified = StageVerdict(
+            value=False,
+            confidence=max(v.qualified.confidence, 0.8),
+            evidence=(
+                "Not qualified — authority alone is not enough: no budget signal, marketing "
+                "problem, urgency or growth aspiration was established on the call."
+            ),
+        )
 
 
 def _all_false_verdict(outcome: str, note: str) -> CallClassification:
@@ -133,7 +250,39 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
         is_lead=sv(),
         qualified=sv(),
         meeting_booked=sv(),
+        booking_status="none",
+        meeting_datetime="",
         meeting_confirmation_only=sv(),
+        meeting_rescheduled=sv(),
+        budget=sv(),
+        authority=sv(),
+        problem=sv(),
+        urgency=sv(),
+        aspiration=sv(),
+        open_to_listening=sv(),
+        runs_paid_ads=False,
+        has_marketing_agency=False,
+        do_not_contact=False,
+        problem_summary="",
+        pipeline="none",
+        prospect_company="",
+        prospect_website="",
+        prospect_industry="",
+        prospect_contact_name="",
+        prospect_mobile="",
+        prospect_email="",
+        key_facts=[],
+        callback_requested=sv(),
+        callback_when="",
+        contract_end="",
+        recommended_cadence_days=0,
+        objections=[],
+        buying_signals=[],
+        engagement="neutral",
+        prospect_sentiment="neutral",
+        next_step="",
+        coaching_tips=[],
+        scorecard=Scorecard(opening=0, discovery=0, pitch=0, objection_handling=0, close=0),
         call_outcome=outcome,  # type: ignore[arg-type]
         overall_notes=note,
     )
@@ -176,6 +325,9 @@ class Classifier:
         text = (transcript_row.get("text") or "")[: self._s.llm_max_transcript_chars]
         user = build_user_message(text, transcript_row.get("sentiment"), transcript_row.get("summary"))
         verdict, model_used = self._run_with_escalation(user)
+        apply_auto_validation(verdict)      # budget/aspiration from running ads / having an agency
+        enforce_booking_firmness(verdict)   # a non-firm/cancelled booking does not count
+        enforce_decision_maker_gate(verdict)  # authority necessary AND not-authority-alone
 
         needs_review = (
             min_quality_confidence(verdict) < self._s.confidence_threshold
@@ -196,7 +348,35 @@ class Classifier:
             "qualified": v.qualified.value,
             "qual_confidence": v.qualified.confidence,
             "meeting_booked": v.meeting_booked.value,
+            "booking_status": v.booking_status,
+            "meeting_datetime": v.meeting_datetime or None,
             "meeting_confirmation": v.meeting_confirmation_only.value,
+            "meeting_rescheduled": v.meeting_rescheduled.value,
+            # lead qualification (BANT + AO)
+            "budget": v.budget.value,
+            "authority": v.authority.value,
+            "problem": v.problem.value,
+            "urgency": v.urgency.value,
+            "aspiration": v.aspiration.value,
+            "open_to_listening": v.open_to_listening.value,
+            "runs_paid_ads": v.runs_paid_ads,
+            "has_marketing_agency": v.has_marketing_agency,
+            "do_not_contact": v.do_not_contact,
+            "problem_summary": v.problem_summary or None,
+            "lead_temperature": derive_temperature(v),
+            "pipeline": v.pipeline,
+            "callback_requested": v.callback_requested.value,
+            "callback_when": v.callback_when or None,
+            # pipeline 2 cadence intelligence
+            "contract_end": v.contract_end or None,
+            "recommended_cadence_days": (v.recommended_cadence_days or None),
+            # business identification + contact details extracted from the call
+            "prospect_company": v.prospect_company or None,
+            "prospect_website": normalize_domain(v.prospect_website),
+            "prospect_industry": v.prospect_industry or None,
+            "prospect_contact_name": v.prospect_contact_name or None,
+            "prospect_mobile": v.prospect_mobile or None,
+            "prospect_email": v.prospect_email or None,
             "call_outcome": v.call_outcome,
             "evidence": v.model_dump(),
             "model": model,
@@ -215,18 +395,48 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
             INSERT INTO classifications (
                 call_id, rpc_connect, rpc_confidence, full_pitch, pitch_confidence,
                 is_lead, lead_confidence, qualified, qual_confidence, meeting_booked,
-                meeting_confirmation, call_outcome, evidence, model, classified_at, needs_human_review)
+                booking_status, meeting_datetime,
+                meeting_confirmation, meeting_rescheduled, budget, authority, problem, urgency,
+                aspiration, open_to_listening, runs_paid_ads, has_marketing_agency, do_not_contact, problem_summary,
+                lead_temperature,
+                pipeline, callback_requested, callback_when, contract_end, recommended_cadence_days,
+                prospect_company, prospect_website, prospect_industry,
+                prospect_contact_name, prospect_mobile, prospect_email,
+                call_outcome, evidence, model, classified_at, needs_human_review)
             VALUES (
                 %(call_id)s, %(rpc_connect)s, %(rpc_confidence)s, %(full_pitch)s, %(pitch_confidence)s,
                 %(is_lead)s, %(lead_confidence)s, %(qualified)s, %(qual_confidence)s, %(meeting_booked)s,
-                %(meeting_confirmation)s, %(call_outcome)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
+                %(booking_status)s, %(meeting_datetime)s,
+                %(meeting_confirmation)s, %(meeting_rescheduled)s, %(budget)s, %(authority)s, %(problem)s, %(urgency)s,
+                %(aspiration)s, %(open_to_listening)s, %(runs_paid_ads)s, %(has_marketing_agency)s, %(do_not_contact)s, %(problem_summary)s,
+                %(lead_temperature)s,
+                %(pipeline)s, %(callback_requested)s, %(callback_when)s, %(contract_end)s, %(recommended_cadence_days)s,
+                %(prospect_company)s, %(prospect_website)s, %(prospect_industry)s,
+                %(prospect_contact_name)s, %(prospect_mobile)s, %(prospect_email)s,
+                %(call_outcome)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
             ON CONFLICT (call_id) DO UPDATE SET
                 rpc_connect = EXCLUDED.rpc_connect, rpc_confidence = EXCLUDED.rpc_confidence,
                 full_pitch = EXCLUDED.full_pitch, pitch_confidence = EXCLUDED.pitch_confidence,
                 is_lead = EXCLUDED.is_lead, lead_confidence = EXCLUDED.lead_confidence,
                 qualified = EXCLUDED.qualified, qual_confidence = EXCLUDED.qual_confidence,
                 meeting_booked = EXCLUDED.meeting_booked,
-                meeting_confirmation = EXCLUDED.meeting_confirmation, call_outcome = EXCLUDED.call_outcome,
+                booking_status = EXCLUDED.booking_status, meeting_datetime = EXCLUDED.meeting_datetime,
+                meeting_confirmation = EXCLUDED.meeting_confirmation,
+                meeting_rescheduled = EXCLUDED.meeting_rescheduled,
+                budget = EXCLUDED.budget, authority = EXCLUDED.authority,
+                problem = EXCLUDED.problem, urgency = EXCLUDED.urgency,
+                aspiration = EXCLUDED.aspiration, open_to_listening = EXCLUDED.open_to_listening,
+                runs_paid_ads = EXCLUDED.runs_paid_ads, has_marketing_agency = EXCLUDED.has_marketing_agency,
+                do_not_contact = EXCLUDED.do_not_contact, problem_summary = EXCLUDED.problem_summary,
+                lead_temperature = EXCLUDED.lead_temperature, pipeline = EXCLUDED.pipeline,
+                callback_requested = EXCLUDED.callback_requested, callback_when = EXCLUDED.callback_when,
+                contract_end = EXCLUDED.contract_end,
+                recommended_cadence_days = EXCLUDED.recommended_cadence_days,
+                prospect_company = EXCLUDED.prospect_company, prospect_website = EXCLUDED.prospect_website,
+                prospect_industry = EXCLUDED.prospect_industry,
+                prospect_contact_name = EXCLUDED.prospect_contact_name,
+                prospect_mobile = EXCLUDED.prospect_mobile, prospect_email = EXCLUDED.prospect_email,
+                call_outcome = EXCLUDED.call_outcome,
                 evidence = EXCLUDED.evidence, model = EXCLUDED.model,
                 classified_at = EXCLUDED.classified_at,
                 needs_human_review = EXCLUDED.needs_human_review

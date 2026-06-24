@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>User Management — Traffic Radius</title>
+<style>
+  :root{--bg:#0b0f15;--panel:#161b22;--line:#27313f;--txt:#e9eef5;--muted:#9aa6b2;--accent:#3b82f6;
+        --ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:radial-gradient(1100px 600px at 70% -10%,#13202e,#0b0f15 60%);
+    color:var(--txt);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:rgba(11,15,21,.85);backdrop-filter:blur(8px);z-index:5}
+  .logo{background:#fff;border-radius:10px;padding:7px 11px;display:inline-flex;line-height:0}
+  .logo img{height:24px;display:block}
+  header h1{font-size:17px;margin:0;font-weight:700}
+  header .spacer{flex:1}
+  a.btn,button{font:inherit;border-radius:9px;cursor:pointer;border:1px solid var(--line);
+    background:#0b0f15;color:var(--txt);padding:8px 13px;text-decoration:none;display:inline-block}
+  a.btn:hover,button:hover{border-color:var(--accent)}
+  button.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border:none;color:#fff;font-weight:700}
+  button.danger{border-color:rgba(239,68,68,.5);color:#f87171}
+  button.small{padding:5px 9px;font-size:12px}
+  main{max-width:1180px;margin:0 auto;padding:24px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:22px}
+  .panel h2{font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 14px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
+  .pill.admin{background:rgba(59,130,246,.16);color:#7cb0ff}
+  .pill.bdm{background:rgba(168,85,247,.16);color:#c79bf7}
+  .pill.bde{background:rgba(148,163,184,.14);color:#cbd5e1}
+  .pill.manager{background:rgba(245,158,11,.16);color:#fbbf24}
+  .pill.kiosk{background:rgba(34,197,94,.14);color:#86efac}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .dot.on{background:var(--ok)} .dot.off{background:var(--bad)}
+  select,input{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:13px}
+  select:focus,input:focus{outline:1px solid var(--accent)}
+  .muted{color:var(--muted)} .right{text-align:right}
+  .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}
+  .formgrid label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:5px}
+  .formgrid input,.formgrid select{width:100%}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1f2937;border:1px solid var(--line);
+    padding:11px 18px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:20}
+  .toast.show{opacity:1}
+  .toast.err{border-color:rgba(239,68,68,.5);color:#fca5a5}
+  .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .hint{font-size:12px;color:var(--muted);margin:-6px 0 14px}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo"><img src="/logo.png" alt="Traffic Radius" /></span>
+  <h1>User Management</h1>
+  <span class="pill admin">Admin</span>
+  <div class="spacer"></div>
+  <a class="btn" href="/">← Dashboard</a>
+  <a class="btn" href="/logout">Sign out</a>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>Add a user</h2>
+    <p class="hint">Roles — <b>admin</b>: full access + user management · <b>bdm</b>: sees every BDE + manages pipeline prospects · <b>bde</b>: own data only.</p>
+    <form id="addForm" class="formgrid" autocomplete="off">
+      <div><label>Email</label><input name="email" type="email" required placeholder="name@trafficradius.com.au" /></div>
+      <div><label>Full name</label><input name="name" type="text" placeholder="Jane Smith" /></div>
+      <div><label>Role</label>
+        <select name="role" id="addRole">
+          <option value="bde">BDE</option>
+          <option value="bdm">BDM</option>
+          <option value="admin">Admin</option>
+        </select></div>
+      <div><label>BDE name (data scope)</label><input name="bde_name" id="addBde" type="text" placeholder="matches dashboard name" /></div>
+      <div><label>Temp password</label><input name="password" type="text" required placeholder="set a starting password" /></div>
+      <div><button class="primary" type="submit">Create user</button></div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Accounts</h2>
+    <table>
+      <thead><tr>
+        <th>User</th><th>Role</th><th>Data scope</th><th>Status</th><th>Sessions</th><th class="right">Actions</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const ROLES = ["bde","bdm","admin","manager","kiosk"];
+let ME = null;
+
+function toast(msg, isErr){
+  const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (isErr?" err":"");
+  setTimeout(()=>{ t.className = "toast" + (isErr?" err":""); }, 2600);
+}
+function pill(role){ return `<span class="pill ${role||'bde'}">${(role||'bde').toUpperCase()}</span>`; }
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function api(url, opts){
+  const r = await fetch(url, opts);
+  let j = {}; try{ j = await r.json(); }catch(e){}
+  if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+  return j;
+}
+
+async function load(){
+  // who am I (to disable destructive actions on self)
+  try{ ME = await api("/api/me"); }catch(e){}
+  const {users} = await api("/api/admin/users");
+  const tb = $("#rows");
+  if(!users.length){ tb.innerHTML = `<tr><td colspan="6" class="muted">No users.</td></tr>`; return; }
+  tb.innerHTML = users.map(u => {
+    const isSelf = ME && ME.email && u.email && ME.email.toLowerCase()===u.email.toLowerCase();
+    const roleSel = `<select data-id="${u.id}" class="role">` +
+      ROLES.map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join("") + `</select>`;
+    const scope = `<input data-id="${u.id}" class="bde" value="${esc(u.bde_name||'')}" placeholder="—" style="width:140px" ${u.role!=='bde'?'disabled':''}/>`;
+    const status = `<span class="dot ${u.active?'on':'off'}"></span>${u.active?'Active':'Disabled'}` +
+      (u.must_change?` <span class="muted" title="must change password at next login">· temp pw</span>`:``);
+    return `<tr data-id="${u.id}">
+      <td><div>${esc(u.name||'')}</div><div class="muted" style="font-size:12px">${esc(u.email)}</div></td>
+      <td>${roleSel}</td>
+      <td>${scope}</td>
+      <td>${status}</td>
+      <td>${u.active_sessions||0}</td>
+      <td class="right"><div class="actions">
+        <button class="small" data-act="save" data-id="${u.id}">Save</button>
+        <button class="small" data-act="pw" data-id="${u.id}">Reset pw</button>
+        <button class="small" data-act="toggle" data-id="${u.id}" data-active="${u.active?1:0}">${u.active?'Disable':'Enable'}</button>
+        <button class="small danger" data-act="del" data-id="${u.id}" ${isSelf?'disabled title="cannot delete yourself"':''}>Delete</button>
+      </div></td>
+    </tr>`;
+  }).join("");
+}
+
+// keep BDE-name field enabled only for the bde role
+document.addEventListener("change", e=>{
+  if(e.target.classList.contains("role")){
+    const id = e.target.dataset.id;
+    const bde = document.querySelector(`input.bde[data-id="${id}"]`);
+    if(bde) bde.disabled = e.target.value !== "bde";
+  }
+  if(e.target.id==="addRole"){
+    $("#addBde").disabled = e.target.value !== "bde";
+  }
+});
+
+document.addEventListener("click", async e=>{
+  const btn = e.target.closest("button[data-act]"); if(!btn) return;
+  const id = btn.dataset.id;
+  try{
+    if(btn.dataset.act==="save"){
+      const role = document.querySelector(`select.role[data-id="${id}"]`).value;
+      const bde = document.querySelector(`input.bde[data-id="${id}"]`).value;
+      await api(`/api/admin/users/${id}`, {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({role, bde_name: bde})});
+      toast("Saved"); load();
+    } else if(btn.dataset.act==="toggle"){
+      const active = btn.dataset.active==="1" ? "false" : "true";
+      await api(`/api/admin/users/${id}`, {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({active})});
+      toast(active==="true"?"Enabled":"Disabled"); load();
+    } else if(btn.dataset.act==="pw"){
+      const pw = prompt("New temporary password for this user (min 6 chars):");
+      if(!pw) return;
+      await api(`/api/admin/users/${id}/password`, {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({password: pw, must_change: "true"})});
+      toast("Password reset");
+    } else if(btn.dataset.act==="del"){
+      if(!confirm("Delete this user permanently?")) return;
+      await api(`/api/admin/users/${id}/delete`, {method:"POST"});
+      toast("Deleted"); load();
+    }
+  }catch(err){ toast(err.message, true); }
+});
+
+$("#addForm").addEventListener("submit", async e=>{
+  e.preventDefault();
+  const f = e.target;
+  const body = {
+    email: f.email.value, name: f.name.value, role: f.role.value,
+    bde_name: f.bde_name.value, password: f.password.value, must_change: "true",
+  };
+  try{
+    await api("/api/admin/users", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    toast("User created"); f.reset(); $("#addBde").disabled = false; load();
+  }catch(err){ toast(err.message, true); }
+});
+
+load();
+</script>
+</body>
+</html>

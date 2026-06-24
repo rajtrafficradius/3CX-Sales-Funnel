@@ -44,11 +44,26 @@ def _role_name(user: dict) -> str:
     return user.get("Role") or ""
 
 
+def canonical_bde_name(full_name: str | None, names: list[str]) -> str | None:
+    """If the 3CX display name contains one of the configured BDE name tokens, return
+    that token (as written in config) — the canonical identity. Whole-word match so
+    "184 Bharat", "Bharat Mobile", "Bharat landline" all map to "Bharat" (their lines
+    merge), while "Aishwarya HR" / "Vidhun 1" match nothing. First match wins."""
+    import re
+    words = set(re.findall(r"[a-z0-9]+", (full_name or "").lower()))
+    for tok in names:
+        if tok.lower() in words:
+            return tok
+    return None
+
+
 def decide_in_scope(user: dict, settings: Settings) -> bool:
     """Apply the configured in-scope rule to a single user."""
     ext = str(user.get("Number") or "").strip()
     if ext in settings.exclude_extensions:
-        return False  # explicit exclude (e.g. admins) overrides group membership
+        return False  # explicit exclude (e.g. admins) overrides everything
+    if settings.inscope_names:  # PRIMARY: by BDE name (captures all their numbers)
+        return canonical_bde_name(_full_name(user), settings.inscope_names) is not None
     if settings.inscope_extensions:
         return ext in settings.inscope_extensions
     if settings.inscope_groups:
@@ -71,6 +86,10 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
                 if not ext:
                     continue
                 seen.append(ext)
+                # Canonical name: an in-scope BDE's lines all report under one name,
+                # so their multiple extensions merge automatically (no merge map needed).
+                _fname = _full_name(user)
+                _canon = canonical_bde_name(_fname, settings.inscope_names) if settings.inscope_names else None
                 cur.execute(
                     """
                     INSERT INTO bde_agents
@@ -89,7 +108,7 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
                     """,
                     {
                         "ext": ext,
-                        "name": _full_name(user),
+                        "name": _canon or _fname,
                         "email": user.get("EmailAddress"),
                         "group": _group_name(user),
                         "role": _role_name(user),

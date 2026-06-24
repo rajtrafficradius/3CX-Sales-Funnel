@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — Traffic Radius</title>
+<style>
+  :root{--bg:#0b0f15;--panel:#161b22;--line:#27313f;--txt:#e9eef5;--muted:#9aa6b2;--accent:#3b82f6}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(1100px 600px at 70% -10%,#13202e,#0b0f15 60%);color:var(--txt);
+    font:15px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:30px 28px;width:min(380px,92vw);box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .logo{background:#fff;border-radius:12px;padding:10px 14px;display:inline-flex;line-height:0;margin-bottom:18px}
+  .logo img{height:30px;display:block}
+  h1{font-size:18px;margin:0 0 4px}
+  p.sub{color:var(--muted);font-size:13px;margin:0 0 20px}
+  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.5px}
+  input{width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:11px 12px;font:inherit}
+  input:focus{outline:1px solid var(--accent)}
+  button{width:100%;margin-top:20px;background:linear-gradient(180deg,#3b82f6,#2563eb);color:#fff;border:none;border-radius:9px;padding:12px;font:inherit;font-weight:700;cursor:pointer}
+  button:hover{filter:brightness(1.08)}
+  .err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);color:#f87171;border-radius:9px;padding:9px 12px;font-size:13px;margin-bottom:14px;display:none}
+  .err.show{display:block}
+</style>
+</head>
+<body>
+<form class="card" method="post" action="/login">
+  <span class="logo"><img src="/logo.png" alt="Traffic Radius" /></span>
+  <h1>Sales Funnel — Sign in</h1>
+  <p class="sub">Use your work email and password.</p>
+  <div class="err" id="err">Incorrect email or password.</div>
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="username" required autofocus />
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required />
+  <button type="submit">Sign in</button>
+</form>
+<script>
+  if(new URLSearchParams(location.search).get('e')) document.getElementById('err').classList.add('show');
+</script>
+</body>
+</html>

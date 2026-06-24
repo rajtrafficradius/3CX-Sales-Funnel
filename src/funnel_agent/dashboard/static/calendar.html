@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calendar — 3CX Funnel</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:14px;padding:12px 20px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:13px}
+  .brand{background:#fff;border-radius:10px;padding:5px 10px;line-height:0}.brand img{height:24px;display:block}
+  h1{font-size:16px;margin:0;font-weight:650}
+  .spacer{flex:1}
+  select,button,input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
+  button{cursor:pointer}
+  .who{font-size:12px;color:var(--muted)}
+  main{max-width:1200px;margin:0 auto;padding:18px 20px}
+  .navrow{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .navrow .mlabel{font-size:18px;font-weight:700;min-width:200px;text-align:center}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .dow{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center;padding:4px 0}
+  .cell{min-height:96px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;overflow:hidden}
+  .cell:hover{border-color:var(--accent)}
+  .cell.other{opacity:.4}
+  .cell.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+  .cell.sel{outline:2px solid var(--accent)}
+  .cell .d{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:4px}
+  .ev{font-size:11px;border-radius:5px;padding:2px 5px;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ev.callback{background:rgba(59,130,246,.18);color:#93c5fd}
+  .ev.meeting{background:rgba(34,197,94,.16);color:#86efac}
+  .ev.note{background:rgba(148,163,184,.16);color:#cbd5e1}
+  .ev.done{opacity:.5;text-decoration:line-through}
+  .panel{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .panel h2{font-size:13px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .erow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .erow:last-child{border-bottom:none}
+  .erow .t{font-variant-numeric:tabular-nums;color:var(--muted);width:64px;font-size:13px}
+  .erow .ti{flex:1}
+  .erow .tag{font-size:11px;padding:1px 7px;border-radius:10px}
+  .erow.done .ti{opacity:.5;text-decoration:line-through}
+  .erow button{padding:4px 8px;font-size:12px}
+  .addform{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  .muted{color:var(--muted)}
+  .pill{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/"><img src="/logo.png" alt="Traffic Radius" /></a>
+  <a href="/">&larr; Dashboard</a>
+  <h1>Calendar</h1>
+  <span class="pill" id="scopePill"></span>
+  <div class="spacer"></div>
+  <select id="bdeFilter" style="display:none"></select>
+  <span class="who" id="who"></span>
+  <a href="/logout">Logout</a>
+</header>
+<main>
+  <div class="navrow">
+    <button onclick="move(-1)">‹</button>
+    <div class="mlabel" id="mlabel"></div>
+    <button onclick="move(1)">›</button>
+    <button onclick="goToday()">Today</button>
+    <div class="spacer"></div>
+    <span class="muted">📞 callback · 🤝 meeting · 📝 note</span>
+  </div>
+  <div class="grid" id="dow"></div>
+  <div class="grid" id="cal"></div>
+  <div class="panel" id="dayPanel"><h2 id="dayTitle">Select a day</h2><div id="dayBody" class="muted">Click a day to see and add events.</div></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const pad=n=>String(n).padStart(2,'0');
+const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝'};
+let view=new Date(), selected=null, ME={}, EVENTS=[], FILTER='';
+
+async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
+async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
+
+async function boot(){
+  ME = await jget('/api/me');
+  $('#who').textContent = (ME.name||ME.email||'')+' · '+(ME.role||'');
+  $('#scopePill').textContent = ME.role==='bde' ? ('My calendar — '+(ME.bde_name||'')) : 'All BDEs';
+  if(ME.role==='manager'||ME.role==='kiosk'){
+    try{ const s=await jget('/api/summary'); const opts=['<option value="">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${b}</option>`));
+      $('#bdeFilter').innerHTML=opts.join(''); $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{FILTER=$('#bdeFilter').value;load();}; }catch(e){}
+  }
+  $('#dow').innerHTML=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<div class="dow">${d}</div>`).join('');
+  await load();
+}
+
+function monthBounds(){
+  const y=view.getFullYear(), m=view.getMonth();
+  const first=new Date(y,m,1); const startDow=(first.getDay()+6)%7;
+  const gridStart=new Date(y,m,1-startDow);
+  const gridEnd=new Date(gridStart); gridEnd.setDate(gridEnd.getDate()+41);
+  return {gridStart, gridEnd};
+}
+
+async function load(){
+  $('#mlabel').textContent = MON[view.getMonth()]+' '+view.getFullYear();
+  const {gridStart,gridEnd}=monthBounds();
+  let url=`/api/calendar?start=${iso(gridStart)}&end=${iso(gridEnd)}`;
+  if(FILTER) url+=`&bde=${encodeURIComponent(FILTER)}`;
+  EVENTS=(await jget(url)).events||[];
+  renderGrid(gridStart);
+  if(selected) renderDay(selected);
+}
+
+function evForDay(dstr){ return EVENTS.filter(e=>(e.start_at||'').slice(0,10)===dstr).sort((a,b)=>(a.start_at||'').localeCompare(b.start_at||'')); }
+
+function renderGrid(gridStart){
+  const todayStr=iso(new Date()), cells=[];
+  for(let i=0;i<42;i++){
+    const d=new Date(gridStart); d.setDate(d.getDate()+i); const ds=iso(d);
+    const other=d.getMonth()!==view.getMonth();
+    const evs=evForDay(ds);
+    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} ${e.status==='done'?'done':''}">${TYPE_ICON[e.type]||''} ${(e.start_at||'').slice(11,16)} ${esc(e.title||'')}</div>`).join('');
+    const more=evs.length>3?`<div class="muted" style="font-size:11px">+${evs.length-3} more</div>`:'';
+    cells.push(`<div class="cell ${other?'other':''} ${ds===todayStr?'today':''} ${ds===selected?'sel':''}" onclick="selectDay('${ds}')"><div class="d">${d.getDate()}</div>${chips}${more}</div>`);
+  }
+  $('#cal').innerHTML=cells.join('');
+}
+const esc=s=>(s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function selectDay(ds){ selected=ds; renderGrid(monthBounds().gridStart); renderDay(ds); }
+
+function renderDay(ds){
+  const evs=evForDay(ds);
+  $('#dayTitle').textContent='Events — '+ds;
+  const canWrite = ME.role!=='kiosk';
+  const rows = evs.length ? evs.map(e=>`
+    <div class="erow ${e.status==='done'?'done':''}">
+      <span class="t">${(e.start_at||'').slice(11,16)||'—'}</span>
+      <span class="ti">${TYPE_ICON[e.type]||''} ${esc(e.title||'')} ${ME.role!=='bde'&&e.bde_name?`<span class="muted">· ${esc(e.bde_name)}</span>`:''} ${e.dest_number?`<a href="tel:${esc(e.dest_number)}" class="muted">${esc(e.dest_number)}</a>`:''}</span>
+      ${canWrite?`<button onclick="toggleDone(${e.id},'${e.status}')">${e.status==='done'?'↺':'✓'}</button><button onclick="editTime(${e.id})">🕑</button><button onclick="del(${e.id})">🗑</button>`:''}
+    </div>`).join('') : '<div class="muted">No events.</div>';
+  const form = canWrite ? `<div class="addform">
+      <input id="naTitle" placeholder="Add event title…" style="flex:1;min-width:160px" />
+      <select id="naType"><option value="meeting">🤝 meeting</option><option value="callback">📞 callback</option><option value="note">📝 note</option></select>
+      <input id="naTime" type="time" value="10:00" />
+      <button onclick="addEvent('${ds}')">Add</button>
+    </div>` : '';
+  $('#dayBody').innerHTML = rows + form;
+}
+
+async function addEvent(ds){
+  const title=$('#naTitle').value.trim(); if(!title) return;
+  const t=$('#naTime').value||'10:00';
+  await jpost('/api/calendar',{type:$('#naType').value,title,start_at:`${ds}T${t}:00`,end_at:`${ds}T${t}:00`});
+  await load();
+}
+async function toggleDone(id,st){ await jpost(`/api/calendar/${id}/update`,{status: st==='done'?'pending':'done'}); await load(); }
+async function del(id){ if(confirm('Delete this event?')){ await jpost(`/api/calendar/${id}/delete`,{}); await load(); } }
+async function editTime(id){ const t=prompt('New time (HH:MM)'); if(!t) return; const e=EVENTS.find(x=>x.id===id); if(!e)return; const ds=(e.start_at||'').slice(0,10); await jpost(`/api/calendar/${id}/update`,{start_at:`${ds}T${t}:00`}); await load(); }
+function move(n){ view=new Date(view.getFullYear(),view.getMonth()+n,1); load(); }
+function goToday(){ view=new Date(); selectDay(iso(new Date())); }
+
+boot().catch(e=>{document.querySelector('main').innerHTML='<div class="muted" style="padding:20px">Could not load calendar ('+e.message+'). <a href="/login">Sign in</a></div>';});
+</script>
+</body>
+</html>

@@ -177,6 +177,86 @@ def init_db() -> None:
     typer.echo("init-db: schema applied")
 
 
+@app.command(name="seed-prospects")
+def seed_prospects(
+    csv_path: str = typer.Argument(..., help="Path to DATA_MASTER_FILE CSV"),
+) -> None:
+    """Seed/refresh the master prospect database from the master CSV (idempotent)."""
+    settings = _settings()
+    from .prospects import seed_prospects_from_csv
+
+    with _analytics_pool(settings) as pool:
+        stats = seed_prospects_from_csv(pool, csv_path)
+    typer.echo(f"seed-prospects: {stats}")
+
+
+@app.command(name="load-companies")
+def load_companies(
+    csv_path: str = typer.Argument(..., help="Path to the given business data CSV (e.g. D&B export)"),
+    source: str = typer.Option("given_data", help="tag for this upload (re-running replaces this source's rows)"),
+) -> None:
+    """Load ALL given business records into `companies` (every business kept; multi-per-domain OK)."""
+    settings = _settings()
+    from .companies import load_companies_from_csv
+
+    with _analytics_pool(settings) as pool:
+        stats = load_companies_from_csv(pool, csv_path, source=source)
+    typer.echo(f"load-companies: {stats}")
+
+
+@app.command(name="whatsapp")
+def whatsapp_run() -> None:
+    """Schedule WhatsApp nurturing for new bookings + send any due messages (#13).
+    DRY-RUN until WHATSAPP_ENABLED + credentials are set (then it sends live)."""
+    settings = _settings()
+    from .whatsapp import schedule_due_bookings, process_due
+
+    with _analytics_pool(settings) as pool:
+        sched = schedule_due_bookings(pool, settings, lookback_days=settings.daily_lookback_days)
+        proc = process_due(pool, settings)
+    typer.echo(f"whatsapp: scheduled={sched} processed={proc}")
+
+
+@app.command(name="enrich-prospects")
+def enrich_prospects_cmd(
+    limit: int = typer.Option(10, help="max prospect domains to enrich"),
+    pipeline: str = typer.Option(None, help="restrict to a pipeline, e.g. pipeline1_interested"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="plan only; calls NO API (no credits)"),
+) -> None:
+    """Gap-aware enrichment of master-matched prospects (SEMrush only-missing, Apollo free)."""
+    settings = _settings()
+    from .enrich import enrich_prospects
+
+    with _analytics_pool(settings) as pool:
+        stats = enrich_prospects(pool, settings, limit=limit, pipeline=pipeline, dry_run=dry_run)
+    typer.echo(f"enrich-prospects{' (dry-run)' if dry_run else ''}: {stats}")
+
+
+@app.command(name="capture-prospects")
+def capture_prospects_cmd() -> None:
+    """Add master-DB records for called numbers not yet on file (from AI-extracted name/website)."""
+    settings = _settings()
+    from .prospects import capture_called_prospects
+
+    with _analytics_pool(settings) as pool:
+        stats = capture_called_prospects(pool)
+    typer.echo(f"capture-prospects: {stats}")
+
+
+@app.command(name="pipeline2-sync")
+def pipeline2_sync(
+    cadence_days: int = typer.Option(None, help="default cadence days when none is known (default: weekly, from config)"),
+) -> None:
+    """Rebuild Pipeline-2 assignments (rotate a different BDE; weekly cadence by default)."""
+    settings = _settings()
+    from .pipeline2 import sync_pipeline2
+
+    cad = cadence_days if cadence_days is not None else settings.pipeline2_default_cadence_days
+    with _analytics_pool(settings) as pool:
+        stats = sync_pipeline2(pool, default_cadence_days=cad)
+    typer.echo(f"pipeline2-sync (cadence={cad}d): {stats}")
+
+
 # --------------------------------------------------------------------------- #
 # Phase D — roster-sync
 # --------------------------------------------------------------------------- #
@@ -261,6 +341,74 @@ def aggregate(date_: str = typer.Option(..., "--date", help="YYYY-MM-DD")) -> No
         typer.echo(f"aggregate {date_}: {aggregate_day(ana, settings, _parse_date(date_))}")
 
 
+@app.command()
+def enrich(
+    date_: str = typer.Option(None, "--date", help="single day YYYY-MM-DD"),
+    start: str = typer.Option(None, help="range start YYYY-MM-DD"),
+    end: str = typer.Option(None, help="range end YYYY-MM-DD"),
+    limit: int = typer.Option(None, help="cap domains per day"),
+    workers: int = typer.Option(None, help="parallel domain lookups"),
+) -> None:
+    """Fetch SEMrush + Apollo (free) marketing data per call website (cached per domain)."""
+    settings = _settings()
+    from .enrich import enrich_day
+
+    days = _resolve_days(date_, start, end)
+    with _analytics_pool(settings) as ana:
+        for d in days:
+            typer.echo(f"enrich {d}: {enrich_day(ana, settings, d, limit, workers)}")
+
+
+@app.command(name="sync-callbacks")
+def sync_callbacks_cmd(
+    date_: str = typer.Option(None, "--date", help="single day YYYY-MM-DD"),
+    start: str = typer.Option(None, help="range start YYYY-MM-DD"),
+    end: str = typer.Option(None, help="range end YYYY-MM-DD"),
+) -> None:
+    """Auto-create BDE calendar callbacks from interested-prospect callback requests."""
+    settings = _settings()
+    from .calendar import sync_callbacks_for_day
+
+    days = _resolve_days(date_, start, end)
+    with _analytics_pool(settings) as ana:
+        for d in days:
+            typer.echo(f"sync-callbacks {d}: {sync_callbacks_for_day(ana, d)}")
+
+
+@app.command(name="users-sync")
+def users_sync(
+    manager: str = typer.Option(None, help="manager email(s) CSV; default from MANAGER_EMAILS"),
+) -> None:
+    """Create login accounts: one per in-scope BDE + manager(s). Idempotent.
+    Prints one-time temp passwords for newly-created accounts."""
+    settings = _settings()
+    from .auth import seed_users
+
+    mgrs = [m.strip() for m in (manager.split(",") if manager else settings.manager_email_list) if m.strip()]
+    with _analytics_pool(settings) as ana:
+        created = seed_users(ana, mgrs)
+    if not created:
+        typer.echo("users-sync: no new accounts (all already exist).")
+        return
+    typer.echo(f"users-sync: created {len(created)} account(s). TEMP PASSWORDS (share once):")
+    for u in created:
+        typer.echo(f"  {u['role']:<8} {u['email']:<42} {u['temp_password']}")
+
+
+@app.command(name="set-password")
+def set_password_cmd(
+    email: str = typer.Option(..., help="user email"),
+    password: str = typer.Option(..., help="new password"),
+) -> None:
+    """Set / reset a user's password."""
+    settings = _settings()
+    from .auth import set_password
+
+    with _analytics_pool(settings) as ana:
+        ok = set_password(ana, email, password, must_change=False)
+    typer.echo("password updated" if ok else "user not found")
+
+
 def _resolve_days(date_: str | None, start: str | None, end: str | None) -> list[date]:
     if date_:
         return [_parse_date(date_)]
@@ -341,12 +489,23 @@ def refresh(
     (today - days + 1) through TODAY. Run on a 5-minute schedule for a live dashboard."""
     settings = _settings()
     from .pipeline import classify_window
+    from .pipeline2 import sync_pipeline2
+    from .prospects import capture_called_prospects
 
     today = datetime.now(ZoneInfo(settings.tz)).date()
     start = today - timedelta(days=max(1, days) - 1)
     with _source(settings) as src, _analytics_pool(settings) as ana:
         totals = classify_window(src, ana, settings, start, today, order="asc")
-    typer.echo(f"refresh {start}..{today}: {totals}")
+        # Grow the master DB from live calls (numbers not on file → captured from the
+        # AI-extracted business name/website), then keep Pipeline-2 assignments current.
+        cap = capture_called_prospects(ana)
+        p2 = sync_pipeline2(ana, default_cadence_days=settings.pipeline2_default_cadence_days)
+        # WhatsApp nurturing: schedule sequences for new bookings + send due messages
+        # (dry-run until WHATSAPP_ENABLED + credentials are configured).
+        from .whatsapp import schedule_due_bookings, process_due
+        schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
+        wa = process_due(ana, settings)
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | whatsapp: {wa}")
 
 
 @app.command()

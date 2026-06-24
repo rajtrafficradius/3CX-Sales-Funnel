@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Coaching — 3CX Funnel</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:13px}
+  header h1{font-size:17px;margin:0;font-weight:680}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0}
+  .brand img{height:26px;display:block}
+  select{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
+  main{max-width:1100px;margin:0 auto;padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card.full{grid-column:1/-1}
+  h2{font-size:12px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .muted{color:var(--muted)}
+  .bar{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .bl{width:120px;font-size:12.5px}
+  .bt{flex:1;height:10px;background:#0b0f15;border:1px solid var(--line);border-radius:6px;overflow:hidden;position:relative}
+  .bt i{display:block;height:100%}
+  .bn{width:64px;text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums}
+  ul.ci{margin:6px 0;padding-left:18px;font-size:13px}ul.ci li{margin:4px 0}
+  .delta{font-size:12px;font-weight:700;margin-left:6px}.up{color:#4ade80}.down{color:#f87171}
+  .cmp{display:grid;grid-template-columns:1fr auto auto;gap:6px 14px;align-items:center;font-size:13px}
+  .cmp .h{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .big{font-size:22px;font-weight:760}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
+  <a href="/">&larr; Dashboard</a>
+  <h1>Coaching &amp; development</h1>
+  <select id="bde" style="margin-left:auto"></select>
+</header>
+<main id="main"><div class="card full muted">Loading…</div></main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DIMS=['opening','discovery','pitch','objection_handling','close'];
+const LBL={opening:'Opening',discovery:'Discovery',pitch:'Pitch',objection_handling:'Objection handling',close:'Close'};
+function col(v){v=Number(v||0);return v>=3.5?'#4ade80':v>=2.5?'#fbbf24':'#f87171';}
+function barRow(label,v){v=v==null?0:Number(v);
+  return `<div class="bar"><span class="bl">${label}</span><span class="bt"><i style="width:${v/5*100}%;background:${col(v)}"></i></span><span class="bn">${v?v.toFixed(2):'—'}/5</span></div>`;}
+
+async function loadBdes(){
+  try{ const m=await fetch('/api/meta').then(r=>r.json()); const sel=$('#bde');
+    const list=(m.bdes||[]).filter(b=>b!=='ALL');
+    sel.innerHTML=list.map(b=>`<option>${esc(b)}</option>`).join('');
+    if(m.user&&m.user.role==='bde'&&m.user.bde_name){ sel.value=m.user.bde_name; sel.disabled=true; }
+    sel.onchange=load; load();
+  }catch(e){ $('#main').innerHTML='<div class="card full">Could not load ('+esc(e.message)+')</div>'; }
+}
+async function load(){
+  const bde=$('#bde').value; if(!bde) return;
+  $('#main').innerHTML='<div class="card full muted">Loading…</div>';
+  let d; try{ d=await fetch('/api/coaching?bde='+encodeURIComponent(bde)).then(r=>r.json()); }
+  catch(e){ $('#main').innerHTML='<div class="card full">Error</div>'; return; }
+  if(d.error){ $('#main').innerHTML='<div class="card full">'+esc(d.error)+'</div>'; return; }
+  const ov=d.overall||{}, won=d.booked||{}, lost=d.not_booked||{}, tr=d.trend||{};
+  const score=`<div class="card"><h2>Scorecard (avg over decision-maker calls)</h2>
+    <div style="display:flex;gap:24px;margin-bottom:10px"><div><div class="big">${ov.pitched||0}</div><div class="muted" style="font-size:11px">PITCHED</div></div>
+      <div><div class="big" style="color:#4ade80">${ov.booked||0}</div><div class="muted" style="font-size:11px">BOOKED</div></div></div>
+    ${DIMS.map(k=>barRow(LBL[k],ov[k])).join('')}</div>`;
+  // Winning behaviours: booked vs not-booked
+  const winning=`<div class="card"><h2>🏆 What you do differently when you BOOK</h2>
+    <div class="cmp"><div class="h">Skill</div><div class="h">Booked</div><div class="h">Not booked</div>
+    ${DIMS.map(k=>{const w=won[k]!=null?Number(won[k]):null,l=lost[k]!=null?Number(lost[k]):null;
+      const diff=(w!=null&&l!=null)?(w-l):null;
+      return `<div>${LBL[k]}</div><div style="color:${col(w)};font-weight:700">${w!=null?w.toFixed(2):'—'}</div>
+        <div style="color:${col(l)}">${l!=null?l.toFixed(2):'—'}${diff!=null?` <span class="delta ${diff>=0?'up':'down'}">${diff>=0?'+':''}${diff.toFixed(1)}</span>`:''}</div>`;}).join('')}</div>
+    <div class="muted" style="font-size:12.5px;margin-top:10px">The biggest gaps show the behaviours that convert. Replicate your booked-call discovery, pitch &amp; close on every call.</div></div>`;
+  // Trend
+  const trend=`<div class="card"><h2>📈 Trend — recent half vs earlier half</h2>
+    ${DIMS.map(k=>{const r=tr.recent&&tr.recent[k]!=null?Number(tr.recent[k]):null,e=tr.earlier&&tr.earlier[k]!=null?Number(tr.earlier[k]):null;
+      const diff=(r!=null&&e!=null)?(r-e):null;
+      return `<div class="bar"><span class="bl">${LBL[k]}</span><span class="bt"><i style="width:${(r||0)/5*100}%;background:${col(r)}"></i></span>
+        <span class="bn">${r!=null?r.toFixed(2):'—'}${diff!=null?` <span class="delta ${diff>=0?'up':'down'}">${diff>=0?'▲':'▼'}${Math.abs(diff).toFixed(1)}</span>`:''}</span></div>`;}).join('')}</div>`;
+  // Recurring tips + objections
+  const tips=(d.recurring_tips||[]);
+  const objs=(d.unhandled_objections||[]);
+  const dev=`<div class="card"><h2>🎯 Recurring coaching themes</h2>
+    ${tips.length?`<ul class="ci">${tips.map(t=>`<li>${esc(t.tip)} <span class="muted">×${t.n}</span></li>`).join('')}</ul>`:'<div class="muted">No recurring tips.</div>'}
+    <h2 style="margin-top:16px">🛡 Objections you struggle to handle</h2>
+    ${objs.length?`<ul class="ci">${objs.map(o=>`<li>${esc(o.objection)} <span class="muted">×${o.n}</span></li>`).join('')}</ul>`:'<div class="muted">No unhandled objections — great!</div>'}</div>`;
+  $('#main').innerHTML = score + winning + trend + dev;
+}
+loadBdes();
+</script>
+</body>
+</html>
