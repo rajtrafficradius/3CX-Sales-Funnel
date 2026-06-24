@@ -959,6 +959,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "OR EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
                             "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
                             "WHERE c2.dest_number=c.dest_number AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified)))",
+        # Booked but NOT qualified = the EXACT complement of qualified_booked within new
+        # bookings, so qualified_booked + booked_unqualified = meetings_booked. (Same
+        # first-booking dedup + override + prospect-level qualification, negated.)
+        "booked_unqualified": f"{_CONN} AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false) "
+                              f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND {_FIRST_BOOKING} "
+                              "AND NOT COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified, false) "
+                              "AND NOT EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
+                              "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
+                              "WHERE c2.dest_number=c.dest_number AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified))",
         # Reference-only drill-downs (NOT counted in the funnel). The sidebar "Rescheduled /
         # confirmed" link uses `already_booked`; the two split views are also available.
         "already_booked": f"{_CONN} AND cl.meeting_booked AND "

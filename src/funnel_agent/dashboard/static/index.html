@@ -535,16 +535,24 @@ async function openStageList(stage,label,bdeOverride){
     try{ const od=await jget(`${base}&stage=${other}&limit=1`); oc=` (${od.count})`; }catch(e){}
     toggle=`<div class="stagetoggle"><span class="drill" onclick="openStageList('${other}','${other.charAt(0).toUpperCase()+other.slice(1)}',${jsq(bde)})">→ view ${other} calls${oc}</span></div>`;
   }
-  // Qualified views ⇄ Disqualified: surface the disqualified count + a reference link
-  // inside the Qualified (and Qualified Booked) drawer, and a back-link from Disqualified.
-  if(stage==='qualified'||stage==='qualified_booked'||stage==='disqualified'){
-    const other = stage==='disqualified' ? 'qualified' : 'disqualified';
+  // Qualified BOOKED drawer: the complement WITHIN bookings is "booked but not qualified"
+  // (Qualified Booked + booked-not-qualified = Meeting Booked) — NOT the lead-level
+  // disqualified, which is measured earlier in the funnel and would not reconcile.
+  if(stage==='qualified_booked'){
+    let oc='';
+    try{ const od=await jget(`${base}&stage=booked_unqualified&limit=1`); oc=` (${od.count})`; }catch(e){}
+    toggle=`<div class="stagetoggle"><span class="muted">Bookings made that did NOT meet qualification (BAPU). Qualified Booked + these = Meeting Booked.</span>
+      <span class="drill" onclick="openStageList('booked_unqualified','Booked but not qualified',${jsq(bde)})">→ view booked-but-not-qualified${oc}</span></div>`;
+  }
+  // Lead-gate Qualified ⇄ Disqualified (a separate, earlier stage: qualified + disqualified = leads).
+  if(stage==='qualified'||stage==='disqualified'){
+    const other = stage==='qualified' ? 'disqualified' : 'qualified';
     const olabel = other==='disqualified' ? 'Disqualified — reached decision-maker, not qualified' : 'Qualified leads';
     let oc='';
     try{ const od=await jget(`${base}&stage=${other}&limit=1`); oc=` (${od.count})`; }catch(e){}
     const note = other==='disqualified'
-      ? 'Disqualified = leads that reached a decision-maker but did NOT pass the qualification gate (BANT/BAPU).'
-      : 'Qualified = leads that passed the qualification gate.';
+      ? 'Disqualified = leads that reached a decision-maker but did NOT pass qualification (BANT/BAPU).'
+      : 'Qualified = leads that passed qualification.';
     toggle=`<div class="stagetoggle"><span class="muted">${note}</span>
       <span class="drill" onclick="openStageList('${other}','${olabel.replace(/'/g,'')}',${jsq(bde)})">→ view ${other}${oc}</span></div>`;
   }
