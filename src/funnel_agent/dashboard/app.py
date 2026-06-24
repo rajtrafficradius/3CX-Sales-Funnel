@@ -100,7 +100,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         via_query_token = bool(ktok) and request.query_params.get("token") == ktok
         via_tv = request.query_params.get("tv") == "1" or path == "/tv"
         kiosk_cookie = request.cookies.get("fa_kiosk")
-        via_cookie = bool(kiosk_cookie) and (kiosk_cookie == ktok or kiosk_cookie == "tv")
+        # The kiosk COOKIE only keeps the TV display's /api/* calls authed. It must NOT
+        # turn the normal dashboard HTML into a read-only kiosk view for someone who once
+        # opened TV mode — that silently hides the Database/Admin links and forces
+        # read-only. HTML page routes require a real login (or an explicit ?tv=1 / kiosk
+        # token); only /api requests accept the bare cookie.
+        via_cookie = (bool(kiosk_cookie) and (kiosk_cookie == ktok or kiosk_cookie == "tv")
+                      and path.startswith("/api"))
         if user is None and (via_query_token or via_tv or via_cookie):
             user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
         request.state.user = user
