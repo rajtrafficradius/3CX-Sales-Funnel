@@ -234,15 +234,40 @@ function digitalMarketingCard(d){
   if(adkw!=null) mset.push(metric(fmtN(adkw),'Google Ads keywords',adkwS));
   if(sm.authority_score!=null) mset.push(metric(sm.authority_score+'/100','Authority','SEMrush'));
   if(sm.backlinks!=null) mset.push(metric(fmtN(sm.backlinks),'Backlinks','SEMrush'));
-  const paid = w.found ? (w.runs_paid_ads
-     ? `<span class="pill yes">🎯 Running paid ads</span> ${(w.paid_ad_platforms||[]).map(esc).join(', ')}`
-     : `<span class="pill neutral">No ad pixels detected on the website</span>`)
-     : `<span class="muted small">Website not scanned yet — run the scan in the Website tab.</span>`;
   return `<div class="card full"><h2>📈 Digital marketing insights</h2>
-    <div style="margin-bottom:10px"><b>Paid ads:</b> ${paid}${w.uses_utm?' · <span class="pill info">Uses UTM tracking</span>':''}</div>
+    ${paidAdsVerdict(d.paid_ads)}
     <div class="subh">SEO &amp; ads</div>
     ${mset.length?`<div class="metrics">${mset.join('')}</div>`:'<div class="muted small">No SEO metrics yet (SEMrush to be added later).</div>'}
     ${m.competitor_relevance?`<div class="small mt6"><b>Competitor relevance:</b> ${esc(m.competitor_relevance)}</div>`:''}
+  </div>`;
+}
+
+// ---- Paid-ads activity: a reasoned verdict combining website tracking codes +
+//      transcript analysis, with the supporting reasons shown (not just a flag). ----
+function paidAdsVerdict(p){
+  if(!p) return '';
+  const V={running:['#16331f','#3fb950','🎯','Running paid ads'],
+           likely:['#33300f','#d4a72c','📈','Likely running paid ads'],
+           not:['#2b2230','#a371f7','🚫','Not running paid ads'],
+           unknown:['#1c2430','#8b949e','❔','Unknown']};
+  const v=V[p.verdict]||V.unknown;
+  const CONF={high:'high confidence',medium:'medium confidence',low:'low confidence'};
+  const SRC={website:'🌐 Website',call:'🗣 Call'};
+  const SIGN={pos:'#3fb950',neg:'#a371f7',weak:'#d4a72c',none:'#8b949e'};
+  const ICON={pos:'✓',neg:'✕',weak:'~',none:'·'};
+  const plat=(p.platforms||[]).length?`<div class="small" style="margin-top:6px">Platforms detected: ${(p.platforms||[]).map(x=>`<span class="pill yes">${esc(x)}</span>`).join(' ')}</div>`:'';
+  const reasons=(p.reasons||[]).map(r=>`<li style="margin:5px 0;list-style:none;padding-left:24px;position:relative">
+      <span style="position:absolute;left:0;color:${SIGN[r.sign]||'#8b949e'};font-weight:700">${ICON[r.sign]||'·'}</span>
+      <span class="muted" style="font-size:11px">${SRC[r.source]||''}</span> ${esc(r.text)}</li>`).join('');
+  return `<div style="border:1px solid ${v[1]}55;background:${v[0]};border-radius:10px;padding:12px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:18px">${v[2]}</span>
+      <b style="color:${v[1]};font-size:15px">${esc(p.label||v[3])}</b>
+      <span class="pill" style="background:${v[1]}22;color:${v[1]};border:1px solid ${v[1]}55">${CONF[p.confidence]||''}</span>
+    </div>
+    ${plat}
+    <div class="small" style="color:#8b949e;margin:8px 0 2px">Why — combining the website tracking-code scan and call analysis:</div>
+    <ul style="margin:0;padding:0">${reasons||'<li class="muted small">No signals yet.</li>'}</ul>
   </div>`;
 }
 

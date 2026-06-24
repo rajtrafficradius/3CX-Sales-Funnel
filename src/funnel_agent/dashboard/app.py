@@ -1133,6 +1133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "cl.budget, cl.authority, cl.problem, cl.urgency, "
         "cl.lead_temperature, cl.pipeline, cl.callback_requested, cl.callback_when, "
         "cl.prospect_company, cl.prospect_website, cl.prospect_industry, "
+        "cl.runs_paid_ads, cl.has_marketing_agency, cl.problem_summary, "
         "cl.evidence, cl.model, "
         "tr.summary AS transcript_summary, tr.sentiment AS transcript_sentiment"
     )
@@ -1153,6 +1154,86 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             m = q("SELECT * FROM prospects WHERE %s = ANY(phones_norm) LIMIT 1", (norm,))
             master = m[0] if m else None
         return master, (master["domain"] if master else None), norm
+
+    # Paid-ad pixels actually placed on a site are remarketing/conversion tags that are
+    # only added when running campaigns; analytics tags (GA4/GTM) just measure traffic.
+    _PAID_TRACKERS = {
+        "google_ads": "Google Ads tag (conversion/remarketing)",
+        "meta_pixel": "Meta/Facebook Pixel", "facebook": "Meta/Facebook Pixel",
+        "facebook_pixel": "Meta/Facebook Pixel", "linkedin": "LinkedIn Insight Tag",
+        "linkedin_insight": "LinkedIn Insight Tag", "tiktok": "TikTok Pixel",
+        "bing_uet": "Microsoft/Bing UET", "twitter": "X/Twitter Pixel",
+        "pinterest": "Pinterest Tag",
+    }
+    _ANALYTICS_TRACKERS = {"ga4": "GA4", "ua": "Universal Analytics", "gtag": "gtag.js",
+                           "gtm": "Google Tag Manager", "hotjar": "Hotjar"}
+
+    def _paid_ads_intel(enr: dict | None, calls: list) -> dict:
+        """A reasoned 'is this prospect running paid ads?' verdict that COMBINES two
+        independent intelligence sources — the free website tracking-code scan and the
+        AI's analysis of what the prospect said on calls — and shows the reasons behind
+        the verdict (not just a yes/no flag)."""
+        w = ((enr or {}).get("website")) or {}
+        reasons: list[dict] = []
+        score = 0
+        platforms: list[str] = []
+        # 1) Website tracking-code signals.
+        trackers = w.get("trackers") or {}
+        if w.get("found"):
+            seen: set[str] = set()
+            for k, lab in _PAID_TRACKERS.items():
+                if k in trackers and lab not in seen:
+                    platforms.append(lab); seen.add(lab)
+            if not platforms:
+                platforms = list(w.get("paid_ad_platforms") or [])
+            if platforms:
+                score += 3
+                for lab in platforms:
+                    reasons.append({"source": "website", "sign": "pos",
+                                    "text": f"{lab} is installed on the website — a remarketing/conversion pixel that's typically only added when paid campaigns are running"})
+            else:
+                ana = [lab for k, lab in _ANALYTICS_TRACKERS.items() if k in trackers]
+                if ana:
+                    reasons.append({"source": "website", "sign": "weak",
+                                    "text": f"Only analytics tags found ({', '.join(ana)}) — measures traffic but is not a paid-ad pixel"})
+                reasons.append({"source": "website", "sign": "neg",
+                                "text": "Website scanned — no Google Ads, Meta, LinkedIn, TikTok or Bing ad pixel detected"})
+                score -= 1
+        else:
+            reasons.append({"source": "website", "sign": "none",
+                            "text": "Website not scanned yet — a free scan reads the homepage for ad pixels"})
+        # 2) Transcription-analysis signals (what the prospect actually said).
+        if any(c.get("runs_paid_ads") for c in calls):
+            score += 2
+            reasons.append({"source": "call", "sign": "pos",
+                            "text": "On a call, the prospect indicated they run paid advertising"})
+        if any(c.get("has_marketing_agency") for c in calls):
+            score += 2
+            reasons.append({"source": "call", "sign": "pos",
+                            "text": "Prospect works with a marketing agency — agencies typically run paid campaigns on their behalf"})
+        if any(c.get("pipeline") == "pipeline2_existing_agency" for c in calls):
+            score += 1
+            reasons.append({"source": "call", "sign": "pos",
+                            "text": "Classified into Pipeline 2 (existing agency) from the conversation"})
+        assessed = [c for c in calls if c.get("runs_paid_ads") is not None]
+        if assessed and not any(c.get("runs_paid_ads") for c in calls) \
+                and not any(c.get("has_marketing_agency") for c in calls):
+            score -= 1
+            reasons.append({"source": "call", "sign": "neg",
+                            "text": "On the call(s) assessed, the prospect did not indicate any paid advertising or agency"})
+        # 3) Combined verdict + confidence.
+        if score >= 3:
+            verdict, label, conf = "running", "Running paid ads", "high"
+        elif score >= 1:
+            verdict, label, conf = "likely", "Likely running paid ads", "medium"
+        elif score <= -2:
+            verdict, label, conf = "not", "Likely NOT running paid ads", "medium"
+        elif score <= -1:
+            verdict, label, conf = "not", "Probably not running paid ads", "low"
+        else:
+            verdict, label, conf = "unknown", "Not enough signal yet", "low"
+        return {"verdict": verdict, "label": label, "confidence": conf,
+                "score": score, "platforms": platforms, "reasons": reasons}
 
     @app.get("/prospect/{key}", response_class=HTMLResponse)
     def prospect_page(key: str) -> str:
@@ -1268,6 +1349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "companies": companies,
             "company_summary": company_summary,
             "rollup": rollup,
+            "paid_ads": _paid_ads_intel(enr, calls),
             "calls": calls,
         }))
 
