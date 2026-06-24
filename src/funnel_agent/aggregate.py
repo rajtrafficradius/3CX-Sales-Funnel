@@ -51,12 +51,20 @@ WITH base AS (
         -- session), regardless of decision-maker / qualification — credit the booking
         -- even if the prospect isn't the decision-maker (e.g. an interested gatekeeper).
         -- EXCLUDES both confirmation-only calls (re-confirming an earlier booking) AND
-        -- reschedules of an already-booked meeting: the booking was already counted on
-        -- the day it was first made, so re-confirming/moving it must NOT count again.
+        -- reschedules of an already-booked meeting. It also counts only the FIRST booking
+        -- per PROSPECT (dest_number): if the same prospect has an earlier booked call, this
+        -- later one is a duplicate/re-touch and must NOT count again — one booking per lead.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.meeting_booked
                    AND NOT COALESCE(cl.meeting_confirmation, false)
-                   AND NOT COALESCE(cl.meeting_rescheduled, false) THEN 1 ELSE 0 END) AS meetings_booked,
+                   AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND NOT EXISTS (
+                         SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
+                         WHERE pc.in_scope AND pc.dest_number = c.dest_number AND pc.started_at < c.started_at
+                           AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
+                           AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND NOT COALESCE(pcl.meeting_rescheduled,false))
+              THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
         -- QUALIFIED. Effective qualification = a BDM/admin OVERRIDE if present (#4b),
         -- else the AI verdict. Qualification is a PROSPECT-level fact: it counts if this
@@ -65,6 +73,12 @@ WITH base AS (
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false)
                    AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND NOT EXISTS (
+                         SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
+                         WHERE pc.in_scope AND pc.dest_number = c.dest_number AND pc.started_at < c.started_at
+                           AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
+                           AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND NOT COALESCE(pcl.meeting_rescheduled,false))
                    AND (COALESCE(qo.qualified, cl.qualified) OR EXISTS (
                          SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
                          LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id

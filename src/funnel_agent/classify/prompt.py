@@ -185,11 +185,24 @@ flags, then APPLY the rule:
   by itself make them qualified (they still need authority + a marketing need/aspiration), and it
   does NOT change pipeline routing.
 
-DO-NOT-CONTACT (set `do_not_contact`): TRUE if the prospect was RUDE / hostile about being
-called, or EXPLICITLY asked to be removed / not contacted again ("take me off your list", "stop
-calling me", "don't call here again", "remove this number"). This auto-activates DND so we stop
-calling them. FALSE for an ordinary "not interested" or "we're happy with our agency" without any
-request to stop — those are normal Pipeline-2 outcomes, not DND.
+DO-NOT-CONTACT (set `do_not_contact`): TRUE if the prospect clearly does NOT want future contact —
+they were RUDE / hostile about being called, asked to be removed / not called again ("take me off
+your list", "stop calling", "remove this number", "lose my number"), OR firmly said they are NOT
+INTERESTED and don't want us to call again. This auto-activates DND so we stop calling them. FALSE
+only for a SOFT / temporary brush-off where a later call is still welcome (e.g. "we're happy with
+our current agency for now", "not the right time", "call me after our contract ends") — those stay
+in Pipeline 2 for a future call. If the prospect signals "don't contact me again" in ANY form, TRUE.
+
+GATEKEEPER HANDLING (for Right-Party-Connect coaching) — only when who_answered is a gatekeeper /
+receptionist / someone who is NOT the decision-maker:
+- gatekeeper_handled_well: TRUE if the BDE handled the gatekeeper well — asked for the decision-maker
+  by name/role, tried to get a direct line or a specific callback time, stayed professional and
+  persistent. FALSE if the BDE gave up easily, didn't ask for the decision-maker, or was deflected
+  without a next step.
+- gatekeeper_notes: briefly note what the gatekeeper asked or required before transferring (e.g.
+  "asked who's calling and what it's about", "said send an email", "owner not in, try after 2pm"),
+  whether they helped or blocked, and ONE thing the BDE could do better to reach the decision-maker.
+  "" when this was not a gatekeeper call.
 
 PIPELINE (set `pipeline`):
 - "pipeline1_interested": the prospect is INTERESTED — engaged positively, agreed to a callback,

@@ -77,10 +77,16 @@ class CallClassification(BaseModel):
     # if never stated. Captured here so Python can apply that rule deterministically.
     runs_paid_ads: bool          # currently runs Google/Meta/any paid advertising
     has_marketing_agency: bool   # currently has an agency/freelancer doing their marketing
-    # DND signal (#5): TRUE if the prospect was RUDE/hostile about being called OR
-    # explicitly asked to be removed / not contacted again ("take me off your list",
-    # "stop calling", "don't call me again"). Drives auto-DND for Pipeline 2.
+    # DND signal: TRUE if the prospect clearly does NOT want future contact — rude/
+    # hostile, asked to be removed/not called again, OR firmly not interested and wants
+    # us to stop. FALSE for a soft "not now / happy with our agency for now" (those stay
+    # in Pipeline 2 for a later call). Drives auto-DND for Pipeline 2.
     do_not_contact: bool
+    # ---- Right-Party-Connect: gatekeeper handling (#5) ----
+    # Only meaningful when who_answered is a gatekeeper/receptionist. Captures how the
+    # call was handled so the AI can coach the BDE toward reaching the decision-maker.
+    gatekeeper_handled_well: bool   # did the BDE handle the gatekeeper well (ask for the DM by name, get a callback time, stay professional)?
+    gatekeeper_notes: str           # what the gatekeeper asked / info they requested / helped vs blocked + what the BDE could do better; "" if not a gatekeeper call
     # The SPECIFIC digital-marketing problem in the prospect's OWN words ("" if none stated
     # by the prospect). Do NOT fill this from the BDE's pitch claims — only the prospect's.
     problem_summary: str

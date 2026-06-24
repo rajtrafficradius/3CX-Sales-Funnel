@@ -531,9 +531,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"count(*) FILTER (WHERE c.answered) AS answered, "
             f"bool_or({conn} AND cl.rpc_connect) AS ever_rpc, "
             f"bool_or(cl.call_outcome='gatekeeper' OR cl.evidence->>'who_answered' ILIKE '%%gatekeeper%%') AS hit_gatekeeper, "
+            "bool_or(COALESCE(cl.gatekeeper_handled_well,false)) AS gk_handled_well, "
             "max(c.started_at) AS last_attempt, "
             "(array_agg(COALESCE(c.bde_name,c.bde_extension) ORDER BY c.started_at DESC))[1] AS last_bde, "
             "(array_remove(array_agg(NULLIF(cl.prospect_company,'') ORDER BY c.started_at DESC), NULL))[1] AS business_name, "
+            "(array_remove(array_agg(NULLIF(cl.gatekeeper_notes,'') ORDER BY c.started_at DESC), NULL))[1] AS gatekeeper_notes, "
             "(array_remove(array_agg(NULLIF(cl.callback_when,'') ORDER BY c.started_at DESC), NULL))[1] AS callback_when "
             "FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id "
             f"WHERE c.in_scope AND c.dest_number IS NOT NULL AND c.dest_number<>'' {bde_filter} "
@@ -557,11 +559,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else:
                 action, urg = "Keep trying — vary the call time until you reach the decision-maker", "med"
             r["last_attempt"] = str(r["last_attempt"]) if r.get("last_attempt") else None
-            out.append({**r, "required_action": action, "urgency": urg})
-        summary = {"open": len(out),
-                   "mobile_double_tap": sum(1 for x in out if "Double-tap" in x["required_action"]),
-                   "needs_sms_vm": sum(1 for x in out if "text" in x["required_action"]),
-                   "gatekeeper": sum(1 for x in out if x["hit_gatekeeper"])}
+            # BDE compliance: a mobile that went unanswered should have had a 2nd attempt.
+            double_tap_done = ch == "mobile" and att >= 2
+            mobile_missed = ch == "mobile" and ans == 0
+            out.append({**r, "required_action": action, "urgency": urg,
+                        "double_tap_done": double_tap_done, "mobile_missed": mobile_missed})
+        # Compliance: of mobile-missed numbers, how many got the required 2nd attempt.
+        mobile_missed_total = sum(1 for x in out if x["mobile_missed"])
+        complied = sum(1 for x in out if x["mobile_missed"] and x["double_tap_done"])
+        summary = {
+            "open": len(out),
+            "mobile_double_tap_needed": sum(1 for x in out if "Double-tap" in x["required_action"]),
+            "needs_sms_vm": sum(1 for x in out if "text" in x["required_action"]),
+            "gatekeeper_blocked": sum(1 for x in out if x["hit_gatekeeper"]),
+            "gatekeeper_mishandled": sum(1 for x in out if x["hit_gatekeeper"] and not x["gk_handled_well"]),
+            "double_tap_compliance_pct": (round(100 * complied / mobile_missed_total) if mobile_missed_total else None),
+        }
         return JSONResponse(jsonable_encoder({"summary": summary, "rows": out}))
 
     @app.get("/api/coaching")
@@ -670,7 +683,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    f"WHEN right({digits},9) ~ '^4' THEN 'mobile' ELSE 'landline' END")
         booked = ("c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail' "
                   "AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation,false) "
-                  "AND NOT COALESCE(cl.meeting_rescheduled,false)")
+                  "AND NOT COALESCE(cl.meeting_rescheduled,false) "
+                  "AND NOT EXISTS (SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id=pc.call_id "
+                  "WHERE pc.in_scope AND pc.dest_number=c.dest_number AND pc.started_at<c.started_at "
+                  "AND pc.answered AND pc.talk_seconds>=%(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
+                  "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) AND NOT COALESCE(pcl.meeting_rescheduled,false))")
         conn = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail'"
         rows = q(
             f"SELECT COALESCE(c.bde_name,c.bde_extension) AS bde, {channel} AS channel, "
@@ -864,6 +881,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Stage filters mirror the STRICTLY-NESTED aggregation so drill-down counts
     # equal the funnel counts: Connected = answered + real talk + NOT a voicemail.
     _CONN = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'"
+    # A booking counts once per PROSPECT — only the FIRST booked call to a number; a later
+    # booked call to the same prospect is a duplicate/re-touch (don't double-count the lead).
+    _FIRST_BOOKING = ("NOT EXISTS (SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id=pc.call_id "
+                      "WHERE pc.in_scope AND pc.dest_number=c.dest_number AND pc.started_at < c.started_at "
+                      "AND pc.answered AND pc.talk_seconds >= %(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
+                      "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) "
+                      "AND NOT COALESCE(pcl.meeting_rescheduled,false))")
     _STAGE_COND = {
         "calls_made": "TRUE",
         "connected": _CONN,
@@ -871,15 +895,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "rpc_connect": f"{_CONN} AND cl.rpc_connect",
         "full_pitch": f"{_CONN} AND cl.rpc_connect AND cl.full_pitch",
         # Meeting Booked = ANY genuinely NEW booking the BDE made (no decision-maker/
-        # qualified gate). EXCLUDES confirmation-only AND reschedules of an already-booked
-        # meeting — those were counted on the day first booked, so don't re-count.
+        # qualified gate). EXCLUDES confirmation-only, reschedules, AND duplicate bookings
+        # of the same prospect (only the first booked call per number counts).
         "meetings_booked": f"{_CONN} AND cl.meeting_booked "
                            "AND NOT COALESCE(cl.meeting_confirmation, false) "
-                           "AND NOT COALESCE(cl.meeting_rescheduled, false)",
+                           "AND NOT COALESCE(cl.meeting_rescheduled, false) "
+                           f"AND {_FIRST_BOOKING}",
         # Qualified Booked = strict subset (also qualified, BAPU). Qualification is a
         # PROSPECT-level fact: this call qualified OR any in-scope call to the same number.
         "qualified_booked": f"{_CONN} AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false) "
-                            "AND NOT COALESCE(cl.meeting_rescheduled, false) "
+                            f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND {_FIRST_BOOKING} "
                             "AND (COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified) "
                             "OR EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
                             "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "

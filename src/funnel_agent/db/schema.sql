@@ -108,6 +108,8 @@ ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prospect_contact_name text;
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prospect_mobile text;
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prospect_email text;
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS do_not_contact boolean;  -- rude / asked to be removed (#5)
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS gatekeeper_handled_well boolean;  -- RPC gatekeeper handling (#5)
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS gatekeeper_notes text;
 CREATE INDEX IF NOT EXISTS idx_class_website ON classifications (prospect_website);
 
 -- WhatsApp nurturing queue (#13). One row per scheduled message in the meeting-

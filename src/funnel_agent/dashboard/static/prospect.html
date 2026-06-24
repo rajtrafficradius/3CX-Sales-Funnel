@@ -202,8 +202,26 @@ async function addWebsite(){
 }
 
 // Merge master-DB SEO metrics with live enrichment (enrichment wins; master fills gaps).
-function marketingCard(d){
-  const m=d.master||{}, e=d.enrichment||{}, sm=(e&&e.semrush)||{}, ap=(e&&e.apollo)||{};
+// ---- Apollo free data (company firmographics) ----
+function apolloCard(d){
+  const ap=((d.enrichment||{}).apollo)||{};
+  const rev=ap.annual_revenue_printed||(ap.annual_revenue?'$'+fmtN(ap.annual_revenue):null);
+  const loc=[ap.city,ap.state,ap.country].filter(Boolean).join(', ');
+  const aRows=[['Company',esc(ap.name)],['Industry',esc(ap.industry)],['Est. revenue',rev?esc(rev):null],
+    ['Employees',ap.employees!=null?fmtN(ap.employees):null],['Founded',ap.founded_year],
+    ['HQ',esc(loc)],['Phone',esc(ap.phone)],['LinkedIn',ap.linkedin_url?`<a class="lnk" href="${esc(ap.linkedin_url)}" target="_blank">profile ↗</a>`:null]]
+    .filter(r=>r[1]!=null&&r[1]!=='');
+  const aHtml=aRows.length?`<div class="kv">${aRows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`
+    :'<div class="muted small">No Apollo company data fetched for this domain yet (free org-enrich).</div>';
+  const tech=(ap.technologies||[]).slice(0,18);
+  const techHtml=tech.length?`<div class="subh">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
+  const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
+  return `<div class="card full"><h2>🏢 Apollo free data</h2>${aHtml}${descr}${techHtml}</div>`;
+}
+
+// ---- Digital marketing insights (SEO/ads + paid-ads status) ----
+function digitalMarketingCard(d){
+  const m=d.master||{}, e=d.enrichment||{}, sm=(e&&e.semrush)||{}, w=(e&&e.website)||{};
   const pick=(en,ma)=>{ if(en!=null&&en!=='') return [en,'SEMrush']; if(ma!=null&&ma!=='') return [ma,'Master DB']; return [null,null]; };
   const [otraf,otrafS]=pick(sm.organic_traffic,m.organic_traffic);
   const [okw,okwS]=pick(sm.organic_keywords,m.organic_keywords);
@@ -214,33 +232,17 @@ function marketingCard(d){
   if(okw!=null) mset.push(metric(fmtN(okw),'Organic keywords',okwS));
   if(ocost!=null) mset.push(metric('$'+fmtN(ocost),'Traffic value /mo',ocostS));
   if(adkw!=null) mset.push(metric(fmtN(adkw),'Google Ads keywords',adkwS));
-  if(sm.authority_score!=null) mset.push(metric(sm.authority_score+'/100','Authority score','SEMrush'));
+  if(sm.authority_score!=null) mset.push(metric(sm.authority_score+'/100','Authority','SEMrush'));
   if(sm.backlinks!=null) mset.push(metric(fmtN(sm.backlinks),'Backlinks','SEMrush'));
-  if(sm.referring_domains!=null) mset.push(metric(fmtN(sm.referring_domains),'Referring domains','SEMrush'));
-  if(m.competitor_relevance!=null&&m.competitor_relevance!=='') mset.push(metric(esc(m.competitor_relevance),'Competitor relevance','Master DB'));
-
-  // Apollo (free company data)
-  const rev=ap.annual_revenue_printed||(ap.annual_revenue?'$'+fmtN(ap.annual_revenue):null);
-  const ocostForRev = sm.organic_cost ?? m.organic_cost;
-  const revEst = (!rev && ocostForRev) ? '≈ $'+fmtN(ocostForRev*12)+' /yr (est. from SEO value)' : null;
-  const loc=[ap.city,ap.state,ap.country].filter(Boolean).join(', ');
-  const aRows=[['Industry',esc(ap.industry)],['Est. revenue',rev?esc(rev):(revEst?`<span class="muted">${esc(revEst)}</span>`:null)],
-    ['Employees',ap.employees!=null?fmtN(ap.employees):null],['Founded',ap.founded_year],
-    ['HQ',esc(loc)],['Phone',esc(ap.phone)],['LinkedIn',ap.linkedin_url?`<a class="lnk" href="${esc(ap.linkedin_url)}" target="_blank">profile ↗</a>`:null]]
-    .filter(r=>r[1]!=null&&r[1]!=='');
-  const aHtml=aRows.length?`<div class="kv">${aRows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`:'<div class="muted small">Apollo company data not fetched yet.</div>';
-  const tech=(ap.technologies||[]).slice(0,14);
-  const techHtml=tech.length?`<div class="subh">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
-  const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
-  const freshness = !d.domain
-    ? `<div class="muted small mt6">⚠ No website on file — add it in <b>Business &amp; contacts</b> to fetch SEO, ads, company &amp; revenue.</div>`
-    : (e&&e.fetched_at?`<div class="muted small mt6">Enrichment fetched ${fmtDate(e.fetched_at)} · status ${esc(e.status)||'—'}</div>`
-    : `<div class="muted small mt6">Showing master-DB metrics. Live SEMrush/Apollo enrichment not run for this domain yet.</div>`);
-  return `<div class="card"><h2>Marketing intelligence</h2>
-    <div class="subh" style="margin-top:0">📈 SEO &amp; ads</div>
-    ${mset.length?`<div class="metrics">${mset.join('')}</div>`:'<div class="muted small">No SEO metrics available.</div>'}
-    <div class="subh">🏢 Company — Apollo (free data)</div>${aHtml}${descr}${techHtml}
-    ${freshness}
+  const paid = w.found ? (w.runs_paid_ads
+     ? `<span class="pill yes">🎯 Running paid ads</span> ${(w.paid_ad_platforms||[]).map(esc).join(', ')}`
+     : `<span class="pill neutral">No ad pixels detected on the website</span>`)
+     : `<span class="muted small">Website not scanned yet — run the scan in the Website tab.</span>`;
+  return `<div class="card full"><h2>📈 Digital marketing insights</h2>
+    <div style="margin-bottom:10px"><b>Paid ads:</b> ${paid}${w.uses_utm?' · <span class="pill info">Uses UTM tracking</span>':''}</div>
+    <div class="subh">SEO &amp; ads</div>
+    ${mset.length?`<div class="metrics">${mset.join('')}</div>`:'<div class="muted small">No SEO metrics yet (SEMrush to be added later).</div>'}
+    ${m.competitor_relevance?`<div class="small mt6"><b>Competitor relevance:</b> ${esc(m.competitor_relevance)}</div>`:''}
   </div>`;
 }
 
@@ -280,34 +282,40 @@ function businessDataCard(d){
 }
 
 // ---- Digital marketing: website tracking pixels + paid-ads detection (FREE) ----
-function websiteCard(d){
+// ---- Website information (scrape metadata, emails, socials) ----
+function websiteInfoCard(d){
   const w=(d.enrichment&&d.enrichment.website)||null;
-  const btn=`<button class="primary" id="ewBtn" ${d.domain?'':'disabled title="no website on file"'}>🌐 Enrich website now (free)</button>`;
+  const btn=`<button class="primary" id="ewBtn" ${d.domain?'':'disabled title="no website on file"'}>🌐 Scan website now (free)</button>`;
   if(!w||!w.found){
-    return `<div class="card"><h2>Digital marketing — website &amp; tracking</h2>
-      <div class="muted small">No website scan yet${d.domain?' for '+esc(d.domain):''}. This is a FREE scan: detects Google Tag Manager, GA4, Google Ads, Meta Pixel, LinkedIn, TikTok &amp; more to confirm paid-ads activity, and pulls emails/socials.</div>
-      <div class="addphone">${btn}</div></div>`;
+    return `<div class="card full"><h2>🌐 Website information</h2>
+      <div class="muted small">No website scan yet${d.domain?' for '+esc(d.domain):''}. A FREE scan reads the homepage for emails, socials and tracking codes.</div>
+      <div class="addphone" style="margin-top:10px">${btn}</div></div>`;
   }
-  const trk=Object.values(w.trackers||{});
-  const ads=w.paid_ad_platforms||[];
-  const adsBadge = w.runs_paid_ads
-    ? `<span class="pill yes">✓ Running paid ads</span>`
-    : `<span class="pill neutral">No ad pixels detected</span>`;
-  const trkHtml = trk.length
-    ? trk.map(t=>{const isAd=ads.includes(t);return `<span class="trk ${isAd?'ads':'tk'}">${isAd?'🎯':'📊'} ${esc(t)}</span>`;}).join('')
-    : '<span class="muted small">No tracking tags found in the homepage source.</span>';
-  const emails=(w.emails||[]).slice(0,6).map(e=>`<a class="lnk" href="mailto:${esc(e)}">${esc(e)}</a>`).join(' · ');
+  const emails=(w.emails||[]).slice(0,8).map(e=>`<a class="lnk" href="mailto:${esc(e)}">${esc(e)}</a>`).join(' · ');
   const socials=Object.entries(w.socials||{}).map(([k,u])=>`<a class="lnk" href="${esc(u)}" target="_blank">${esc(k)} ↗</a>`).join(' · ');
-  return `<div class="card"><h2>Digital marketing — website &amp; tracking</h2>
-    <div style="margin-bottom:8px">${adsBadge}${w.uses_utm?' <span class="pill info">Uses UTM tracking</span>':''}</div>
-    <div class="subh" style="margin-top:4px">Tracking / pixels detected</div>
-    <div>${trkHtml}</div>
-    ${ads.length?`<div class="small mt6"><b>Paid-ads signals:</b> ${ads.map(esc).join(', ')}</div>`:''}
-    ${emails?`<div class="small mt6"><b>Emails:</b> ${emails}</div>`:''}
-    ${socials?`<div class="small mt6"><b>Socials:</b> ${socials}</div>`:''}
-    <div class="muted small mt6">Scanned ${fmtDate(d.enrichment.fetched_at)} · <a class="lnk" href="https://${esc(d.domain)}" target="_blank">${esc(d.domain)} ↗</a></div>
-    <div class="addphone" style="margin-top:10px">${btn}</div>
-  </div>`;
+  const rows=[['Website',d.domain?`<a class="lnk" href="https://${esc(d.domain)}" target="_blank">${esc(d.domain)} ↗</a>`:'—'],
+    ['Final URL',w.final_url?esc(w.final_url):null],['HTTP status',w.http_status],
+    ['Emails',emails||null],['Socials',socials||null],['Scanned',fmtDate(d.enrichment.fetched_at)]]
+    .filter(r=>r[1]!=null&&r[1]!=='');
+  return `<div class="card full"><h2>🌐 Website information</h2>
+    <div class="kv">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>
+    <div class="addphone" style="margin-top:10px">${btn}</div></div>`;
+}
+
+// ---- Tracking codes available (GTM/GA4/Meta/etc. + paid-ads confirmation) ----
+function trackingCodesCard(d){
+  const w=(d.enrichment&&d.enrichment.website)||null;
+  if(!w||!w.found) return `<div class="card full"><h2>🎯 Tracking codes available</h2>
+    <div class="muted small">No website scan yet — run the scan in the Website information tab to detect GTM/GA4/Google Ads/Meta Pixel/etc.</div></div>`;
+  const trk=Object.entries(w.trackers||{}), ids=w.tracker_ids||{}, ads=w.paid_ad_platforms||[];
+  const adsBadge=w.runs_paid_ads?'<span class="pill yes">🎯 Running paid ads</span>':'<span class="pill neutral">No ad pixels detected</span>';
+  const list=trk.length?trk.map(([k,label])=>{const isAd=ads.includes(label);const id=ids[k]?` <span class="muted">(${esc(ids[k])})</span>`:'';
+     return `<div class="trk ${isAd?'ads':'tk'}" style="display:inline-block;margin:4px 6px 0 0">${isAd?'🎯':'📊'} ${esc(label)}${id}</div>`;}).join('')
+     :'<div class="muted small">No tracking tags found in the homepage source.</div>';
+  return `<div class="card full"><h2>🎯 Tracking codes available</h2>
+    <div style="margin-bottom:10px">${adsBadge}${w.uses_utm?' <span class="pill info">UTM tracking in use</span>':''}</div>
+    <div>${list}</div>
+    ${ads.length?`<div class="small mt6"><b>Paid-ads platforms detected:</b> ${ads.map(esc).join(', ')}</div>`:''}</div>`;
 }
 async function enrichWebsite(){
   const btn=document.getElementById('ewBtn'); if(!btn)return; btn.disabled=true; btn.textContent='Scanning…';
@@ -381,12 +389,14 @@ async function load(){
   catch(e){ document.getElementById('main').innerHTML='<div class="card full">Could not load prospect ('+esc(e.message)+')</div>'; return; }
   if(!d.found){ document.getElementById('main').innerHTML='<div class="card full">No prospect or calls found for <b>'+esc(KEY)+'</b>.</div>'; return; }
   document.querySelector('header h1').textContent = (d.master&&d.master.business_name)||d.domain||KEY;
-  // Tabbed layout: Overview | Business data | Digital marketing | Calls
+  // The 6 sections exactly as requested.
   const tabs=[
-    ['overview','Overview', contactsCard(d)],
-    ['business','Business data', businessDataCard(d)],
-    ['digital','Digital marketing', websiteCard(d)+marketingCard(d)],
-    ['calls','Calls ('+((d.calls||[]).length)+')', timelineCard(d)],
+    ['uploaded','Uploaded database info', businessDataCard(d)+contactsCard(d)],
+    ['apollo','Apollo free data', apolloCard(d)],
+    ['website','Website information', websiteInfoCard(d)],
+    ['digital','Digital marketing insights', digitalMarketingCard(d)],
+    ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],
+    ['tracking','Tracking codes available', trackingCodesCard(d)],
   ];
   document.getElementById('main').innerHTML =
     heroCard(d)
