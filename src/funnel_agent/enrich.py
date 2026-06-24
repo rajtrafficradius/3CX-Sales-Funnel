@@ -23,6 +23,81 @@ from .logging import get_logger
 log = get_logger(__name__)
 
 
+# --------------------------------------------------------------------------- #
+# FREE website tracking-pixel detection — BULK across the whole database.
+# No paid API: fetches each domain's homepage and detects GTM/GA4/Google Ads/Meta
+# Pixel/etc. to flag paid-ads activity. Runs for ALL domains (called prospects first,
+# then the wider companies DB), progressively via the refresh loop. The per-prospect
+# "Enrich website now" button is just an on-demand extra; this is the bulk coverage.
+# --------------------------------------------------------------------------- #
+def _pending_website_domains(pool: ConnectionPool, limit: int) -> list[str]:
+    """Domains with no website scan yet — called prospects (prio 0) before the wider
+    companies universe (prio 1), so relevant prospects get paid-ads signals first."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.domain FROM (
+              SELECT domain, min(prio) AS prio FROM (
+                SELECT domain, 0 AS prio FROM prospects  WHERE domain IS NOT NULL AND domain <> ''
+                UNION ALL
+                SELECT domain, 1 AS prio FROM companies  WHERE domain IS NOT NULL AND domain <> ''
+              ) u GROUP BY domain
+            ) d
+            LEFT JOIN enrichment e ON e.domain = d.domain
+            WHERE e.domain IS NULL OR e.website IS NULL
+            ORDER BY d.prio, d.domain
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return [r["domain"] for r in cur.fetchall()]
+
+
+def enrich_websites(pool: ConnectionPool, limit: int = 200, workers: int = 8) -> dict:
+    """Scan up to `limit` not-yet-scanned domains for tracking pixels (FREE). Idempotent:
+    re-running only picks up domains still missing website intel. Returns stats."""
+    from .enrichment.website import fetch_website_intel
+
+    domains = _pending_website_domains(pool, limit)
+    if not domains:
+        return {"scanned": 0, "runs_paid_ads": 0, "errors": 0, "remaining": 0}
+
+    def work(domain: str) -> dict:
+        intel = fetch_website_intel(domain)
+        status = "ok" if intel.get("found") else (intel.get("status") or "error")
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO enrichment (domain, website, status, fetched_at) VALUES (%s,%s,%s,now()) "
+                "ON CONFLICT (domain) DO UPDATE SET website = EXCLUDED.website, "
+                "  status = COALESCE(enrichment.status, EXCLUDED.status), fetched_at = now()",
+                (domain, Json(intel), status),
+            )
+            conn.commit()
+        return intel
+
+    scanned = runs = errors = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for intel in ex.map(work, domains):
+            scanned += 1
+            if intel.get("found"):
+                runs += 1 if intel.get("runs_paid_ads") else 0
+            else:
+                errors += 1
+    # how many still pending after this batch (for progress visibility)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM ("
+            "  SELECT DISTINCT domain FROM ("
+            "    SELECT domain FROM prospects WHERE domain IS NOT NULL AND domain<>'' "
+            "    UNION ALL SELECT domain FROM companies WHERE domain IS NOT NULL AND domain<>'') u) d "
+            "LEFT JOIN enrichment e ON e.domain=d.domain WHERE e.domain IS NULL OR e.website IS NULL"
+        )
+        remaining = cur.fetchone()["n"]
+    stats = {"scanned": scanned, "runs_paid_ads": runs, "errors": errors, "remaining": remaining}
+    log.info("enrich_websites", **stats)
+    return stats
+
+
 def _pending_domains(pool: ConnectionPool, day: date, refresh_days: int,
                      limit: int | None = None) -> list[str]:
     start = datetime.combine(day, time.min)

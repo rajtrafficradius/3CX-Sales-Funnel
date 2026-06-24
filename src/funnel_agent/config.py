@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     # contract-end signal from the AI still overrides this per-prospect (don't pester
     # someone locked into a long contract). Env: PIPELINE2_DEFAULT_CADENCE_DAYS.
     pipeline2_default_cadence_days: int = 7
+    # FREE website tracking-pixel scan: how many domains to scan each refresh cycle so
+    # the whole DB gets paid-ads detection progressively (0 disables the in-loop scan).
+    website_scan_per_cycle: int = 80
+    website_scan_workers: int = 8
 
     # --- Roster in-scope rule ---
     # PRIMARY rule (preferred): BDE names. BDEs keep one stable name but rotate across

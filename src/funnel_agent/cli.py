@@ -204,6 +204,25 @@ def load_companies(
     typer.echo(f"load-companies: {stats}")
 
 
+@app.command(name="enrich-websites")
+def enrich_websites_cmd(
+    limit: int = typer.Option(500, help="how many not-yet-scanned domains to scan this run"),
+    workers: int = typer.Option(8, help="parallel website fetches"),
+    all_: bool = typer.Option(False, "--all", help="keep scanning in batches until none remain"),
+) -> None:
+    """FREE tracking-pixel scan (GTM/GA4/Google Ads/Meta/etc.) across ALL domains to flag
+    paid-ads activity. Idempotent; safe to re-run. Runs automatically in the refresh loop too."""
+    settings = _settings()
+    from .enrich import enrich_websites
+
+    with _analytics_pool(settings) as pool:
+        while True:
+            stats = enrich_websites(pool, limit=limit, workers=workers)
+            typer.echo(f"enrich-websites: {stats}")
+            if not all_ or stats["scanned"] == 0 or stats["remaining"] == 0:
+                break
+
+
 @app.command(name="whatsapp")
 def whatsapp_run() -> None:
     """Schedule WhatsApp nurturing for new bookings + send any due messages (#13).
@@ -500,12 +519,18 @@ def refresh(
         # AI-extracted business name/website), then keep Pipeline-2 assignments current.
         cap = capture_called_prospects(ana)
         p2 = sync_pipeline2(ana, default_cadence_days=settings.pipeline2_default_cadence_days)
+        # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
+        ws = {"scanned": 0}
+        if settings.website_scan_per_cycle > 0:
+            from .enrich import enrich_websites
+            ws = enrich_websites(ana, limit=settings.website_scan_per_cycle,
+                                 workers=settings.website_scan_workers)
         # WhatsApp nurturing: schedule sequences for new bookings + send due messages
         # (dry-run until WHATSAPP_ENABLED + credentials are configured).
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whatsapp: {wa}")
 
 
 @app.command()
