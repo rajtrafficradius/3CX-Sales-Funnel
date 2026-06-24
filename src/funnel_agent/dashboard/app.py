@@ -626,11 +626,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  "AND c.started_at >= %(s)s::date AND c.started_at < (%(e)s::date + 1) "
                  "AND COALESCE((o.obj->>'handled')::boolean, false) = false "
                  "GROUP BY 1 ORDER BY n DESC LIMIT 8", p)
+        # ---- Feedback intelligence: period-over-period funnel + a generated narrative
+        # (what changed, why, and the next action) — #6. ----
+        cur_t = _sums_by_track(bde, start, end).get("combined") or {}
+        ps, pe = _prev_window(start, end)
+        prev_t = _sums_by_track(bde, ps, pe).get("combined") or {}
+        def cv(t, n, d): return _pct(int(t.get(n) or 0), int(t.get(d) or 0))
+        funnel = {
+            "connect": [cv(cur_t, "connected", "calls_made"), cv(prev_t, "connected", "calls_made")],
+            "rpc": [cv(cur_t, "rpc_connect", "connected"), cv(prev_t, "rpc_connect", "connected")],
+            "pitch": [cv(cur_t, "full_pitch", "rpc_connect"), cv(prev_t, "full_pitch", "rpc_connect")],
+            "booked": [cv(cur_t, "meetings_booked", "full_pitch"), cv(prev_t, "meetings_booked", "full_pitch")],
+        }
+        insights = []
+        STAGE_LABEL = {"connect": "Connect rate", "rpc": "Right-Party-Contact rate",
+                       "pitch": "Pitch rate", "booked": "Booking rate"}
+        STAGE_FIX = {"connect": "vary call times and double-tap missed mobiles",
+                     "rpc": "improve gatekeeper handling — ask for the decision-maker by name",
+                     "pitch": "complete the full pitch every time you reach a decision-maker",
+                     "booked": "always ask for the meeting and handle the final objection"}
+        for k in ("connect", "rpc", "pitch", "booked"):
+            now_v, prev_v = funnel[k]
+            if now_v is None or prev_v is None:
+                continue
+            delta = round(now_v - prev_v, 1)
+            if delta <= -5:
+                insights.append({"kind": "down", "text": f"{STAGE_LABEL[k]} dropped {abs(delta)} pts vs the previous period ({prev_v}% → {now_v}%). Fix: {STAGE_FIX[k]}."})
+            elif delta >= 5:
+                insights.append({"kind": "up", "text": f"{STAGE_LABEL[k]} improved {delta} pts vs the previous period ({prev_v}% → {now_v}%). Keep doing what changed here."})
+        # Winning behaviours: biggest booked-vs-not gap → replicate it.
+        gaps = []
+        for k in dims:
+            w_ = won.get(k); l_ = lost.get(k)
+            if w_ is not None and l_ is not None:
+                gaps.append((k, round(float(w_) - float(l_), 1)))
+        gaps.sort(key=lambda x: x[1], reverse=True)
+        if gaps and gaps[0][1] >= 1:
+            g = gaps[0]
+            insights.append({"kind": "tip", "text": f"On calls you booked, your {g[0].replace('_',' ')} scored {g[1]} pts higher than on calls you didn't — replicate that on every pitch."})
+        # Weakest skill overall.
+        weak = sorted([(k, ov.get(k)) for k in dims if ov.get(k) is not None], key=lambda x: float(x[1]))
+        if weak and float(weak[0][1]) < 2.5:
+            insights.append({"kind": "down", "text": f"Weakest skill this period: {weak[0][0].replace('_',' ')} ({weak[0][1]}/5) — focus coaching here."})
+        if objs:
+            insights.append({"kind": "tip", "text": f"Most common unhandled objection: “{objs[0]['objection']}” (×{objs[0]['n']}) — prepare a confident response."})
         return JSONResponse(jsonable_encoder({
             "bde": bde, "window": {"start": start, "end": end},
             "overall": ov, "booked": won, "not_booked": lost,
             "trend": {"recent": recent[0] if recent else {}, "earlier": earlier[0] if earlier else {}},
-            "dims": dims,
+            "dims": dims, "funnel": funnel, "prev_window": {"start": ps, "end": pe}, "insights": insights,
             "recurring_tips": [t for t in tips if t["tip"]],
             "unhandled_objections": [o for o in objs if o["objection"]],
         }))
