@@ -1369,7 +1369,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))
           FROM companies co WHERE co.domain IS NULL {sn}
         ), ge AS (
-          SELECT g.*, (e.status IS NOT NULL) AS enriched FROM g LEFT JOIN enrichment e ON e.domain = g.domain
+          SELECT g.*, (e.status IS NOT NULL) AS enriched,
+                 (e.website IS NOT NULL) AS scanned,
+                 ((e.website->>'runs_paid_ads') = 'true') AS runs_paid_ads
+          FROM g LEFT JOIN enrichment e ON e.domain = g.domain
         )
         """
         total = q(cte + f"SELECT count(*) AS n FROM ge {enr_filter}", params)[0]["n"]

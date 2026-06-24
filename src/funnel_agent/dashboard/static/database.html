@@ -64,10 +64,11 @@
       <option value="yes">Enriched</option>
       <option value="no">Not enriched</option>
     </select>
-    <select id="pipeline">
-      <option value="">All pipelines</option>
-      <option value="pipeline1_interested">Pipeline 1 · Interested</option>
-      <option value="pipeline2_existing_agency">Pipeline 2 · Has agency</option>
+    <select id="paidAds">
+      <option value="">All (paid ads)</option>
+      <option value="yes">🎯 Running paid ads</option>
+      <option value="no">No ad pixels</option>
+      <option value="unscanned">Not scanned yet</option>
     </select>
   </div>
   <div class="tablewrap">
@@ -75,9 +76,9 @@
       <thead><tr>
         <th>Business</th><th>Website</th><th>Industry</th><th>Location</th>
         <th class="num">Businesses</th><th class="num">Total revenue</th><th class="num">Employees</th>
-        <th class="num">Contacts</th><th>Phone</th><th>Enriched</th>
+        <th class="num">Contacts</th><th>Phone</th><th>Paid ads</th><th>Enriched</th>
       </tr></thead>
-      <tbody id="rows"><tr><td colspan="10" class="muted">Loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="11" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
   <div class="pager">
@@ -112,6 +113,11 @@ function fmtRev(m){
   if(v>=1) return '$'+v.toLocaleString(undefined,{maximumFractionDigits:1})+'M';
   return '$'+(v*1000).toLocaleString(undefined,{maximumFractionDigits:0})+'K';
 }
+function paidAdsCell(r){
+  if(r.runs_paid_ads) return '<span class="pill" style="background:rgba(239,68,68,.16);color:#fca5a5">🎯 Yes</span>';
+  if(r.scanned) return '<span class="muted">No</span>';
+  return '<span class="muted" title="website not scanned yet">·</span>';
+}
 function rowHtml(r){
   const enr = r.enriched?'<span class="pill ok">enriched</span>':'<span class="pill none">—</span>';
   const multi = r.businesses>1?` <span class="muted" style="font-size:11px">+${r.businesses-1} more</span>`:'';
@@ -128,16 +134,17 @@ function rowHtml(r){
     <td class="num">${fmtN(r.employees)}</td>
     <td class="num">${fmtN(r.contacts)}</td>
     <td>${esc(r.phone||'—')}</td>
+    <td>${paidAdsCell(r)}</td>
     <td>${enr}</td>
   </tr>`;
 }
 
 async function loadRows(flash){
-  const q=$('#search').value.trim(), en=$('#enriched').value, pl=$('#pipeline').value;
-  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&pipeline=${pl}&limit=${limit}&offset=${offset}`;
+  const q=$('#search').value.trim(), en=$('#enriched').value, pa=$('#paidAds').value;
+  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&paid_ads=${pa}&limit=${limit}&offset=${offset}`;
   let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
   total=d.total;
-  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="10" class="muted">No matching businesses.</td></tr>';
+  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="11" class="muted">No matching businesses.</td></tr>';
   if(flash) $('#rows').classList.add('flash'), setTimeout(()=>$('#rows').classList.remove('flash'),1200);
   const from = total?offset+1:0, to=Math.min(offset+limit,total);
   $('#rangeText').textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`;
@@ -147,7 +154,7 @@ async function loadRows(flash){
 let searchTimer;
 $('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();},250); });
 $('#enriched').onchange=()=>{offset=0;loadRows();};
-$('#pipeline').onchange=()=>{offset=0;loadRows();};
+$('#paidAds').onchange=()=>{offset=0;loadRows();};
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };
 
