@@ -155,7 +155,11 @@
   html.tv main{position:absolute;top:0;left:0;width:1920px;max-width:none;margin:0;padding:20px;
     display:flex;flex-direction:column;gap:16px;transform-origin:top left}
   html.tv main>div{margin-top:0!important}
-  html.tv #funnelChart{height:230px}
+  /* Funnel + Stages sit side by side; the grid stretches both cards to the same
+     (taller) height. Make the funnel card a flex column and let the chart FILL the
+     remaining height so there's no empty space below the funnel. */
+  html.tv .grid.cols-2>.card{display:flex;flex-direction:column;min-height:0}
+  html.tv #funnelChart{flex:1;height:auto;min-height:240px}
   html.tv .kpi .v{font-size:60px}
   html.tv .kpi .l{font-size:21px}
   html.tv .kpi .sub{font-size:14px}
@@ -391,7 +395,8 @@ async function refresh(){
   jget(`/api/pitch-quality?start=${WIN.start}&end=${WIN.end}`).then(renderPitch).catch(()=>{});
   jget(`/api/rpc-monitor?bde=${encodeURIComponent(bde)}&limit=15`).then(renderRpc).catch(()=>{});
   renderTrend(await jget(`/api/trend?bde=${encodeURIComponent(bde)}&days=30`));
-  if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} fitTv(); setTimeout(fitTv,250); });
+  if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} fitTv();
+    setTimeout(()=>{ try{funnelChart.resize();}catch(e){} fitTv(); },300); });
 }
 
 function renderKpis(f){
