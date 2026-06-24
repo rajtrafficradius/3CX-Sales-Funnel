@@ -35,14 +35,13 @@ CSV=$(echo "$TABLES" | tr ' ' ',')
 echo "1/4  ensuring Railway schema is current (adds new columns if missing)…"
 ANALYTICS_DB_DSN="$RAILWAY_DSN" .venv/bin/funnel-agent init-db
 
-echo "2/4  clearing Railway analytics tables…"
-psql "$RAILWAY_DSN" -v ON_ERROR_STOP=1 -c "TRUNCATE $CSV RESTART IDENTITY CASCADE;"
-
-echo "3/4  copying local data -> Railway…"
+echo "2-3/4  TRUNCATE + reload in ONE transaction (atomic; the cloud refresh loop can't
+       interleave because the TRUNCATE holds the table locks until the load commits)…"
 DUMP_ARGS=""
 for t in $TABLES; do DUMP_ARGS="$DUMP_ARGS -t $t"; done
 # shellcheck disable=SC2086
-pg_dump "$LOCAL_DSN" --data-only --no-owner --no-privileges --disable-triggers $DUMP_ARGS \
+{ printf 'TRUNCATE %s RESTART IDENTITY CASCADE;\n' "$CSV"; \
+  pg_dump "$LOCAL_DSN" --data-only --no-owner --no-privileges --disable-triggers $DUMP_ARGS; } \
   | psql "$RAILWAY_DSN" -v ON_ERROR_STOP=1 -1
 
 echo "4/4  verifying row counts (local vs railway)…"
