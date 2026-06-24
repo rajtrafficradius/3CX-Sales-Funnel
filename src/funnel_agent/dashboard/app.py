@@ -702,11 +702,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "GROUP BY bde_name ORDER BY SUM(meetings_booked) DESC, SUM(calls_made) DESC",
             tuple(params),
         )
+        # Rescheduled/confirmed bookings per BDE (reference only — NOT counted in the
+        # funnel). Computed from calls/classifications since it isn't a daily_funnel column.
+        ab_where = ["c.in_scope", "c.started_at >= %s::date", "c.started_at < (%s::date + 1)",
+                    "c.answered", "c.talk_seconds >= %s", "COALESCE(cl.call_outcome,'') <> 'voicemail'",
+                    "cl.meeting_booked",
+                    "(COALESCE(cl.meeting_confirmation,false) OR COALESCE(cl.meeting_rescheduled,false))"]
+        ab_params: list = [start, end, settings.rpc_min_talk_seconds]
+        if _is_bde(request):
+            ab_where.append("COALESCE(c.bde_name, c.bde_extension) = %s")
+            ab_params.append(_scoped_bde(request, None))
+        ab_rows = q(
+            "SELECT COALESCE(c.bde_name, c.bde_extension) AS bde, count(*) AS n "
+            "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            f"WHERE {' AND '.join(ab_where)} GROUP BY 1",
+            tuple(ab_params),
+        )
+        ab = {r["bde"]: int(r["n"] or 0) for r in ab_rows}
         out = []
         for r in rows:
             out.append({
                 **{k: int(r[k] or 0) for k in lb_cols},
                 "bde_name": r["bde_name"],
+                "already_booked": ab.get(r["bde_name"], 0),
                 "conv_connect": _pct(r["connected"] or 0, r["calls_made"] or 0),
                 "conv_rpc": _pct(r["rpc_connect"] or 0, r["connected"] or 0),
                 "conv_pitch": _pct(r["full_pitch"] or 0, r["rpc_connect"] or 0),

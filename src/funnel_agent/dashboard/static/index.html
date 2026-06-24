@@ -592,6 +592,7 @@ function renderLeaderboard(d){
   const cols=[['BDE','bde_name',null],['Calls','calls_made','calls_made'],['Connected','connected','connected'],
     ['Right Party Contact','rpc_connect','rpc_connect'],['Full Pitch','full_pitch','full_pitch'],
     ['Meeting Booked','meetings_booked','meetings_booked'],['Qualified Booked','qualified_booked','qualified_booked'],
+    ['🔁 Resched/Confirmed','already_booked','already_booked'],
     ['🌤 Warm','warm','warm'],['🔥 Hot','hot','hot'],['🔥 Super-hot','super_hot','super_hot'],
     ['Conn%','conv_connect',null],['RPC %','conv_rpc',null],['Pitch %','conv_pitch',null],['Booked %','conv_booked',null]];
   $('#leaderboard thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
