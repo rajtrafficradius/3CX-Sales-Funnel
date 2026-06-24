@@ -90,7 +90,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # a read-only ALL view without a personal login.
         ktok = settings.kiosk_token
         via_query_token = bool(ktok) and request.query_params.get("token") == ktok
-        if ktok and (via_query_token or request.cookies.get("fa_kiosk") == ktok):
+        # TV mode is PUBLIC (per request): anyone with the link (?tv=1 or /tv) gets a
+        # READ-ONLY kiosk view, no login. A cookie is set so the page's /api calls stay
+        # authed for that browser. Writes are still blocked (kiosk role).
+        via_tv = request.query_params.get("tv") == "1" or path == "/tv"
+        kiosk_cookie = request.cookies.get("fa_kiosk")
+        via_cookie = bool(kiosk_cookie) and (kiosk_cookie == ktok or kiosk_cookie == "tv")
+        if via_query_token or via_tv or via_cookie:
             user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
         if user is None and (token := request.cookies.get("fa_session")):
             user = await run_in_threadpool(user_for_session, pool, token)
@@ -102,8 +108,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return RedirectResponse("/login", status_code=302)
 
         resp = await call_next(request)
-        if via_query_token:
-            resp.set_cookie("fa_kiosk", ktok, max_age=31536000, httponly=True, samesite="lax")
+        if via_query_token or via_tv:
+            resp.set_cookie("fa_kiosk", ktok or "tv", max_age=31536000, httponly=True, samesite="lax")
         return resp
 
     def _scoped_bde(request: Request, requested: str | None) -> str:

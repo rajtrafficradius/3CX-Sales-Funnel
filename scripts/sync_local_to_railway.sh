@@ -24,7 +24,12 @@ if [ -z "$LOCAL_DSN" ]; then
   exit 2
 fi
 
-TABLES="bde_agents calls transcripts classifications meetings daily_funnel processing_state"
+# Sync ALL persistent tables so cloud == local. Order is not critical: the data load
+# uses --disable-triggers (FK checks off during COPY) and TRUNCATE … CASCADE clears
+# dependents. `users` is included so the team can log in on cloud (no lockout);
+# `companies`/`prospects`/pipeline/enrichment power the Database view + pipelines.
+# `sessions` is intentionally EXCLUDED (ephemeral login cookies — don't copy).
+TABLES="bde_agents calls transcripts classifications meetings daily_funnel processing_state prospects companies enrichment prospect_pipeline prospect_assignments calendar_events qualification_overrides whatsapp_messages users"
 CSV=$(echo "$TABLES" | tr ' ' ',')
 
 echo "1/4  ensuring Railway schema is current (adds new columns if missing)…"
