@@ -1320,7 +1320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/database/prospects")
     def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
-                           enriched: str = "", pipeline: str = "") -> JSONResponse:
+                           enriched: str = "", pipeline: str = "", paid_ads: str = "") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         Businesses with no domain are listed individually. Dynamic metrics (SEO/Apollo/
@@ -1340,11 +1340,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 sd += " OR co.phone_norm LIKE %(qd)s"
                 sn += " OR co.phone_norm LIKE %(qd)s"
             sd += ")"; sn += ")"
-        enr_filter = ""
+        conds = []
         if enriched == "yes":
-            enr_filter = "WHERE ge.enriched"
+            conds.append("ge.enriched")
         elif enriched == "no":
-            enr_filter = "WHERE NOT ge.enriched"
+            conds.append("NOT ge.enriched")
+        if paid_ads == "yes":
+            conds.append("ge.runs_paid_ads")
+        elif paid_ads == "no":
+            conds.append("ge.scanned AND NOT ge.runs_paid_ads")  # scanned, no ad pixels
+        elif paid_ads == "unscanned":
+            conds.append("NOT ge.scanned")
+        enr_filter = ("WHERE " + " AND ".join(conds)) if conds else ""
         cte = f"""
         WITH g AS (
           SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,

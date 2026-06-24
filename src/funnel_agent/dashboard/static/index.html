@@ -183,6 +183,13 @@
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
   <h1>3CX Sales-Funnel <small>per BDE &amp; overall</small></h1>
+  <!-- Primary nav (left of the spacer so it's ALWAYS visible, never pushed off-screen) -->
+  <a class="badge clickable" id="calBtn" href="/calendar" title="Open the calendar">📅 Calendar</a>
+  <a class="badge clickable" id="p2Btn" href="/pipeline2" title="Pipeline 2 — call list / assignments">🔁 Pipeline 2</a>
+  <a class="badge clickable" id="coachBtn" href="/coaching" title="Coaching & development — per-BDE call intelligence">🎓 Coaching</a>
+  <a class="badge clickable" id="dbBtn" href="/database" title="Master prospect database" style="display:none">🗄️ Database</a>
+  <a class="badge clickable" id="adminBtn" href="/admin" title="User management" style="display:none">⚙️ Admin</a>
+  <a class="badge clickable" id="tvBtn" href="/?tv=1" target="_blank" title="Open this dashboard full-screen for an office TV">📺 TV mode</a>
   <div class="spacer"></div>
   <label class="muted" for="bde">BDE</label>
   <select id="bde"></select>
@@ -197,12 +204,6 @@
   </select>
   <input id="startDate" type="date" style="display:none" />
   <input id="endDate" type="date" style="display:none" />
-  <a class="badge clickable" id="calBtn" href="/calendar" title="Open the calendar">📅 Calendar</a>
-  <a class="badge clickable" id="p2Btn" href="/pipeline2" title="Pipeline 2 — call list / assignments">🔁 Pipeline 2</a>
-  <a class="badge clickable" id="coachBtn" href="/coaching" title="Coaching & development — per-BDE call intelligence">🎓 Coaching</a>
-  <a class="badge clickable" id="dbBtn" href="/database" title="Master prospect database" style="display:none">🗄️ Database</a>
-  <a class="badge clickable" id="adminBtn" href="/admin" title="User management" style="display:none">⚙️ Admin</a>
-  <a class="badge clickable" id="tvBtn" href="/?tv=1" target="_blank" title="Open this dashboard full-screen for an office TV">📺 TV mode</a>
   <span class="badge clickable" id="reviewBadge" onclick="scrollToReview()">Review queue: <b id="reviewN">0</b></span>
   <div class="livebadge connecting" id="liveBadge" title="Powered by an AI agent — this dashboard analyses calls and updates in real time">
     <span class="lb-dot"></span>
