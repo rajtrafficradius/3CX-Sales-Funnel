@@ -136,32 +136,36 @@
   @keyframes cls-livedot{0%{box-shadow:0 0 0 0 rgba(59,130,246,.6)}70%{box-shadow:0 0 0 7px rgba(59,130,246,0)}100%{box-shadow:0 0 0 0 rgba(59,130,246,0)}}
   @keyframes cls-done{0%{box-shadow:0 0 0 0 rgba(34,197,94,.75)}55%{box-shadow:0 0 18px 5px rgba(34,197,94,.45)}100%{box-shadow:0 0 12px rgba(34,197,94,.45)}}
   @media (prefers-reduced-motion:reduce){.clsfill,.clsfill::after,.clslabel .dot{animation:none!important}.clsfill{transition:width .2s linear}}
-  /* ---- TV / kiosk mode (?tv=1): original dashboard fit to ONE viewport, through the leaderboard ---- */
-  html.tv,html.tv body{height:100%;overflow:hidden;margin:0}
-  html.tv body{display:flex;flex-direction:column}
-  html.tv header,html.tv #clsBar{flex:none}
-  html.tv header label,html.tv #bde,html.tv #period,html.tv #startDate,html.tv #endDate,html.tv #reviewBadge,html.tv #tvBtn,html.tv #calBtn,html.tv #p2Btn,html.tv #dbBtn,html.tv #adminBtn,html.tv #whoami,html.tv #logoutBtn{display:none}
+  /* ---- TV / kiosk mode (?tv=1): wall display ----
+     Content lays out at a FIXED design size in a 2-column (landscape) grid, then JS
+     scales the whole block to fit the screen exactly (fitTv()) — so EVERYTHING is
+     visible on any TV, no overlap, no cut-off. */
+  html.tv,html.tv body{height:100%;overflow:hidden;margin:0;background:var(--bg)}
+  html.tv #clsBar{display:none}
+  html.tv header{position:fixed;top:0;left:0;right:0;z-index:30;padding:8px 22px}
+  html.tv header label,html.tv #bde,html.tv #period,html.tv #startDate,html.tv #endDate,html.tv #reviewBadge,html.tv #tvBtn,html.tv #calBtn,html.tv #p2Btn,html.tv #dbBtn,html.tv #adminBtn,html.tv #coachBtn,html.tv #whoami,html.tv #logoutBtn{display:none}
   .who{font-size:12px;color:var(--muted);white-space:nowrap}
-  /* TV is a wall display: show KPIs -> funnel -> lead/pipeline -> leaderboard only.
-     Operational worklists (channel, pitch quality, RPC follow-up, trend, review) are
-     manager desk tools and are hidden here so the view fits ONE screen without overlap. */
+  /* desk-only cards hidden on the wall */
   html.tv #trendCard,html.tv #reviewCard,html.tv #channelCard,html.tv #pitchCard,html.tv #rpcCard,html.tv #pipelineCard{display:none}
-  html.tv #leadCard{flex:none}   /* small chips row — fixed height, don't let it grow/overlap */
-  html.tv main{max-width:none;flex:1;min-height:0;display:flex;flex-direction:column;gap:1.1vh;padding:1.1vh 1.4vw;overflow:hidden}
+  /* the scaled "stage": fixed design size + 2-col grid; fitTv() sets transform/position */
+  html.tv main{position:absolute;top:0;left:0;width:1840px;max-width:none;margin:0;padding:16px;
+    display:grid;gap:14px;transform-origin:top left;
+    grid-template-columns:1.4fr 1fr;grid-template-rows:auto auto 1fr;
+    grid-template-areas:"kpis kpis" "funnel board" "lead board"}
   html.tv main>div{margin-top:0!important}
-  html.tv .grid.cols-kpi{flex:none}
-  html.tv .grid.cols-2{flex:1.15 1 0;min-height:0}
-  html.tv #leaderboardCard{flex:1 1 0;min-height:0}
-  html.tv .card{display:flex;flex-direction:column;min-height:0;overflow:hidden}
-  html.tv #funnelChart{flex:1;height:auto!important;min-height:0}
-  html.tv #leaderboardCard>div{flex:1;min-height:0;overflow:hidden}
-  html.tv .kpi .v{font-size:clamp(26px,2.9vw,60px)}
-  html.tv .kpi .l{font-size:clamp(12px,1vw,19px)}
-  html.tv .kpi .sub{font-size:clamp(10px,.8vw,16px)}
-  html.tv .card h2{font-size:clamp(12px,1vw,20px);margin-bottom:.6vh}
-  html.tv #funnelTable td,html.tv #funnelTable th{font-size:clamp(12px,1.1vw,24px);padding:.45vh .6vw}
-  html.tv #leaderboard th{font-size:clamp(11px,.9vw,18px);padding:.4vh .6vw}
-  html.tv #leaderboard td{font-size:clamp(14px,1.4vw,30px);padding:.5vh .6vw}
+  html.tv #kpis{grid-area:kpis}
+  html.tv .grid.cols-2{grid-area:funnel;grid-template-columns:1fr;gap:14px}   /* stack chart over stages table */
+  html.tv #leadCard{grid-area:lead}
+  html.tv #leaderboardCard{grid-area:board;display:flex;flex-direction:column;min-height:0}
+  html.tv #leaderboardCard>div{flex:1;overflow:hidden}
+  html.tv #funnelChart{height:300px}
+  html.tv .kpi .v{font-size:46px}
+  html.tv .kpi .l{font-size:16px}
+  html.tv .kpi .sub{font-size:12px}
+  html.tv .card h2{font-size:17px;margin-bottom:8px}
+  html.tv #funnelTable td,html.tv #funnelTable th{font-size:17px;padding:5px 9px}
+  html.tv #leaderboard th{font-size:14px;padding:6px 9px}
+  html.tv #leaderboard td{font-size:19px;padding:7px 9px}
   #tvFs{display:none}
   html.tv #tvFs{display:block;position:fixed;bottom:10px;right:12px;z-index:60;background:rgba(28,36,48,.7);
     color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;opacity:.4}
@@ -286,6 +290,23 @@ if(TV) document.documentElement.classList.add('tv');
 function tvFullscreen(){ const el=document.documentElement;
   if(!document.fullscreenElement){ el.requestFullscreen && el.requestFullscreen(); }
   else { document.exitFullscreen && document.exitFullscreen(); } }
+// Auto-scale the fixed-size TV "stage" to fit the actual screen exactly (any TV size),
+// so the whole wall display is always fully visible — never cut off or overlapping.
+function fitTv(){
+  if(!TV) return;
+  const m=document.querySelector('main'); if(!m) return;
+  const head=document.querySelector('header'); const headH=head?head.offsetHeight:0;
+  m.style.transform='none';
+  const w=m.offsetWidth, h=m.offsetHeight;
+  const vw=window.innerWidth, vh=window.innerHeight-headH;
+  if(!w||!h) return;
+  const s=Math.min(vw/w, vh/h);
+  m.style.transformOrigin='top left';
+  m.style.transform=`scale(${s})`;
+  m.style.left=Math.max(0,(vw-w*s)/2)+'px';
+  m.style.top =(headH+Math.max(0,(vh-h*s)/2))+'px';
+}
+if(TV){ window.addEventListener('resize', ()=>{ try{funnelChart&&funnelChart.resize();}catch(e){} fitTv(); }); }
 const pillClass = (v,a,b) => v==null?'':v>=a?'p-good':v>=b?'p-mid':'p-bad';
 const pct = v => v==null?'—':v+'%';
 let funnelChart, trendChart;
@@ -367,7 +388,7 @@ async function refresh(){
   jget(`/api/pitch-quality?start=${WIN.start}&end=${WIN.end}`).then(renderPitch).catch(()=>{});
   jget(`/api/rpc-monitor?bde=${encodeURIComponent(bde)}&limit=15`).then(renderRpc).catch(()=>{});
   renderTrend(await jget(`/api/trend?bde=${encodeURIComponent(bde)}&days=30`));
-  if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} });
+  if(TV) requestAnimationFrame(()=>{ try{funnelChart.resize();}catch(e){} fitTv(); setTimeout(fitTv,250); });
 }
 
 function renderKpis(f){
