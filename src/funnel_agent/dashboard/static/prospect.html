@@ -262,7 +262,11 @@ function businessDataCard(d){
     ${sum.industry?metric(esc(sum.industry),'Industry'):''}
   </div>`:'';
   const rows = cos.map(c=>{
-    const contacts=(c.contacts||[]).map(x=>`${esc(x.name)}${x.role?' <span class="muted">('+esc(x.role)+')</span>':''}`).join(' · ');
+    const contacts=(c.contacts||[]).filter(Boolean).map(x=>{
+      const nm=(typeof x==='string')?x:(x.name||x.full_name||'');
+      const role=(x&&typeof x==='object')?x.role:'';
+      return nm?`${esc(nm)}${role?' <span class="muted">('+esc(role)+')</span>':''}`:'';
+    }).filter(Boolean).join(' · ');
     const meta=[c.company_profile,c.year_started?'est. '+c.year_started:null,
       c.employees?fmtN(c.employees)+' staff':null, fmtRevM(c.revenue_musd)?'rev '+fmtRevM(c.revenue_musd):null,
       [c.suburb,c.state,c.postal_code].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
