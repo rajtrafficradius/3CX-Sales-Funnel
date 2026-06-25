@@ -60,7 +60,7 @@ WITH base AS (
                    AND NOT COALESCE(cl.meeting_rescheduled, false)
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
-                         WHERE pc.in_scope AND pc.dest_number = c.dest_number AND pc.started_at < c.started_at
+                         WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
                            AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false))
@@ -75,14 +75,14 @@ WITH base AS (
                    AND NOT COALESCE(cl.meeting_rescheduled, false)
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
-                         WHERE pc.in_scope AND pc.dest_number = c.dest_number AND pc.started_at < c.started_at
+                         WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
                            AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false))
                    AND (COALESCE(qo.qualified, cl.qualified) OR EXISTS (
                          SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
                          LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id
-                         WHERE c2.dest_number = c.dest_number AND c2.in_scope
+                         WHERE right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND c2.in_scope
                            AND COALESCE(qo2.qualified, cl2.qualified)))
               THEN 1 ELSE 0 END) AS qualified_booked,
         -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.

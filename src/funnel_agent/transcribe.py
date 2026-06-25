@@ -10,6 +10,7 @@ once a call has a transcript it is skipped.
 from __future__ import annotations
 
 import io
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 
@@ -30,11 +31,73 @@ def _openai(settings: Settings):
     return OpenAI(api_key=settings.llm_api_key)
 
 
+def _deloop(text: str) -> str:
+    """Collapse repeated on-hold / IVR loops in a Whisper transcript.
+
+    Hold music + IVR jingles ("Please hold… shop online at…") repeat verbatim while a
+    caller is on hold; Whisper transcribes each loop, which can drown out the real
+    decision-maker conversation. Cap each DISTINCT sentence at 2 occurrences — this
+    strips the 7×-looped jingle while NEVER dropping a unique sentence (so the actual
+    conversation, incl. the booking, is always preserved).
+    """
+    counts: dict[str, int] = {}
+    out: list[str] = []
+    for s in re.split(r"(?<=[.?!])\s+", text):
+        key = s.strip().lower()
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] <= 2:
+            out.append(s)
+    return " ".join(out)
+
+
+def _wav_chunks(wav: bytes, chunk_seconds: int = 120) -> list[bytes] | None:
+    """Split a PCM WAV into ~chunk_seconds pieces (no ffmpeg — stdlib `wave`).
+
+    Returns None if the bytes aren't a parseable PCM WAV (caller falls back to a
+    single-shot transcribe)."""
+    import wave as wavemod
+    try:
+        w = wavemod.open(io.BytesIO(wav), "rb")
+        fr, nf, ch, sw = w.getframerate(), w.getnframes(), w.getnchannels(), w.getsampwidth()
+    except Exception:
+        return None
+    if fr <= 0 or nf <= 0:
+        return None
+    per = fr * chunk_seconds
+    out: list[bytes] = []
+    for i in range(0, nf, per):
+        w.setpos(i)
+        frames = w.readframes(min(per, nf - i))
+        buf = io.BytesIO()
+        ww = wavemod.open(buf, "wb")
+        ww.setnchannels(ch); ww.setsampwidth(sw); ww.setframerate(fr)
+        ww.writeframes(frames); ww.close()
+        out.append(buf.getvalue())
+    return out
+
+
 def transcribe_wav(oai, settings: Settings, wav: bytes) -> str:
-    bio = io.BytesIO(wav)
-    bio.name = "recording.wav"
-    resp = oai.audio.transcriptions.create(model=settings.transcribe_model, file=bio)
-    return (resp.text or "").strip()
+    """Transcribe a recording, robust to long mid-call hold music.
+
+    Whisper falls into a repetition ("looping") failure mode on hold music: on a long
+    call it transcribes the looped hold jingle and DROPS the real decision-maker
+    conversation after it — making a booked call look gatekeeper-only. Two defences:
+    (1) split calls >2min into ~2min chunks transcribed INDEPENDENTLY, so the post-hold
+    conversation can't be swallowed by an earlier loop; (2) temperature=0 + an English
+    hint reduce looping within a chunk. Finally de-loop to strip repeated hold jingles.
+    """
+    def _one(b: bytes) -> str:
+        bio = io.BytesIO(b)
+        bio.name = "recording.wav"
+        resp = oai.audio.transcriptions.create(
+            model=settings.transcribe_model, file=bio, temperature=0, language="en")
+        return (resp.text or "").strip()
+
+    chunks = _wav_chunks(wav, 120)
+    text = " ".join(_one(b) for b in chunks if b) if (chunks and len(chunks) > 1) else _one(wav)
+    return _deloop(text)
 
 
 def _pending(pool: ConnectionPool, day: date, limit: int | None, min_age_minutes: int) -> list[dict]:

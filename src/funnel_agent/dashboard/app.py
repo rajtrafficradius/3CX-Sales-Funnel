@@ -735,7 +735,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   "AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation,false) "
                   "AND NOT COALESCE(cl.meeting_rescheduled,false) "
                   "AND NOT EXISTS (SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id=pc.call_id "
-                  "WHERE pc.in_scope AND pc.dest_number=c.dest_number AND pc.started_at<c.started_at "
+                  "WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at<c.started_at "
                   "AND pc.answered AND pc.talk_seconds>=%(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
                   "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) AND NOT COALESCE(pcl.meeting_rescheduled,false))")
         conn = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail'"
@@ -934,7 +934,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # A booking counts once per PROSPECT — only the FIRST booked call to a number; a later
     # booked call to the same prospect is a duplicate/re-touch (don't double-count the lead).
     _FIRST_BOOKING = ("NOT EXISTS (SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id=pc.call_id "
-                      "WHERE pc.in_scope AND pc.dest_number=c.dest_number AND pc.started_at < c.started_at "
+                      "WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at < c.started_at "
                       "AND pc.answered AND pc.talk_seconds >= %(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
                       "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) "
                       "AND NOT COALESCE(pcl.meeting_rescheduled,false))")
@@ -958,7 +958,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "AND (COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified) "
                             "OR EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
                             "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
-                            "WHERE c2.dest_number=c.dest_number AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified)))",
+                            "WHERE right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified)))",
         # Booked but NOT qualified = the EXACT complement of qualified_booked within new
         # bookings, so qualified_booked + booked_unqualified = meetings_booked. (Same
         # first-booking dedup + override + prospect-level qualification, negated.)
@@ -967,7 +967,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                               "AND NOT COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified, false) "
                               "AND NOT EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
                               "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
-                              "WHERE c2.dest_number=c.dest_number AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified))",
+                              "WHERE right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified))",
         # Reference-only drill-downs (NOT counted in the funnel). The sidebar "Rescheduled /
         # confirmed" link uses `already_booked`; the two split views are also available.
         "already_booked": f"{_CONN} AND cl.meeting_booked AND "
