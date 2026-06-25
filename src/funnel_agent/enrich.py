@@ -98,6 +98,98 @@ def enrich_websites(pool: ConnectionPool, limit: int = 200, workers: int = 8) ->
     return stats
 
 
+def _remaining_website_domains(pool: ConnectionPool) -> int:
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM ("
+            "  SELECT DISTINCT domain FROM ("
+            "    SELECT domain FROM prospects WHERE domain IS NOT NULL AND domain<>'' "
+            "    UNION ALL SELECT domain FROM companies WHERE domain IS NOT NULL AND domain<>'') u) d "
+            "LEFT JOIN enrichment e ON e.domain=d.domain WHERE e.domain IS NULL OR e.website IS NULL"
+        )
+        return cur.fetchone()["n"]
+
+
+def enrich_websites_async(pool: ConnectionPool, *, limit: int = 5000, concurrency: int = 300,
+                          batch: int = 1000, scan_all: bool = False, per_timeout: float = 8.0,
+                          max_bytes: int = 2_000_000) -> dict:
+    """High-throughput async twin of enrich_websites — for 100k–1M-scale scanning.
+
+    Fetches up to `concurrency` homepages at once (vs 8 threads), streams only the
+    first `max_bytes`, fails fast on the slow tail, and writes each batch in ONE bulk
+    upsert. Identical detection + output to the sync scanner (reuses afetch/_detect).
+    Idempotent. Run as a dedicated batch job, not inside the live dashboard container.
+    """
+    import asyncio
+
+    import httpx
+
+    from .enrichment.website import afetch_website_intel
+
+    ua = {"User-Agent": "Mozilla/5.0 (compatible; TrafficRadiusBot/1.0; +https://trafficradius.com.au)"}
+
+    async def scan_batch(domains: list[str]) -> list[tuple[str, dict]]:
+        timeout = httpx.Timeout(connect=5.0, read=per_timeout, write=5.0, pool=per_timeout)
+        limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=min(concurrency, 100))
+        sem = asyncio.Semaphore(concurrency)
+        # Hard wall-clock cap PER domain: httpx's read-timeout doesn't bound total time
+        # (a slow-trickle server can stream tiny chunks forever), so without this one bad
+        # host stalls the whole batch. wait_for guarantees every task finishes.
+        hard_cap = per_timeout * 2 + 4
+        client = httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=ua, limits=limits)
+
+        async def one(dn: str) -> tuple[str, dict]:
+            async with sem:
+                try:
+                    return dn, await asyncio.wait_for(
+                        afetch_website_intel(client, dn, max_bytes=max_bytes), timeout=hard_cap)
+                except Exception as exc:
+                    kind = "timeout" if isinstance(exc, asyncio.TimeoutError) else "error"
+                    return dn, {"found": False, "status": kind, "error": str(exc)[:160] or kind}
+        try:
+            return await asyncio.gather(*[one(d) for d in domains])
+        finally:
+            # Bound the client close too: a cancelled (timed-out) connection can make
+            # aclose() hang, which would stall the whole run. Force on after 10s.
+            try:
+                await asyncio.wait_for(client.aclose(), timeout=10)
+            except Exception:
+                pass
+
+    scanned = runs = errors = 0
+    while True:
+        take = batch if scan_all else min(batch, max(0, limit - scanned))
+        if take <= 0:
+            break
+        domains = _pending_website_domains(pool, take)
+        if not domains:
+            break
+        results = asyncio.run(scan_batch(domains))
+        rows = [(dn, Json(intel), ("ok" if intel.get("found") else (intel.get("status") or "error")))
+                for dn, intel in results]
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO enrichment (domain, website, status, fetched_at) VALUES (%s,%s,%s,now()) "
+                "ON CONFLICT (domain) DO UPDATE SET website = EXCLUDED.website, "
+                "  status = COALESCE(enrichment.status, EXCLUDED.status), fetched_at = now()",
+                rows,
+            )
+            conn.commit()
+        for _dn, intel in results:
+            scanned += 1
+            if intel.get("found"):
+                runs += 1 if intel.get("runs_paid_ads") else 0
+            else:
+                errors += 1
+        log.info("enrich_websites_async_batch", batch=len(domains), scanned=scanned, runs=runs, errors=errors)
+        if not scan_all and scanned >= limit:
+            break
+    stats = {"scanned": scanned, "runs_paid_ads": runs, "errors": errors,
+             "remaining": _remaining_website_domains(pool), "mode": "async", "concurrency": concurrency}
+    log.info("enrich_websites_async_done", **stats)
+    return stats
+
+
 def _pending_domains(pool: ConnectionPool, day: date, refresh_days: int,
                      limit: int | None = None) -> list[str]:
     start = datetime.combine(day, time.min)

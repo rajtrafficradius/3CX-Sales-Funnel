@@ -80,6 +80,38 @@ def _detect(html: str) -> dict:
     }
 
 
+async def afetch_website_intel(client, domain: str, *, max_bytes: int = 2_000_000) -> dict:
+    """Async twin of fetch_website_intel for high-concurrency bulk scanning.
+
+    Reuses the SAME `_detect()` so output matches the sync scanner. Uses a plain
+    (non-streaming) GET: streaming + a manual early-break left a dangling connection
+    that hung the client when a slow-trickle host was cancelled — non-streaming GET
+    cancels cleanly, which is essential for unattended 1M-scale runs. The total time
+    per domain is bounded by the caller's `asyncio.wait_for`. `max_bytes` truncates the
+    in-memory HTML before detection (caps regex cost; 2 MB preserves parity). `client`
+    is a shared httpx.AsyncClient (timeouts/limits/UA set by the caller). Never raises.
+    """
+    if not domain:
+        return {"found": False, "status": "no_domain"}
+    last_err = None
+    for scheme in ("https", "http"):
+        url = f"{scheme}://{domain}"
+        try:
+            resp = await client.get(url)
+            html = resp.text or ""
+            if len(html) > max_bytes:
+                html = html[:max_bytes]
+            det = _detect(html)
+            return {
+                "found": True, "status": "ok", "final_url": str(resp.url),
+                "http_status": resp.status_code, "html_bytes": len(html), **det,
+            }
+        except Exception as exc:
+            last_err = str(exc)[:160]
+            continue
+    return {"found": False, "status": "error", "error": last_err}
+
+
 def fetch_website_intel(domain: str, *, timeout: float = 12.0) -> dict:
     """Fetch https://domain (then http fallback) and detect marketing tech. Free.
 

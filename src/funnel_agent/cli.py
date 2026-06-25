@@ -207,15 +207,29 @@ def load_companies(
 @app.command(name="enrich-websites")
 def enrich_websites_cmd(
     limit: int = typer.Option(500, help="how many not-yet-scanned domains to scan this run"),
-    workers: int = typer.Option(8, help="parallel website fetches"),
+    workers: int = typer.Option(8, help="parallel website fetches (sync mode)"),
     all_: bool = typer.Option(False, "--all", help="keep scanning in batches until none remain"),
+    use_async: bool = typer.Option(False, "--async", help="high-throughput async scanner (for 100k–1M scale)"),
+    concurrency: int = typer.Option(300, help="async: simultaneous homepage fetches"),
+    batch: int = typer.Option(1000, help="async: domains scanned + bulk-written per batch"),
+    max_kb: int = typer.Option(2000, help="async: cap homepage download at N KB (2 MB keeps detection parity)"),
+    timeout: float = typer.Option(8.0, help="async: per-request read timeout (s) — fail fast on the slow tail"),
 ) -> None:
     """FREE tracking-pixel scan (GTM/GA4/Google Ads/Meta/etc.) across ALL domains to flag
-    paid-ads activity. Idempotent; safe to re-run. Runs automatically in the refresh loop too."""
+    paid-ads activity. Idempotent; safe to re-run. Runs automatically in the refresh loop too.
+
+    Use --async (hundreds of concurrent fetches + range-capped downloads) for large runs;
+    the default sync mode (8 threads) is fine for the steady refresh-loop trickle."""
     settings = _settings()
-    from .enrich import enrich_websites
 
     with _analytics_pool(settings) as pool:
+        if use_async:
+            from .enrich import enrich_websites_async
+            stats = enrich_websites_async(pool, limit=limit, concurrency=concurrency, batch=batch,
+                                          scan_all=all_, per_timeout=timeout, max_bytes=max_kb * 1000)
+            typer.echo(f"enrich-websites (async): {stats}")
+            return
+        from .enrich import enrich_websites
         while True:
             stats = enrich_websites(pool, limit=limit, workers=workers)
             typer.echo(f"enrich-websites: {stats}")
