@@ -97,6 +97,45 @@ def fetch_outbound_calls_for_day(client: ThreeCXClient, day: date, tz: str = "UT
     return [to_canonical(r) for r in client.get_value(path)]
 
 
+# Inbound calls (prospect call-backs etc.) come from a SEPARATE report function with the
+# parties flipped: the prospect is the CALLER (SourceCallerId), the BDE is the callee
+# (DestinationDn). This report has NO inline transcript, but answered rows DO carry a
+# RecordingId — so the existing transcribe step (download recording -> STT) fills the
+# transcript, then the call is classified exactly like an outbound one.
+_REPORT_INBOUND = "/xapi/v1/ReportInboundCalls/Pbx.GetInboundCalls"
+
+
+def to_canonical_inbound(row: dict) -> dict:
+    """Map a GetInboundCalls row to the canonical call shape (parties flipped)."""
+    answered = str(row.get("Status") or "").strip().lower() == "answered"
+    prospect = str(row.get("SourceCallerId") or row.get("SourceDisplayName") or "")
+    bde_ext = str(row.get("DestinationDn") or "")
+    cid = row.get("CdrId") or row.get("CallHistoryId")
+    return {
+        "call_id": str(cid),
+        "bde_extension": bde_ext or None,           # the BDE is the CALLEE on inbound
+        "direction": "Inbound",
+        "dest_number": prospect or None,            # the PROSPECT is the CALLER on inbound
+        "started_at": _parse_dt(row.get("StartTime")),
+        "ring_seconds": _duration_seconds(row.get("RingingDuration")),
+        "talk_seconds": _duration_seconds(row.get("TalkingDuration")),
+        "answered": answered,
+        "is_voicemail": False,
+        "disposition": row.get("Status"),
+        "recording_present": bool(row.get("RecordingId")),
+        "recording_id": (str(row["RecordingId"]) if row.get("RecordingId") else None),
+        "has_transcript": False,                    # no inline transcript; STT step fills it
+        "transcript": None,
+    }
+
+
+def fetch_inbound_calls_for_day(client: ThreeCXClient, day: date, tz: str = "UTC") -> list[dict]:
+    """Return canonical INBOUND-call dicts for one local day (prospect call-backs)."""
+    pf, pt = _day_window_utc(day, tz)
+    path = f"{_REPORT_INBOUND}(periodFrom={pf},periodTo={pt},trunkDns='',callsType=0)"
+    return [to_canonical_inbound(r) for r in client.get_value(path)]
+
+
 def earliest_call_date(client: ThreeCXClient, tz: str = "UTC") -> date | None:
     """Earliest outbound call date — used to auto-detect the backfill start."""
     # Probe the first outbound recording (cheap, ordered) for a history floor.

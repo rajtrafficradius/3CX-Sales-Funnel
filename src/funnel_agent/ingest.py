@@ -15,7 +15,7 @@ from .config import Settings
 from .logging import get_logger
 from .threecx.api import ThreeCXClient
 from .threecx.cdr import earliest_outbound_times, fetch_calls_for_day
-from .threecx.recordings import fetch_outbound_calls_for_day
+from .threecx.recordings import fetch_inbound_calls_for_day, fetch_outbound_calls_for_day
 from .threecx.transcripts import fetch_transcripts_for_calls
 
 log = get_logger(__name__)
@@ -250,14 +250,18 @@ def ingest_day_api(
     settings: Settings,
     day: date,
 ) -> dict:
-    """Ingest one day of outbound calls + transcripts from the 3CX API. Idempotent."""
+    """Ingest one day of calls + transcripts from the 3CX API — OUTBOUND (BDE dials a
+    prospect) AND INBOUND (a prospect calls a BDE back). Idempotent."""
     roster = _load_roster(analytics_pool)
-    rows = fetch_outbound_calls_for_day(client, day, settings.tz)
+    outbound = fetch_outbound_calls_for_day(client, day, settings.tz)
+    inbound = fetch_inbound_calls_for_day(client, day, settings.tz)
+    rows = outbound + inbound
     if not rows:
         log.info("ingest_api_empty", day=str(day))
         return {"calls": 0, "transcribed": 0, "in_scope": 0}
-    # Capture new BDE numbers automatically + keep ingestion flowing (auto roster-sync).
-    roster = _register_unknown_extensions(analytics_pool, roster, rows, client, settings)
+    # Auto-register new BDE dialing extensions from OUTBOUND only (inbound callees can be
+    # queues/IVRs — those stay unknown and get their bde_extension nulled in the loop).
+    roster = _register_unknown_extensions(analytics_pool, roster, outbound, client, settings)
 
     n_transcribed = n_in_scope = 0
     numbers: set[str] = set()
@@ -270,6 +274,10 @@ def ingest_day_api(
                 if dest:
                     numbers.add(dest)
                 agent = roster.get(ext or "")
+                # An unknown extension (e.g. an inbound call routed to a queue/IVR, not a
+                # BDE) must not violate the calls.bde_extension FK — null it out.
+                if agent is None:
+                    ext = None
                 in_scope = bool(agent and agent["in_scope"] and agent["active"])
                 bde_name = agent["bde_name"] if agent else None
                 if in_scope:
