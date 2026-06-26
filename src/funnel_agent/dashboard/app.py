@@ -34,10 +34,11 @@ STAGES = [
 
 
 # ---- Performance benchmarks (#4) ----
-# Each conversion stage has a minimum expected ratio of the PRIOR stage. These are
-# scale-invariant, so they apply identically to the ALL view and to a single BDE.
-# Shown in the funnel Total column: if actual < target the cell flags how far short.
-#   {stage_key: (ratio, prior_stage_key, label_pct)}
+# Each conversion stage's expected ratio of the PRIOR stage. Targets CASCADE from the
+# Calls-Made target down the funnel (calls_target → ×0.40 → ×0.40 → ×0.30 → ×0.25), so a
+# stage's target is what it SHOULD be if the calls target were hit — not a ratio of the
+# actual (possibly short) prior stage. Shown in the funnel Total column as "N short".
+#   {stage_key: (ratio, prior_stage_key)}
 BENCHMARK_RATIOS = {
     "connected":       (0.40, "calls_made"),   # 40% of calls made
     "rpc_connect":     (0.40, "connected"),    # 40% of connected
@@ -485,8 +486,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "rate": rate, "target_rate": CALLS_PER_30MIN,
                 "basis": f"{CALLS_PER_30MIN} dials / 30min active calling",
             }
+        # Cascade each stage's target from the Calls-Made TARGET down the funnel using the
+        # standard conversion ratios (e.g. 1200 → 40% = 480 connected → 40% = 192 RPC →
+        # 30% = 58 pitch → 25% = 14 booked). The target is what the stage SHOULD be if the
+        # calls target were hit — NOT a ratio of the (possibly short) actual prior stage,
+        # which would silently shrink every downstream target when dialling falls behind.
+        target_chain = {"calls_made": cm_target or 0}
         for key, (ratio, prior) in BENCHMARK_RATIOS.items():
-            target = int(round(ratio * totals.get(prior, 0)))
+            target_chain[key] = int(round(ratio * target_chain.get(prior, 0)))
+        for key, (ratio, prior) in BENCHMARK_RATIOS.items():
+            target = target_chain[key]
             actual = totals.get(key, 0)
             bench[key] = {
                 "target": target, "actual": actual, "ratio": int(ratio * 100),
