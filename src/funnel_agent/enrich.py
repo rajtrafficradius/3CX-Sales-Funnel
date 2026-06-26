@@ -190,6 +190,85 @@ def enrich_websites_async(pool: ConnectionPool, *, limit: int = 5000, concurrenc
     return stats
 
 
+def _pending_deep_domains(pool: ConnectionPool, limit: int) -> list[str]:
+    """Raghav companies in the $1-10M band, with a domain, that PASS the paid-ads gate
+    (an ad pixel present, OR GTM + UTM) and haven't been deep-enriched yet."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH d AS (
+              SELECT DISTINCT lower(domain) AS dom FROM companies
+              WHERE source='raghav' AND revenue_musd BETWEEN 1 AND 10
+                AND domain IS NOT NULL AND domain <> ''
+            )
+            SELECT d.dom FROM d JOIN enrichment e ON e.domain = d.dom
+            WHERE ( (e.website->>'runs_paid_ads')='true'
+                    OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true') )
+              AND e.business_intel IS NULL
+            ORDER BY d.dom
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return [r["dom"] for r in cur.fetchall()]
+
+
+def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: int = 1000,
+                          workers: int = 6) -> dict:
+    """Deep-enrich the paid-ads prospects ($1-10M): Apollo (FREE company + decision-maker
+    names/titles, no credits) + website business intel (products/services/USPs/ICP). Each
+    source is stored separately on the enrichment row. Idempotent (skips already-done)."""
+    from .enrichment.apollo import ApolloClient
+    from .enrichment.business_intel import extract_business_intel
+    from .transcribe import _openai
+
+    domains = _pending_deep_domains(pool, limit)
+    if not domains:
+        return {"processed": 0, "remaining": 0}
+    oai = _openai(settings)
+    apollo = ApolloClient(settings)  # httpx.Client is thread-safe; share across workers
+
+    def work(domain: str) -> dict:
+        org = {}
+        people: list = []
+        try:
+            org = apollo.enrich_organization(domain)
+            if org.get("found"):
+                people = apollo.search_decision_makers(domain, org_id=org.get("id"))
+                org["people"] = people
+        except Exception as exc:
+            log.warning("deep_apollo_failed", domain=domain, error=str(exc)[:160])
+        try:
+            bi = extract_business_intel(oai, settings, domain)
+        except Exception as exc:
+            log.warning("deep_bi_failed", domain=domain, error=str(exc)[:160])
+            bi = {"found": False}
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO enrichment (domain, apollo, business_intel, status, fetched_at) "
+                "VALUES (%s,%s,%s,'ok',now()) ON CONFLICT (domain) DO UPDATE SET "
+                "apollo = EXCLUDED.apollo, business_intel = EXCLUDED.business_intel, fetched_at = now()",
+                (domain, Json(org), Json(bi)),
+            )
+            conn.commit()
+        return {"apollo": bool(org.get("found")), "people": len(people), "bi": bool(bi.get("found"))}
+
+    processed = apollo_ok = people_total = bi_ok = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for i, r in enumerate(ex.map(work, domains), 1):
+            processed += 1
+            apollo_ok += int(r["apollo"]); people_total += r["people"]; bi_ok += int(r["bi"])
+            if i % 25 == 0:
+                log.info("deep_enrich_progress", done=i, total=len(domains),
+                         apollo=apollo_ok, people=people_total, bi=bi_ok)
+    apollo.close()
+    remaining = len(_pending_deep_domains(pool, 100000))
+    stats = {"processed": processed, "apollo_ok": apollo_ok, "decision_makers": people_total,
+             "business_intel_ok": bi_ok, "remaining": remaining}
+    log.info("enrich_prospects_deep_done", **stats)
+    return stats
+
+
 def _pending_domains(pool: ConnectionPool, day: date, refresh_days: int,
                      limit: int | None = None) -> list[str]:
     start = datetime.combine(day, time.min)

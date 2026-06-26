@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS enrichment (
   fetched_at timestamptz
 );
 ALTER TABLE enrichment ADD COLUMN IF NOT EXISTS website jsonb;
+ALTER TABLE enrichment ADD COLUMN IF NOT EXISTS business_intel jsonb;
 
 CREATE TABLE IF NOT EXISTS meetings (
   lead_id      text,

@@ -1104,7 +1104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         domain = (cl[0].get("prospect_website") if cl else None) or (master.get("domain") if master else None)
         enr = None
         if domain:
-            rows = q("SELECT domain, semrush, apollo, website, status, fetched_at FROM enrichment WHERE domain=%s",
+            rows = q("SELECT domain, semrush, apollo, website, business_intel, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
         ovr = q("SELECT qualified, reason, override_by, created_at FROM qualification_overrides WHERE call_id=%s",
@@ -1395,7 +1395,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             domain = max(set(sites), key=sites.count) if sites else None
         enr = None
         if domain:
-            rows = q("SELECT domain, semrush, apollo, website, status, fetched_at FROM enrichment WHERE domain=%s",
+            rows = q("SELECT domain, semrush, apollo, website, business_intel, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
 

@@ -216,7 +216,29 @@ function apolloCard(d){
   const tech=(ap.technologies||[]).slice(0,18);
   const techHtml=tech.length?`<div class="subh">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
   const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
-  return `<div class="card full"><h2>🏢 Apollo free data</h2>${aHtml}${descr}${techHtml}</div>`;
+  // Decision-makers (FREE: name + title; email/phone require Apollo credits, shown as a flag)
+  const people=(ap.people||[]);
+  const peopleHtml=people.length?`<div class="subh">Decision-makers (${people.length})</div>
+    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'}${p.linkedin_url?` <a class="lnk" href="${esc(p.linkedin_url)}" target="_blank">in↗</a>`:''}</div>
+      <div>${esc(p.title)||'—'}${(p.has_email||p.has_phone)?` <span class="muted" style="font-size:11px">(${[p.has_email?'email':null,p.has_phone?'phone':null].filter(Boolean).join('/')} on file — credits to reveal)</span>`:''}</div>`).join('')}</div>`
+    :'<div class="muted small mt6">No decision-makers found (only for paid-ads prospects).</div>';
+  return `<div class="card full"><h2>🏢 Apollo data</h2>${aHtml}${descr}${techHtml}${peopleHtml}</div>`;
+}
+
+// ---- Website business intelligence (LLM-extracted: products/services/USPs/ICP) ----
+function businessIntelCard(d){
+  const b=((d.enrichment||{}).business_intel)||{};
+  if(!b.found) return `<div class="card full"><h2>🧩 Website business intel</h2>
+    <div class="muted small">Not extracted yet (runs for paid-ads prospects).</div></div>`;
+  const list=(arr)=>(arr&&arr.length)?`<div class="chips">${arr.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'<span class="muted small">—</span>';
+  const rows=[['Industry',esc(b.industry)],['Target audience',esc(b.target_audience)],['Ideal customer (ICP)',esc(b.icp)]].filter(r=>r[1]);
+  return `<div class="card full"><h2>🧩 Website business intel</h2>
+    ${b.business_summary?`<div class="small" style="margin-bottom:10px">${esc(b.business_summary)}</div>`:''}
+    <div class="subh">Products</div>${list(b.products)}
+    <div class="subh">Services</div>${list(b.services)}
+    <div class="subh">USPs / differentiators</div>${list(b.usps)}
+    ${rows.length?`<div class="kv" style="margin-top:10px">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`:''}
+  </div>`;
 }
 
 // ---- Digital marketing insights (SEO/ads + paid-ads status) ----
@@ -427,7 +449,8 @@ async function load(){
   // The 6 sections exactly as requested.
   const tabs=[
     ['uploaded','Uploaded database info', businessDataCard(d)+contactsCard(d)],
-    ['apollo','Apollo free data', apolloCard(d)],
+    ['apollo','Apollo (company + people)', apolloCard(d)],
+    ['business','Website business intel', businessIntelCard(d)],
     ['website','Website information', websiteInfoCard(d)],
     ['digital','Digital marketing insights', digitalMarketingCard(d)],
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],

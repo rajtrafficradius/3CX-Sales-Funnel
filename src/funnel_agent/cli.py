@@ -237,6 +237,22 @@ def enrich_websites_cmd(
                 break
 
 
+@app.command(name="enrich-deep")
+def enrich_deep_cmd(
+    limit: int = typer.Option(1000, help="max paid-ads prospects to deep-enrich this run"),
+    workers: int = typer.Option(6, help="parallel workers"),
+) -> None:
+    """Deep-enrich the PAID-ADS prospects in the $1-10M band: Apollo company + decision-maker
+    names/titles (FREE, no credits) + website business intel (products/services/USPs/ICP).
+    Each source stored separately. Idempotent — re-run to continue where it left off."""
+    settings = _settings()
+    from .enrich import enrich_prospects_deep
+
+    with _analytics_pool(settings) as pool:
+        stats = enrich_prospects_deep(pool, settings, limit=limit, workers=workers)
+    typer.echo(f"enrich-deep: {stats}")
+
+
 @app.command(name="whatsapp")
 def whatsapp_run() -> None:
     """Schedule WhatsApp nurturing for new bookings + send any due messages (#13).
