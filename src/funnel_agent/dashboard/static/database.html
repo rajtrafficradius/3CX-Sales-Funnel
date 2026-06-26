@@ -43,6 +43,20 @@
   .dom{color:var(--accent)}
   .pager{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin-top:12px;color:var(--muted);font-size:13px}
   .flash{animation:flash 1.2s ease}@keyframes flash{0%{background:rgba(34,197,94,.18)}100%{background:transparent}}
+  /* coverage stat cards double as multi-select filter toggles */
+  .stat.cov{cursor:pointer;user-select:none;transition:border-color .12s,box-shadow .12s}
+  .stat.cov:hover{border-color:var(--accent)}
+  .stat.cov.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:rgba(59,130,246,.12)}
+  .stat.cov.active .l{color:#9ec3ff}
+  /* live result summary + active-filter pills */
+  .resultbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:4px 0 12px;min-height:30px}
+  .resultcount{font-size:14px;color:var(--muted)}
+  .resultcount b{font-size:21px;color:var(--txt);font-weight:820;vertical-align:-1px}
+  .fpill{display:inline-flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 8px 4px 12px;font-size:12px;color:var(--txt)}
+  .fpill button{all:unset;cursor:pointer;color:var(--muted);font-weight:800;line-height:1;padding:0 1px}
+  .fpill button:hover{color:var(--bad)}
+  #clearAll{border-color:rgba(239,68,68,.5);color:#fca5a5;padding:5px 11px;font-size:12px}
+  #clearAll:hover{border-color:var(--bad);background:rgba(239,68,68,.08)}
 </style>
 </head>
 <body>
@@ -76,15 +90,17 @@
       <option value="no">No ad pixels</option>
       <option value="unscanned">Not scanned yet</option>
     </select>
-    <select id="coverage">
-      <option value="">All (enrichment coverage)</option>
-      <option value="scanned">✅ Tracking scanned</option>
-      <option value="gate">🎯 Passed paid-ads gate</option>
-      <option value="apollo">🏢 Has Apollo</option>
-      <option value="intel">🧩 Has website intel</option>
-      <option value="whois">🌐 Has WHOIS</option>
+    <select id="revenue">
+      <option value="">All revenue</option>
+      <option value="lt1">&lt; $1M</option>
+      <option value="1-10">$1M – $10M</option>
+      <option value="10-50">$10M – $50M</option>
+      <option value="50-100">$50M – $100M</option>
+      <option value="100up">$100M+</option>
     </select>
+    <span class="muted" style="font-size:12px">Coverage filters → click the chips below (combine several)</span>
   </div>
+  <div class="resultbar" id="resultbar"></div>
   <div class="tablewrap">
     <table>
       <thead><tr>
@@ -107,23 +123,65 @@ const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 let offset=0, limit=50, total=0, lastToken=null;
+let _rowSeq=0, _statSeq=0;           // guards: ignore out-of-order fetch responses
+let searchTimer;
+const cov=new Set();                 // active coverage facets — multi-select, combined with AND
+const COV=[['scanned','✅ Tracking scanned'],['gate','🎯 Paid-ads gate'],['apollo','🏢 Apollo'],
+           ['intel','🧩 Website intel'],['whois','🌐 WHOIS']];
+const COVLBL=Object.fromEntries(COV);
+const PA_LBL={yes:'🎯 Running paid ads',no:'No ad pixels',unscanned:'Not scanned yet'};
+const REV_LBL={lt1:'< $1M',['1-10']:'$1M–$10M',['10-50']:'$10M–$50M',['50-100']:'$50M–$100M',['100up']:'$100M+'};
+
+function curFilters(){
+  return {q:$('#search').value.trim(), source:$('#source').value, enriched:$('#enriched').value,
+          paid_ads:$('#paidAds').value, revenue:$('#revenue').value, coverage:[...cov].join(',')};
+}
+function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComponent(f.source)}`
+  +`&enriched=${encodeURIComponent(f.enriched)}&paid_ads=${encodeURIComponent(f.paid_ads)}`
+  +`&revenue=${encodeURIComponent(f.revenue)}&coverage=${encodeURIComponent(f.coverage)}`; }
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
-function covCard(key,l,n){ return `<div class="stat" style="cursor:pointer" title="Click to filter"
-  onclick="document.getElementById('coverage').value='${key}';offset=0;loadRows();">
-  <div class="n">${fmtN(n||0)}</div><div class="l">${l}</div></div>`; }
+function covCard(key,l,n){
+  const on=cov.has(key)?' active':'';
+  return `<div class="stat cov${on}" title="Click to add/remove this filter" onclick="toggleCov('${key}')">
+    <div class="n">${fmtN(n||0)}</div><div class="l">${l}</div></div>`;
+}
+function toggleCov(key){ cov.has(key)?cov.delete(key):cov.add(key); offset=0; loadRows(); loadStats(); }
+
 async function loadStats(){
+  const my=++_statSeq;
   try{
-    const s=await fetch('/api/database/stats').then(r=>r.json());
+    const s=await fetch('/api/database/stats?'+qs(curFilters())).then(r=>r.json());
+    if(my!==_statSeq) return;            // a newer filter state superseded this request
     const c=s.coverage||{};
     $('#stats').innerHTML = statCard(fmtN(s.businesses),'Businesses')+statCard(fmtN(s.domains),'Domains')
       +statCard(fmtN(s.no_domain),'No website')+statCard(fmtN(s.with_phone),'With phone')
-      +covCard('scanned','✅ Tracking scanned',c.scanned)+covCard('gate','🎯 Paid-ads gate',c.gate)
-      +covCard('apollo','🏢 Apollo',c.apollo)+covCard('intel','🧩 Website intel',c.intel)+covCard('whois','🌐 WHOIS',c.whois);
+      +COV.map(([k,l])=>covCard(k,l,c[k])).join('');
     if(lastToken!==null && s.token!==lastToken){ $('#liveText').textContent='updated'; loadRows(true); setTimeout(()=>$('#liveText').textContent='live',1500); }
     lastToken = s.token;
   }catch(e){ $('#liveText').textContent='offline'; }
 }
+
+// Active-filter pills + the prominent "N businesses match" count above the table.
+let _pills=[];
+function renderResult(){
+  const f=curFilters(); _pills=[];
+  if(f.q) _pills.push(['“'+f.q+'”', ()=>{$('#search').value='';}]);
+  if(f.source) _pills.push([(SRC_LABEL[f.source]||f.source), ()=>{$('#source').value='';}]);
+  if(f.enriched) _pills.push([(f.enriched==='yes'?'Enriched':'Not enriched'), ()=>{$('#enriched').value='';}]);
+  if(f.paid_ads) _pills.push([(PA_LBL[f.paid_ads]||f.paid_ads), ()=>{$('#paidAds').value='';}]);
+  if(f.revenue) _pills.push([(REV_LBL[f.revenue]||f.revenue), ()=>{$('#revenue').value='';}]);
+  cov.forEach(k=>_pills.push([COVLBL[k], ()=>cov.delete(k)]));
+  const any=_pills.length>0;
+  const out=[`<span class="resultcount">${any?'🔎 ':''}<b>${total.toLocaleString()}</b> `
+    +`prospect${total===1?'':'s'}${any?' match these filters':''}</span>`];
+  _pills.forEach((p,i)=>out.push(`<span class="fpill">${esc(p[0])}<button onclick="clearPill(${i})" title="Remove filter">✕</button></span>`));
+  if(any) out.push(`<button id="clearAll" onclick="clearAll()">Clear all</button>`);
+  $('#resultbar').innerHTML=out.join(' ');
+}
+function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; loadRows(); loadStats(); } }
+function clearAll(){ clearTimeout(searchTimer); $('#search').value='';$('#source').value='';$('#enriched').value='';
+  $('#paidAds').value='';$('#revenue').value=''; cov.clear(); offset=0; loadRows(); loadStats(); }
 
 // Revenue stored in millions USD; show as $X.XM / $X.XB.
 function fmtRev(m){
@@ -167,23 +225,24 @@ function rowHtml(r){
 }
 
 async function loadRows(flash){
-  const q=$('#search').value.trim(), en=$('#enriched').value, pa=$('#paidAds').value, sr=$('#source').value, cv=$('#coverage').value;
-  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&paid_ads=${pa}&source=${sr}&coverage=${cv}&limit=${limit}&offset=${offset}`;
+  const my=++_rowSeq;
+  const url=`/api/database/prospects?${qs(curFilters())}&limit=${limit}&offset=${offset}`;
   let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
+  if(my!==_rowSeq) return;               // a newer filter state superseded this request
   total=d.total;
   $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="13" class="muted">No matching businesses.</td></tr>';
-  if(flash) $('#rows').classList.add('flash'), setTimeout(()=>$('#rows').classList.remove('flash'),1200);
+  if(flash){ $('#rows').classList.add('flash'); setTimeout(()=>$('#rows').classList.remove('flash'),1200); }
   const from = total?offset+1:0, to=Math.min(offset+limit,total);
   $('#rangeText').textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`;
   $('#prev').disabled = offset<=0; $('#next').disabled = offset+limit>=total;
+  renderResult();
 }
 
-let searchTimer;
-$('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();},250); });
-$('#enriched').onchange=()=>{offset=0;loadRows();};
-$('#paidAds').onchange=()=>{offset=0;loadRows();};
-$('#coverage').onchange=()=>{offset=0;loadRows();};
-$('#source').onchange=()=>{offset=0;loadRows();};
+$('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();loadStats();},250); });
+$('#enriched').onchange=()=>{offset=0;loadRows();loadStats();};
+$('#paidAds').onchange=()=>{offset=0;loadRows();loadStats();};
+$('#revenue').onchange=()=>{offset=0;loadRows();loadStats();};
+$('#source').onchange=()=>{offset=0;loadRows();loadStats();};
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };
 

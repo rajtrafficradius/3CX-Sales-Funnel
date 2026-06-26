@@ -1607,19 +1607,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return RedirectResponse("/", status_code=302)
         return _static("database.html")
 
-    @app.get("/api/database/prospects")
-    def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
-                           enriched: str = "", pipeline: str = "", paid_ads: str = "",
-                           source: str = "", coverage: str = "") -> JSONResponse:
-        """The Database browser: the GIVEN business data (companies), STATIC columns only,
-        GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
-        Businesses with no domain are listed individually. Dynamic metrics (SEO/Apollo/
-        website tracking) are NOT shown here — they live on the prospect page (#1)."""
-        _require_db_access(request)
-        limit = max(1, min(limit, 200))
+    # coverage facet -> `ge` boolean column. Multiple selected facets combine with AND.
+    _COV = {"scanned": "ge.scanned", "gate": "ge.gate_pass", "apollo": "ge.has_apollo",
+            "intel": "ge.has_intel", "whois": "ge.has_whois"}
+
+    def _coverage_conds(coverage: str) -> list:
+        """Parse a comma-separated coverage list into `ge` conditions (deduped, AND-ed)."""
+        out = []
+        for cov in (coverage or "").split(","):
+            cond = _COV.get(cov.strip())
+            if cond and cond not in out:
+                out.append(cond)
+        return out
+
+    # Revenue range (per-domain SUMMED revenue, millions USD) -> `ge` condition. Whitelist
+    # of preset bands; the strings are fixed (no user input inlined) so they're injection-safe.
+    _REV = {"lt1": "ge.total_revenue < 1",
+            "1-10": "ge.total_revenue >= 1 AND ge.total_revenue < 10",
+            "10-50": "ge.total_revenue >= 10 AND ge.total_revenue < 50",
+            "50-100": "ge.total_revenue >= 50 AND ge.total_revenue < 100",
+            "100up": "ge.total_revenue >= 100"}  # avoid '+' (URL-decodes to space)
+
+    def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = ""):
+        """Shared companies+enrichment CTE for the Database browser. Returns
+        (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
+        into the CTE; enriched/paid_ads/revenue come back as `ge` conditions. Coverage
+        filters are added by the caller, so /stats can facet independent of them."""
         term = search.strip().lower()
         digits = re.sub(r"[^0-9]", "", search)
-        params: dict = {"lim": limit, "off": offset}
+        params: dict = {}
         sd = sn = ""  # search filters for the domain / no-domain branches
         if term:
             params["like"] = f"%{term}%"
@@ -1645,12 +1661,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conds.append("ge.scanned AND NOT ge.runs_paid_ads")  # scanned, no ad pixels
         elif paid_ads == "unscanned":
             conds.append("NOT ge.scanned")
-        # Coverage filter: which enrichment data the domain has.
-        _COV = {"scanned": "ge.scanned", "gate": "ge.gate_pass", "apollo": "ge.has_apollo",
-                "intel": "ge.has_intel", "whois": "ge.has_whois"}
-        if coverage in _COV:
-            conds.append(_COV[coverage])
-        enr_filter = ("WHERE " + " AND ".join(conds)) if conds else ""
+        if revenue in _REV:
+            conds.append(_REV[revenue])
         cte = f"""
         WITH g AS (
           SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,
@@ -1681,6 +1693,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           FROM g LEFT JOIN enrichment e ON e.domain = g.domain
         )
         """
+        return cte, params, conds
+
+    @app.get("/api/database/prospects")
+    def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
+                           enriched: str = "", pipeline: str = "", paid_ads: str = "",
+                           source: str = "", coverage: str = "", revenue: str = "") -> JSONResponse:
+        """The Database browser: the GIVEN business data (companies), STATIC columns only,
+        GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
+        All filters combine with AND; `coverage` may carry several comma-separated facets
+        (e.g. apollo,whois) which all must hold. `total` is the count for the full filter."""
+        _require_db_access(request)
+        limit = max(1, min(limit, 200))
+        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue)
+        params["lim"] = limit
+        params["off"] = offset
+        conds += _coverage_conds(coverage)
+        enr_filter = ("WHERE " + " AND ".join(conds)) if conds else ""
         total = q(cte + f"SELECT count(*) AS n FROM ge {enr_filter}", params)[0]["n"]
         rows = q(
             cte + f"SELECT * FROM ge {enr_filter} "
@@ -1691,25 +1720,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(jsonable_encoder({"total": total, "limit": limit, "offset": offset, "rows": rows}))
 
     @app.get("/api/database/stats")
-    def database_stats(request: Request) -> JSONResponse:
+    def database_stats(request: Request, search: str = "", enriched: str = "",
+                       paid_ads: str = "", source: str = "", coverage: str = "",
+                       revenue: str = "") -> JSONResponse:
         _require_db_access(request)
         r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
               "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
               "(SELECT count(*) FROM companies WHERE domain IS NULL) AS no_domain, "
               "(SELECT count(*) FROM companies WHERE phone_norm IS NOT NULL) AS with_phone, "
               "(SELECT count(*) FROM enrichment WHERE status='ok') AS enriched")[0]
-        # Enrichment coverage over distinct company domains (for the filter chips).
-        cov = q(
-            "SELECT "
-            "count(*) FILTER (WHERE e.website IS NOT NULL) AS scanned, "
-            "count(*) FILTER (WHERE (e.website->>'runs_paid_ads')='true' "
-            "  OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true')) AS gate, "
-            "count(*) FILTER (WHERE e.apollo IS NOT NULL AND (e.apollo->>'found')='true') AS apollo, "
-            "count(*) FILTER (WHERE e.business_intel IS NOT NULL AND (e.business_intel->>'found')='true') AS intel, "
-            "count(*) FILTER (WHERE e.whois IS NOT NULL AND (e.whois->>'found')='true') AS whois, "
-            "count(*) AS domains "
-            "FROM (SELECT DISTINCT domain FROM companies WHERE domain IS NOT NULL AND domain<>'') d "
-            "LEFT JOIN enrichment e ON e.domain = d.domain")[0]
+        # Filter-aware coverage facets. Each facet count is scoped to the active
+        # NON-coverage filters (search/source/enriched/paid_ads) AND every OTHER selected
+        # coverage facet, so a chip reads as "the result total if this facet is (also) on":
+        # a SELECTED chip equals the table's grand total, an unselected one previews adding
+        # it. `matching` == /prospects.total (full filter incl. coverage), kept consistent.
+        # `sel` conditions come from the fixed _COV whitelist, so inlining them is safe.
+        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue)
+        base = ("WHERE " + " AND ".join(conds)) if conds else ""
+        sel = _coverage_conds(coverage)
+        sel_and = " AND ".join(sel) if sel else "true"
+        cov = q(cte + f"""SELECT
+            count(*) FILTER (WHERE {sel_and} AND ge.scanned) AS scanned,
+            count(*) FILTER (WHERE {sel_and} AND ge.gate_pass) AS gate,
+            count(*) FILTER (WHERE {sel_and} AND ge.has_apollo) AS apollo,
+            count(*) FILTER (WHERE {sel_and} AND ge.has_intel) AS intel,
+            count(*) FILTER (WHERE {sel_and} AND ge.has_whois) AS whois,
+            count(*) FILTER (WHERE ge.kind='domain') AS domains,
+            count(*) FILTER (WHERE {sel_and}) AS matching
+          FROM ge {base}""", params)[0]
         # a freshness fingerprint so the client can poll cheaply for changes
         f = q("SELECT (SELECT count(*) FROM companies) AS cc, "
               "(SELECT max(created_at) FROM companies) AS cu, "
