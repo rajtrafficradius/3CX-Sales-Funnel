@@ -167,24 +167,24 @@
   html.tv #kpis{flex:none}
   /* give the stages table MORE width than the funnel chart so the vs-benchmark column
      isn't clipped (desk default 1.1fr .9fr makes the chart wider — flip it for the wall) */
-  html.tv .grid.cols-2{flex:1 1 0;min-height:0;grid-template-columns:0.8fr 1.2fr}
+  html.tv .grid.cols-2{flex:1.15 1 0;min-height:0;grid-template-columns:0.8fr 1.2fr}
   html.tv .grid.cols-2>.card{overflow:hidden}
   /* hide the long explanatory subtitles on the wall — they wrap to 3 lines and crowd out
      the actual table rows (the benchmark % are shown per-row in the vs-benchmark column) */
   html.tv .card h2 .muted{display:none}
   /* KPIs were oversized (84px -> ~220px tall cards) and stole the stages table's room.
      Shrink them + tighten padding to free vertical space for the full stages table. */
-  html.tv .kpi .v{font-size:54px}
-  html.tv .kpi .l{font-size:18px}
-  html.tv .kpi .sub{font-size:12px;margin-top:2px}
-  html.tv #kpis{gap:10px}
-  html.tv #kpis .card{padding:10px 16px}
+  html.tv .kpi .v{font-size:42px}
+  html.tv .kpi .l{font-size:16px;margin-top:0}
+  html.tv .kpi .sub{font-size:11px;margin-top:1px}
+  html.tv #kpis{gap:8px}
+  html.tv #kpis .card{padding:8px 14px}
   html.tv .card h2{font-size:24px;margin-bottom:8px}
-  html.tv #funnelTable td,html.tv #funnelTable th{font-size:27px;padding:7px 10px}
+  html.tv #funnelTable td,html.tv #funnelTable th{font-size:25px;padding:5px 10px}
   html.tv .bench{font-size:19px;white-space:normal}  /* readable but fits the column */
   html.tv #funnelTable td.benchcell,html.tv #funnelTable th.benchhead{font-size:19px;padding-left:10px}
   /* Leaderboard = the wall's focal point: shares the lower half, all BDE rows fit */
-  html.tv #leaderboardCard{flex:1.3 1 0;display:flex;flex-direction:column;min-height:0}
+  html.tv #leaderboardCard{flex:1.05 1 0;display:flex;flex-direction:column;min-height:0}
   html.tv #leaderboardCard>div{flex:1;min-height:0;overflow:auto}
   html.tv #leaderboard{width:100%}
   html.tv #leaderboard th{font-size:24px;padding:6px 8px}
