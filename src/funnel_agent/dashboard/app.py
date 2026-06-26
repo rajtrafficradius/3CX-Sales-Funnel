@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import re
 from contextlib import asynccontextmanager
-from datetime import date as _date, timedelta
+from datetime import date as _date, datetime as _dt, time as _time, timedelta
+from zoneinfo import ZoneInfo
 from importlib import resources
 
 from fastapi import FastAPI, HTTPException, Request
@@ -50,7 +51,8 @@ BENCHMARK_RATIOS = {
 #   => team daily calls target = 75 x 16 = 1200 calls/day.
 # A single-BDE view shows that BDE's equal share (team target / # in-scope BDEs).
 CALLS_PER_30MIN = 75
-WORKDAY_HALF_HOURS = 16  # a standard 8h calling day = 16 x 30-min blocks
+WORKDAY_START_HOUR = 9   # BDEs start dialling at 9:00 AM Melbourne
+WORKDAY_HOURS = 9        # a 9-hour working day (9:00 AM -> 6:00 PM)
 
 
 def _pct(num: int, den: int) -> float | None:
@@ -418,23 +420,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return ps.isoformat(), pe.isoformat()
 
     def _calls_made_target(bde: str, start: str, end: str):
-        """Calls-Made benchmark as a TEAM target: CALLS_PER_30MIN dials per 30-min block
-        over a standard WORKDAY_HALF_HOURS (8h) day => 1200 calls/day for the whole team.
-        Scales by the number of days in the window. A single-BDE view gets that BDE's equal
-        share (team target / # in-scope BDEs). Returns (target_count, half_hours, rate_target)
-        where half_hours is the standard-day denominator for the per-30-min rate."""
-        try:
-            num_days = (_date.fromisoformat(end) - _date.fromisoformat(start)).days + 1
-        except Exception:
-            num_days = 1
-        num_days = max(1, num_days)
-        half_hours = WORKDAY_HALF_HOURS * num_days
+        """Calls-Made benchmark as a TEAM target, LIVE and time-elapsed-aware.
+
+        The team should dial CALLS_PER_30MIN per 30-min block. Each working day's clock
+        starts at the day's FIRST call but never before WORKDAY_START_HOUR (9:00 AM
+        Melbourne, so a stray pre-9 call doesn't move it), and runs for up to WORKDAY_HOURS
+        (9h). The expected ("target") count is 75 x the time ELAPSED so far — small early in
+        the day, growing to the full day's ~1350 by close — so the dashboard shows on-pace
+        vs behind in real time. A single-BDE view shows that BDE's equal share (team / N).
+        Returns (target_count, elapsed_half_hours, rate_target)."""
+        tz = ZoneInfo(settings.tz)
+        now = _dt.now(tz)
+        rows = q("SELECT min(started_at) AS fc FROM calls "
+                 "WHERE in_scope AND started_at >= %s::date AND started_at < (%s::date + 1) "
+                 "GROUP BY (started_at AT TIME ZONE %s)::date",
+                 (start, end, settings.tz))
+        total_min = 0.0
+        for r in rows:
+            if not r["fc"]:
+                continue
+            fc = r["fc"].astimezone(tz)
+            nine = _dt.combine(fc.date(), _time(WORKDAY_START_HOUR, 0), tzinfo=tz)
+            anchor = max(fc, nine)                       # floor the start at 9:00 AM
+            end_pt = min(now, anchor + timedelta(hours=WORKDAY_HOURS))
+            total_min += max(0.0, (end_pt - anchor).total_seconds() / 60.0)
+        half_hours = total_min / 30.0
         if bde and bde != "ALL":
-            r = q("SELECT count(DISTINCT COALESCE(bde_name, extension)) AS n "
-                  "FROM bde_agents WHERE in_scope AND active")
-            n = max(1, int(r[0]["n"]) if r and r[0]["n"] else 1)
+            rc = q("SELECT count(DISTINCT COALESCE(bde_name, extension)) AS n "
+                   "FROM bde_agents WHERE in_scope AND active")
+            n = max(1, int(rc[0]["n"]) if rc and rc[0]["n"] else 1)
             return int(round(CALLS_PER_30MIN * half_hours / n)), half_hours, round(CALLS_PER_30MIN / n, 1)
-        return CALLS_PER_30MIN * half_hours, half_hours, float(CALLS_PER_30MIN)
+        return int(round(CALLS_PER_30MIN * half_hours)), half_hours, float(CALLS_PER_30MIN)
 
     @app.get("/api/funnel")
     def funnel(request: Request, date: str | None = None, start: str | None = None,
@@ -482,7 +498,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "met": totals["calls_made"] >= cm_target,
                 "short": max(0, cm_target - totals["calls_made"]),
                 "rate": rate, "target_rate": cm_rate_target,
-                "basis": f"{scope} target: {cm_rate_target} dials/30min over an {WORKDAY_HALF_HOURS // 2}h day ({cm_target} total)",
+                "basis": f"{scope} target: {cm_rate_target} dials/30min from 9am over a {WORKDAY_HOURS}h day — {cm_target} expected so far",
             }
         # Cascade each stage's target from the Calls-Made TARGET down the funnel using the
         # standard conversion ratios (e.g. 1200 → 40% = 480 connected → 40% = 192 RPC →
