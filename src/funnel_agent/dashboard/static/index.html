@@ -153,14 +153,18 @@
      Auto height means main ends exactly at the content (no blank space below the
      leaderboard); fitTv() then scales the whole block to fill the screen. Fonts are
      large so the wall is readable from across the room. */
-  html.tv main{position:absolute;top:0;left:0;width:1920px;max-width:none;margin:0;padding:20px;
-    display:flex;flex-direction:column;gap:16px;transform-origin:top left}
+  /* FIXED 16:9 canvas (1920x1080): fitTv() scales it to fill the whole 55" screen edge to
+     edge (no narrow letterbox). Inner sections flex to fit this height. */
+  html.tv main{position:absolute;top:0;left:0;width:1920px;height:1080px;max-width:none;margin:0;padding:18px;
+    display:flex;flex-direction:column;gap:12px;transform-origin:top left}
   html.tv main>div{margin-top:0!important}
   /* Funnel + Stages sit side by side; the grid stretches both cards to the same
      (taller) height. Make the funnel card a flex column and let the chart FILL the
      remaining height so there's no empty space below the funnel. */
   html.tv .grid.cols-2>.card{display:flex;flex-direction:column;min-height:0}
-  html.tv #funnelChart{flex:1;height:auto;min-height:200px}
+  html.tv #funnelChart{flex:1;height:auto;min-height:150px}
+  /* KPIs + funnel row take their natural height; the leaderboard flexes to fill the rest */
+  html.tv #kpis,html.tv .grid.cols-2{flex:none}
   html.tv .kpi .v{font-size:84px}
   html.tv .kpi .l{font-size:27px}
   html.tv .kpi .sub{font-size:17px}
@@ -172,8 +176,8 @@
   html.tv #leaderboardCard{flex:1;display:flex;flex-direction:column;min-height:0}
   html.tv #leaderboardCard>div{flex:1;min-height:0}
   html.tv #leaderboard{width:100%;height:100%}
-  html.tv #leaderboard th{font-size:27px;padding:12px 10px}
-  html.tv #leaderboard td{font-size:44px;padding:16px 10px}
+  html.tv #leaderboard th{font-size:26px;padding:8px 8px}
+  html.tv #leaderboard td{font-size:40px;padding:10px 8px}
   #tvFs{display:none}
   html.tv #tvFs{display:block;position:fixed;bottom:10px;right:12px;z-index:60;background:rgba(28,36,48,.7);
     color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;opacity:.4}
