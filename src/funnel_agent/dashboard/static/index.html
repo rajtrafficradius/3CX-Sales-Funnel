@@ -145,8 +145,9 @@
   html.tv header{position:fixed;top:0;left:0;right:0;z-index:30;padding:8px 22px}
   html.tv header label,html.tv #bde,html.tv #period,html.tv #startDate,html.tv #endDate,html.tv #reviewBadge,html.tv #tvBtn,html.tv #calBtn,html.tv #p2Btn,html.tv #dbBtn,html.tv #adminBtn,html.tv #coachBtn,html.tv #whoami,html.tv #logoutBtn{display:none}
   .who{font-size:12px;color:var(--muted);white-space:nowrap}
-  /* desk-only cards hidden on the wall */
-  html.tv #trendCard,html.tv #reviewCard,html.tv #channelCard,html.tv #pitchCard,html.tv #rpcCard,html.tv #pipelineCard{display:none}
+  /* desk-only cards hidden on the wall (also hide lead chips so KPIs + funnel +
+     leaderboard get the whole screen and scale up = readable from across the room) */
+  html.tv #trendCard,html.tv #reviewCard,html.tv #channelCard,html.tv #pitchCard,html.tv #rpcCard,html.tv #pipelineCard,html.tv #leadCard{display:none}
   /* The scaled "stage": fixed design WIDTH, AUTO height, single full-width column.
      KPIs -> (funnel | stages side by side) -> lead chips -> FULL-WIDTH leaderboard.
      Auto height means main ends exactly at the content (no blank space below the
@@ -159,20 +160,18 @@
      (taller) height. Make the funnel card a flex column and let the chart FILL the
      remaining height so there's no empty space below the funnel. */
   html.tv .grid.cols-2>.card{display:flex;flex-direction:column;min-height:0}
-  html.tv #funnelChart{flex:1;height:auto;min-height:240px}
-  html.tv .kpi .v{font-size:60px}
-  html.tv .kpi .l{font-size:21px}
-  html.tv .kpi .sub{font-size:14px}
-  html.tv .card h2{font-size:22px;margin-bottom:10px}
-  html.tv #funnelTable td,html.tv #funnelTable th{font-size:24px;padding:9px 12px}
-  html.tv .leadchips .n{font-size:34px}
-  html.tv .leadchips .t{font-size:15px}
+  html.tv #funnelChart{flex:1;height:auto;min-height:200px}
+  html.tv .kpi .v{font-size:84px}
+  html.tv .kpi .l{font-size:27px}
+  html.tv .kpi .sub{font-size:17px}
+  html.tv .card h2{font-size:30px;margin-bottom:10px}
+  html.tv #funnelTable td,html.tv #funnelTable th{font-size:34px;padding:11px 14px}
   /* Leaderboard = the wall's focal point: full width, big rows, fills remaining height */
   html.tv #leaderboardCard{flex:1;display:flex;flex-direction:column;min-height:0}
   html.tv #leaderboardCard>div{flex:1;min-height:0}
   html.tv #leaderboard{width:100%;height:100%}
-  html.tv #leaderboard th{font-size:19px;padding:10px 10px}
-  html.tv #leaderboard td{font-size:30px;padding:14px 10px}
+  html.tv #leaderboard th{font-size:27px;padding:12px 10px}
+  html.tv #leaderboard td{font-size:44px;padding:16px 10px}
   #tvFs{display:none}
   html.tv #tvFs{display:block;position:fixed;bottom:10px;right:12px;z-index:60;background:rgba(28,36,48,.7);
     color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;opacity:.4}
