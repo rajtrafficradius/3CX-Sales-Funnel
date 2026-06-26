@@ -1399,6 +1399,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      (domain,))
             enr = rows[0] if rows else None
 
+        # Lazy on-demand WHOIS. auDA blocks BULK free WHOIS for .au (429 on RDAP, refuses
+        # port-43 under load) — but a SINGLE live lookup from this server works. So fetch
+        # once, the first time a prospect is actually opened, and cache it. This naturally
+        # respects the registry's per-IP limits (one query per prospect view, never bulk).
+        _ew = enr.get("whois") if enr else None
+        if domain and not (isinstance(_ew, dict) and _ew.get("found") is True):
+            try:
+                from ..enrichment.whois_lookup import lookup_whois
+                w = lookup_whois(domain)
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO enrichment (domain, whois, fetched_at) VALUES (%s,%s,now()) "
+                        "ON CONFLICT (domain) DO UPDATE SET whois = EXCLUDED.whois, fetched_at = now()",
+                        (domain, Json(w)))
+                    conn.commit()
+                if enr is None:
+                    enr = {"domain": domain, "whois": w}
+                else:
+                    enr["whois"] = w
+            except Exception:
+                pass  # WHOIS is best-effort; never block the prospect page
+
         # If the domain was only resolved from the calls above (phone access), fetch the
         # given business data now (companies were not found by phone earlier).
         if not companies and domain:

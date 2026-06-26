@@ -252,7 +252,8 @@ def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: in
                 bi = {"found": False}
             updates["apollo"] = Json(org)
             updates["business_intel"] = Json(bi)
-        if not row.get("whois"):                     # free RDAP WHOIS (cheap — always backfill)
+        _w = row.get("whois")                        # free WHOIS (cheap); retry prior failures
+        if not isinstance(_w, dict) or _w.get("found") is not True:
             updates["whois"] = Json(lookup_whois(domain))
         if updates:
             cols = list(updates)
