@@ -50,11 +50,11 @@ BENCHMARK_RATIOS = {
 # dials per 30-min block, sustained over a standard WORKDAY_HALF_HOURS-block (8h) day.
 #   => team daily calls target = 75 x 16 = 1200 calls/day.
 # A single-BDE view shows that BDE's equal share (team target / # in-scope BDEs).
-CALLS_PER_30MIN = 75
+CALLS_PER_30MIN = 75     # team dials per 30-min block
 WORKDAY_START_HOUR = 9   # BDEs start dialling at 9:00 AM Melbourne
-WORKDAY_HOURS = 9        # 9-hour day span (9:00 AM -> 6:00 PM)
-LUNCH_START_HOUR = 13    # 1-hour break (1:00 PM -> 2:00 PM) is NOT calling time
-LUNCH_HOURS = 1          # => 8 actual calling hours/day => 75/30min x 16 = 1200 calls/day
+CALLING_HOURS = 8        # 8 hours of CALLING time/day => 75/30min x 16 = 1200 calls/day
+DAY_SPAN_HOURS = 9       # 9-hour day; the extra ~1h is flexible lunch/break BDEs self-manage
+                         # (we don't model a fixed lunch window — just cap calling time at 8h)
 
 
 def _pct(num: int, den: int) -> float | None:
@@ -426,14 +426,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         The team should dial CALLS_PER_30MIN per 30-min block. Each working day's clock
         starts at the day's FIRST call but never before WORKDAY_START_HOUR (9:00 AM
-        Melbourne, so a stray pre-9 call doesn't move it), and runs for up to WORKDAY_HOURS
-        (9h span) MINUS the 1-hour lunch break (so 8 actual calling hours). The expected
-        ("target") count is 75 x the calling time ELAPSED so far — small early in the day,
-        growing to the full day's 1200 by close — so the dashboard shows on-pace vs behind
-        in real time. A single-BDE view shows that BDE's equal share (team / N).
+        Melbourne, so a stray pre-9 call doesn't move it). Calling time is the wall-clock
+        elapsed since then, CAPPED at CALLING_HOURS (8h) — we don't model a fixed lunch
+        window; the extra ~1h break is flexible and self-managed. The expected ("target")
+        count is 75 x the calling time elapsed so far — small early in the day, growing to
+        the full day's 1200 by close. A single-BDE view shows the equal share (team / N).
         Returns (target_count, elapsed_half_hours, rate_target)."""
         tz = ZoneInfo(settings.tz)
         now = _dt.now(tz)
+        cap_min = CALLING_HOURS * 60
         rows = q("SELECT min(started_at) AS fc FROM calls "
                  "WHERE in_scope AND started_at >= %s::date AND started_at < (%s::date + 1) "
                  "GROUP BY (started_at AT TIME ZONE %s)::date",
@@ -445,13 +446,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             fc = r["fc"].astimezone(tz)
             nine = _dt.combine(fc.date(), _time(WORKDAY_START_HOUR, 0), tzinfo=tz)
             anchor = max(fc, nine)                       # floor the start at 9:00 AM
-            end_pt = min(now, anchor + timedelta(hours=WORKDAY_HOURS))
+            end_pt = min(now, anchor + timedelta(hours=DAY_SPAN_HOURS))
             elapsed = (end_pt - anchor).total_seconds() / 60.0
-            # subtract the lunch break that has already elapsed (it isn't calling time)
-            lunch_s = _dt.combine(fc.date(), _time(LUNCH_START_HOUR, 0), tzinfo=tz)
-            lunch_e = lunch_s + timedelta(hours=LUNCH_HOURS)
-            overlap = (min(end_pt, lunch_e) - max(anchor, lunch_s)).total_seconds() / 60.0
-            total_min += max(0.0, elapsed - max(0.0, overlap))
+            total_min += min(max(0.0, elapsed), cap_min)  # cap calling time at 8h/day
         half_hours = total_min / 30.0
         if bde and bde != "ALL":
             rc = q("SELECT count(DISTINCT COALESCE(bde_name, extension)) AS n "
@@ -461,28 +458,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return int(round(CALLS_PER_30MIN * half_hours)), half_hours, float(CALLS_PER_30MIN)
 
     def _workday_progress() -> dict:
-        """TODAY's calling-day progress vs the 8-hour calling target (9am Melbourne start,
-        9h span minus the 1h lunch). For the header 'time completed' indicator."""
+        """TODAY's calling-time progress vs the 8-hour calling target (9am Melbourne start,
+        wall-clock elapsed capped at 8h — no fixed lunch window). For the header timer."""
         tz = ZoneInfo(settings.tz)
         now = _dt.now(tz)
         today = now.date()
         start_dt = _dt.combine(today, _time(WORKDAY_START_HOUR, 0), tzinfo=tz)
-        end_dt = start_dt + timedelta(hours=WORKDAY_HOURS)            # 6:00 PM
-        lunch_s = _dt.combine(today, _time(LUNCH_START_HOUR, 0), tzinfo=tz)
-        lunch_e = lunch_s + timedelta(hours=LUNCH_HOURS)
-        total_min = (WORKDAY_HOURS - LUNCH_HOURS) * 60               # 480 = 8h
-        if now <= start_dt:
-            elapsed = 0.0
-        else:
-            end_pt = min(now, end_dt)
-            gross = (end_pt - start_dt).total_seconds() / 60.0
-            overlap = (min(end_pt, lunch_e) - max(start_dt, lunch_s)).total_seconds() / 60.0
-            elapsed = max(0.0, gross - max(0.0, overlap))
-        elapsed = max(0.0, min(elapsed, total_min))
+        end_dt = start_dt + timedelta(hours=DAY_SPAN_HOURS)           # 6:00 PM
+        total_min = CALLING_HOURS * 60                               # 480 = 8h
+        elapsed = 0.0 if now <= start_dt else (min(now, end_dt) - start_dt).total_seconds() / 60.0
+        elapsed = max(0.0, min(elapsed, total_min))                  # cap at 8h calling
         return {
             "elapsed_min": int(round(elapsed)), "total_min": total_min,
             "pct": int(round(100 * elapsed / total_min)) if total_min else 0,
-            "on_break": lunch_s <= now < lunch_e,
             "ended": now >= end_dt, "not_started": now < start_dt,
         }
 
@@ -532,7 +520,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "met": totals["calls_made"] >= cm_target,
                 "short": max(0, cm_target - totals["calls_made"]),
                 "rate": rate, "target_rate": cm_rate_target,
-                "basis": f"{scope} target: {cm_rate_target} dials/30min, 9am + 8 calling hrs (1h lunch) — {cm_target} expected so far",
+                "basis": f"{scope} target: {cm_rate_target} dials/30min from 9am, 8 calling hrs/day — {cm_target} expected so far",
             }
         # Cascade each stage's target from the Calls-Made TARGET down the funnel using the
         # standard conversion ratios (e.g. 1200 → 40% = 480 connected → 40% = 192 RPC →

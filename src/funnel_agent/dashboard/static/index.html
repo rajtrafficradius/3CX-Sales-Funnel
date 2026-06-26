@@ -166,6 +166,8 @@
   html.tv .kpi .sub{font-size:17px}
   html.tv .card h2{font-size:30px;margin-bottom:10px}
   html.tv #funnelTable td,html.tv #funnelTable th{font-size:34px;padding:11px 14px}
+  html.tv .bench{font-size:26px}  /* the 'vs benchmark' cells default to 11px — readable on the wall */
+  html.tv #funnelTable td.benchcell,html.tv #funnelTable th.benchhead{font-size:26px}
   /* Leaderboard = the wall's focal point: full width, big rows, fills remaining height */
   html.tv #leaderboardCard{flex:1;display:flex;flex-direction:column;min-height:0}
   html.tv #leaderboardCard>div{flex:1;min-height:0}
@@ -424,7 +426,7 @@ function renderWorkday(w){
   let label;
   if(w.not_started) label='day not started';
   else if(w.ended) label=`${th}h / ${th}h · day ended`;
-  else label=`${h}h ${String(mm).padStart(2,'0')}m / ${th}h (${w.pct||0}%)` + (w.on_break?' · lunch':'');
+  else label=`${h}h ${String(mm).padStart(2,'0')}m / ${th}h (${w.pct||0}%)`;
   el.textContent=label;
   const b=document.getElementById('workdayBadge');
   if(b) b.style.borderColor = (w.ended||(w.pct||0)>=100)?'rgba(34,197,94,.5)':'';
