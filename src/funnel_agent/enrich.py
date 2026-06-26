@@ -204,7 +204,8 @@ def _pending_deep_domains(pool: ConnectionPool, limit: int) -> list[str]:
             SELECT d.dom FROM d JOIN enrichment e ON e.domain = d.dom
             WHERE ( (e.website->>'runs_paid_ads')='true'
                     OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true') )
-              AND (e.business_intel IS NULL OR e.whois IS NULL)
+              AND (e.business_intel IS NULL OR e.whois IS NULL
+                   OR (e.whois->>'found') IS DISTINCT FROM 'true')  -- retry failed WHOIS (e.g. 429)
             ORDER BY d.dom
             LIMIT %s
             """,

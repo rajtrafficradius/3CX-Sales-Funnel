@@ -8,6 +8,9 @@ key dates, status, nameservers and registrant/owner where the registry exposes i
 
 from __future__ import annotations
 
+import threading
+import time
+
 import httpx
 
 from ..logging import get_logger
@@ -15,6 +18,29 @@ from ..logging import get_logger
 log = get_logger(__name__)
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; TrafficRadiusBot/1.0; +https://trafficradius.com.au)"}
+
+# Route each TLD to its REGISTRY's own RDAP server (IANA bootstrap) instead of the shared
+# rdap.org aggregator, which rate-limits (429) under bulk load. Cached after first fetch.
+_BOOTSTRAP: dict | None = None
+_BOOT_LOCK = threading.Lock()
+
+
+def _rdap_base(domain: str) -> str | None:
+    global _BOOTSTRAP
+    tld = domain.rsplit(".", 1)[-1].lower()
+    if _BOOTSTRAP is None:
+        with _BOOT_LOCK:
+            if _BOOTSTRAP is None:
+                try:
+                    _BOOTSTRAP = httpx.get("https://data.iana.org/rdap/dns.json", timeout=15.0,
+                                           headers=_UA).json()
+                except Exception:
+                    _BOOTSTRAP = {"services": []}
+    for svc in (_BOOTSTRAP.get("services") or []):
+        tlds, urls = (svc + [[], []])[:2]
+        if tld in [t.lower() for t in tlds] and urls:
+            return urls[0].rstrip("/")
+    return None
 
 
 def _vcard(entity: dict) -> tuple[str | None, str | None]:
@@ -37,15 +63,29 @@ def lookup_whois(domain: str) -> dict:
     """Free RDAP WHOIS for a domain. Returns {found, registrar, created, expires, ...}."""
     if not domain:
         return {"found": False, "status": "no_domain"}
-    try:
-        r = httpx.get(f"https://rdap.org/domain/{domain}", timeout=12.0,
-                      follow_redirects=True, headers=_UA)
-        if r.status_code != 200:
-            return {"found": False, "status": f"http_{r.status_code}"}
-        d = r.json()
-    except Exception as exc:
-        log.info("whois_failed", domain=domain, error=str(exc)[:160])
-        return {"found": False, "status": "error", "error": str(exc)[:160]}
+    base = _rdap_base(domain)
+    urls = [f"{base}/domain/{domain}"] if base else []
+    urls.append(f"https://rdap.org/domain/{domain}")  # fallback to the aggregator
+    d = None
+    last = "error"
+    for url in urls:
+        for attempt in range(3):
+            try:
+                r = httpx.get(url, timeout=12.0, follow_redirects=True, headers=_UA)
+            except Exception as exc:
+                last = str(exc)[:120]; break
+            if r.status_code == 200:
+                d = r.json(); break
+            last = f"http_{r.status_code}"
+            if r.status_code == 429:
+                time.sleep(1.5 * (attempt + 1))  # back off on rate-limit, then retry
+                continue
+            break
+        if d is not None:
+            break
+    if d is None:
+        log.info("whois_failed", domain=domain, status=last)
+        return {"found": False, "status": last}
 
     events = {e.get("eventAction"): e.get("eventDate") for e in (d.get("events") or [])}
     registrar = registrant = owner_email = None
