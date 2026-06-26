@@ -167,14 +167,16 @@
   html.tv #kpis{flex:none}
   html.tv .grid.cols-2{flex:1 1 0;min-height:0}
   html.tv .grid.cols-2>.card{overflow:hidden}
-  html.tv #funnelTable{display:block;overflow:auto;height:100%}
+  /* hide the long explanatory subtitles on the wall — they wrap to 3 lines and crowd out
+     the actual table rows (the benchmark % are shown per-row in the vs-benchmark column) */
+  html.tv .card h2 .muted{display:none}
   html.tv .kpi .v{font-size:84px}
   html.tv .kpi .l{font-size:27px}
   html.tv .kpi .sub{font-size:17px}
-  html.tv .card h2{font-size:30px;margin-bottom:10px}
-  html.tv #funnelTable td,html.tv #funnelTable th{font-size:34px;padding:11px 14px}
-  html.tv .bench{font-size:26px}  /* the 'vs benchmark' cells default to 11px — readable on the wall */
-  html.tv #funnelTable td.benchcell,html.tv #funnelTable th.benchhead{font-size:26px}
+  html.tv .card h2{font-size:24px;margin-bottom:8px}
+  html.tv #funnelTable td,html.tv #funnelTable th{font-size:28px;padding:7px 12px}
+  html.tv .bench{font-size:22px}  /* the 'vs benchmark' cells default to 11px — readable on the wall */
+  html.tv #funnelTable td.benchcell,html.tv #funnelTable th.benchhead{font-size:22px}
   /* Leaderboard = the wall's focal point: shares the lower half, all BDE rows fit */
   html.tv #leaderboardCard{flex:1.3 1 0;display:flex;flex-direction:column;min-height:0}
   html.tv #leaderboardCard>div{flex:1;min-height:0;overflow:auto}
