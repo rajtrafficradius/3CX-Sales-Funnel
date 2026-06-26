@@ -76,6 +76,14 @@
       <option value="no">No ad pixels</option>
       <option value="unscanned">Not scanned yet</option>
     </select>
+    <select id="coverage">
+      <option value="">All (enrichment coverage)</option>
+      <option value="scanned">✅ Tracking scanned</option>
+      <option value="gate">🎯 Passed paid-ads gate</option>
+      <option value="apollo">🏢 Has Apollo</option>
+      <option value="intel">🧩 Has website intel</option>
+      <option value="whois">🌐 Has WHOIS</option>
+    </select>
   </div>
   <div class="tablewrap">
     <table>
@@ -101,11 +109,17 @@ const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 let offset=0, limit=50, total=0, lastToken=null;
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
+function covCard(key,l,n){ return `<div class="stat" style="cursor:pointer" title="Click to filter"
+  onclick="document.getElementById('coverage').value='${key}';offset=0;loadRows();">
+  <div class="n">${fmtN(n||0)}</div><div class="l">${l}</div></div>`; }
 async function loadStats(){
   try{
     const s=await fetch('/api/database/stats').then(r=>r.json());
+    const c=s.coverage||{};
     $('#stats').innerHTML = statCard(fmtN(s.businesses),'Businesses')+statCard(fmtN(s.domains),'Domains')
-      +statCard(fmtN(s.no_domain),'No website')+statCard(fmtN(s.with_phone),'With phone')+statCard(fmtN(s.enriched),'Enriched');
+      +statCard(fmtN(s.no_domain),'No website')+statCard(fmtN(s.with_phone),'With phone')
+      +covCard('scanned','✅ Tracking scanned',c.scanned)+covCard('gate','🎯 Paid-ads gate',c.gate)
+      +covCard('apollo','🏢 Apollo',c.apollo)+covCard('intel','🧩 Website intel',c.intel)+covCard('whois','🌐 WHOIS',c.whois);
     if(lastToken!==null && s.token!==lastToken){ $('#liveText').textContent='updated'; loadRows(true); setTimeout(()=>$('#liveText').textContent='live',1500); }
     lastToken = s.token;
   }catch(e){ $('#liveText').textContent='offline'; }
@@ -153,8 +167,8 @@ function rowHtml(r){
 }
 
 async function loadRows(flash){
-  const q=$('#search').value.trim(), en=$('#enriched').value, pa=$('#paidAds').value, sr=$('#source').value;
-  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&paid_ads=${pa}&source=${sr}&limit=${limit}&offset=${offset}`;
+  const q=$('#search').value.trim(), en=$('#enriched').value, pa=$('#paidAds').value, sr=$('#source').value, cv=$('#coverage').value;
+  const url=`/api/database/prospects?search=${encodeURIComponent(q)}&enriched=${en}&paid_ads=${pa}&source=${sr}&coverage=${cv}&limit=${limit}&offset=${offset}`;
   let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
   total=d.total;
   $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="13" class="muted">No matching businesses.</td></tr>';
@@ -168,6 +182,7 @@ let searchTimer;
 $('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();},250); });
 $('#enriched').onchange=()=>{offset=0;loadRows();};
 $('#paidAds').onchange=()=>{offset=0;loadRows();};
+$('#coverage').onchange=()=>{offset=0;loadRows();};
 $('#source').onchange=()=>{offset=0;loadRows();};
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };

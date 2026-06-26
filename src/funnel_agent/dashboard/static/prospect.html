@@ -293,6 +293,19 @@ function paidAdsVerdict(p){
   </div>`;
 }
 
+// ---- Domain / WHOIS (FREE via RDAP — registrar, dates, owner if not redacted) ----
+function whoisCard(d){
+  const w=((d.enrichment||{}).whois)||{};
+  if(!w.found) return `<div class="card full"><h2>🌐 Domain / WHOIS</h2><div class="muted small">No WHOIS lookup yet (runs for paid-ads prospects).</div></div>`;
+  const dt=v=>v?esc(String(v).slice(0,10)):null;
+  const rows=[['Registrar',esc(w.registrar)],
+    ['Owner / registrant',w.registrant?esc(w.registrant):'<span class="muted">redacted (privacy/GDPR)</span>'],
+    ['Owner email',esc(w.owner_email)],['Registered',dt(w.created)],['Last updated',dt(w.updated)],
+    ['Expires',dt(w.expires)],['Nameservers',(w.nameservers||[]).map(esc).join(', ')||null],
+    ['Status',(w.status||[]).map(esc).join(', ')||null]].filter(r=>r[1]!=null&&r[1]!=='');
+  return `<div class="card full"><h2>🌐 Domain / WHOIS</h2><div class="kv">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div></div>`;
+}
+
 // ---- Business data (the GIVEN data — companies under this domain) ----
 function fmtRevM(m){ if(m==null||m==='')return null; const v=Number(m); if(!isFinite(v)||v<=0)return null;
   return v>=1000?'$'+(v/1000).toLocaleString(undefined,{maximumFractionDigits:1})+'B'
@@ -451,6 +464,7 @@ async function load(){
     ['uploaded','Uploaded database info', businessDataCard(d)+contactsCard(d)],
     ['apollo','Apollo (company + people)', apolloCard(d)],
     ['business','Website business intel', businessIntelCard(d)],
+    ['whois','Domain / WHOIS', whoisCard(d)],
     ['website','Website information', websiteInfoCard(d)],
     ['digital','Digital marketing insights', digitalMarketingCard(d)],
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],

@@ -204,7 +204,7 @@ def _pending_deep_domains(pool: ConnectionPool, limit: int) -> list[str]:
             SELECT d.dom FROM d JOIN enrichment e ON e.domain = d.dom
             WHERE ( (e.website->>'runs_paid_ads')='true'
                     OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true') )
-              AND e.business_intel IS NULL
+              AND (e.business_intel IS NULL OR e.whois IS NULL)
             ORDER BY d.dom
             LIMIT %s
             """,
@@ -220,6 +220,7 @@ def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: in
     source is stored separately on the enrichment row. Idempotent (skips already-done)."""
     from .enrichment.apollo import ApolloClient
     from .enrichment.business_intel import extract_business_intel
+    from .enrichment.whois_lookup import lookup_whois
     from .transcribe import _openai
 
     domains = _pending_deep_domains(pool, limit)
@@ -229,29 +230,38 @@ def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: in
     apollo = ApolloClient(settings)  # httpx.Client is thread-safe; share across workers
 
     def work(domain: str) -> dict:
-        org = {}
-        people: list = []
-        try:
-            org = apollo.enrich_organization(domain)
-            if org.get("found"):
-                people = apollo.search_decision_makers(domain, org_id=org.get("id"))
-                org["people"] = people
-        except Exception as exc:
-            log.warning("deep_apollo_failed", domain=domain, error=str(exc)[:160])
-        try:
-            bi = extract_business_intel(oai, settings, domain)
-        except Exception as exc:
-            log.warning("deep_bi_failed", domain=domain, error=str(exc)[:160])
-            bi = {"found": False}
         with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO enrichment (domain, apollo, business_intel, status, fetched_at) "
-                "VALUES (%s,%s,%s,'ok',now()) ON CONFLICT (domain) DO UPDATE SET "
-                "apollo = EXCLUDED.apollo, business_intel = EXCLUDED.business_intel, fetched_at = now()",
-                (domain, Json(org), Json(bi)),
-            )
-            conn.commit()
-        return {"apollo": bool(org.get("found")), "people": len(people), "bi": bool(bi.get("found"))}
+            cur.execute("SELECT business_intel, whois FROM enrichment WHERE domain=%s", (domain,))
+            row = cur.fetchone() or {}
+        updates: dict = {}
+        people: list = []
+        org = {}
+        if not row.get("business_intel"):           # Apollo + website intel (expensive — skip if done)
+            try:
+                org = apollo.enrich_organization(domain)
+                if org.get("found"):
+                    people = apollo.search_decision_makers(domain, org_id=org.get("id"))
+                    org["people"] = people
+            except Exception as exc:
+                log.warning("deep_apollo_failed", domain=domain, error=str(exc)[:160])
+            try:
+                bi = extract_business_intel(oai, settings, domain)
+            except Exception as exc:
+                log.warning("deep_bi_failed", domain=domain, error=str(exc)[:160])
+                bi = {"found": False}
+            updates["apollo"] = Json(org)
+            updates["business_intel"] = Json(bi)
+        if not row.get("whois"):                     # free RDAP WHOIS (cheap — always backfill)
+            updates["whois"] = Json(lookup_whois(domain))
+        if updates:
+            cols = list(updates)
+            set_sql = ", ".join(f"{c} = %s" for c in cols) + ", fetched_at = now()"
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(f"UPDATE enrichment SET {set_sql} WHERE domain = %s",
+                            [updates[c] for c in cols] + [domain])
+                conn.commit()
+        return {"apollo": bool(org.get("found")), "people": len(people),
+                "bi": "business_intel" in updates, "whois": "whois" in updates}
 
     processed = apollo_ok = people_total = bi_ok = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:

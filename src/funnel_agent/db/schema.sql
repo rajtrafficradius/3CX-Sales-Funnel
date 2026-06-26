@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS enrichment (
 );
 ALTER TABLE enrichment ADD COLUMN IF NOT EXISTS website jsonb;
 ALTER TABLE enrichment ADD COLUMN IF NOT EXISTS business_intel jsonb;
+ALTER TABLE enrichment ADD COLUMN IF NOT EXISTS whois jsonb;
 
 CREATE TABLE IF NOT EXISTS meetings (
   lead_id      text,

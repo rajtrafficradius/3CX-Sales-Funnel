@@ -1104,7 +1104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         domain = (cl[0].get("prospect_website") if cl else None) or (master.get("domain") if master else None)
         enr = None
         if domain:
-            rows = q("SELECT domain, semrush, apollo, website, business_intel, status, fetched_at FROM enrichment WHERE domain=%s",
+            rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
         ovr = q("SELECT qualified, reason, override_by, created_at FROM qualification_overrides WHERE call_id=%s",
@@ -1395,7 +1395,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             domain = max(set(sites), key=sites.count) if sites else None
         enr = None
         if domain:
-            rows = q("SELECT domain, semrush, apollo, website, business_intel, status, fetched_at FROM enrichment WHERE domain=%s",
+            rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
 
@@ -1588,7 +1588,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/database/prospects")
     def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
                            enriched: str = "", pipeline: str = "", paid_ads: str = "",
-                           source: str = "") -> JSONResponse:
+                           source: str = "", coverage: str = "") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         Businesses with no domain are listed individually. Dynamic metrics (SEO/Apollo/
@@ -1623,6 +1623,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conds.append("ge.scanned AND NOT ge.runs_paid_ads")  # scanned, no ad pixels
         elif paid_ads == "unscanned":
             conds.append("NOT ge.scanned")
+        # Coverage filter: which enrichment data the domain has.
+        _COV = {"scanned": "ge.scanned", "gate": "ge.gate_pass", "apollo": "ge.has_apollo",
+                "intel": "ge.has_intel", "whois": "ge.has_whois"}
+        if coverage in _COV:
+            conds.append(_COV[coverage])
         enr_filter = ("WHERE " + " AND ".join(conds)) if conds else ""
         cte = f"""
         WITH g AS (
@@ -1645,7 +1650,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ), ge AS (
           SELECT g.*, (e.status IS NOT NULL) AS enriched,
                  (e.website IS NOT NULL) AS scanned,
-                 ((e.website->>'runs_paid_ads') = 'true') AS runs_paid_ads
+                 ((e.website->>'runs_paid_ads') = 'true') AS runs_paid_ads,
+                 (((e.website->>'runs_paid_ads')='true')
+                   OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true')) AS gate_pass,
+                 (e.apollo IS NOT NULL AND (e.apollo->>'found')='true') AS has_apollo,
+                 (e.business_intel IS NOT NULL AND (e.business_intel->>'found')='true') AS has_intel,
+                 (e.whois IS NOT NULL AND (e.whois->>'found')='true') AS has_whois
           FROM g LEFT JOIN enrichment e ON e.domain = g.domain
         )
         """
@@ -1666,12 +1676,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
               "(SELECT count(*) FROM companies WHERE domain IS NULL) AS no_domain, "
               "(SELECT count(*) FROM companies WHERE phone_norm IS NOT NULL) AS with_phone, "
               "(SELECT count(*) FROM enrichment WHERE status='ok') AS enriched")[0]
+        # Enrichment coverage over distinct company domains (for the filter chips).
+        cov = q(
+            "SELECT "
+            "count(*) FILTER (WHERE e.website IS NOT NULL) AS scanned, "
+            "count(*) FILTER (WHERE (e.website->>'runs_paid_ads')='true' "
+            "  OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true')) AS gate, "
+            "count(*) FILTER (WHERE e.apollo IS NOT NULL AND (e.apollo->>'found')='true') AS apollo, "
+            "count(*) FILTER (WHERE e.business_intel IS NOT NULL AND (e.business_intel->>'found')='true') AS intel, "
+            "count(*) FILTER (WHERE e.whois IS NOT NULL AND (e.whois->>'found')='true') AS whois, "
+            "count(*) AS domains "
+            "FROM (SELECT DISTINCT domain FROM companies WHERE domain IS NOT NULL AND domain<>'') d "
+            "LEFT JOIN enrichment e ON e.domain = d.domain")[0]
         # a freshness fingerprint so the client can poll cheaply for changes
         f = q("SELECT (SELECT count(*) FROM companies) AS cc, "
               "(SELECT max(created_at) FROM companies) AS cu, "
               "(SELECT max(fetched_at) FROM enrichment) AS eu")[0]
         token = f"{f['cc']}|{f['cu']}|{f['eu']}"
-        return JSONResponse(jsonable_encoder({**r, "token": token}))
+        return JSONResponse(jsonable_encoder({**r, "coverage": cov, "token": token}))
 
     # ---- Pipeline 2 assignment board (rotation + cadence) --------------- #
     @app.get("/pipeline2", response_class=HTMLResponse)
