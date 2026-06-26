@@ -45,8 +45,12 @@ BENCHMARK_RATIOS = {
     "full_pitch":      (0.30, "rpc_connect"),  # 30% of RPC
     "meetings_booked": (0.25, "full_pitch"),   # 25% of full pitch
 }
-# Calls-Made activity benchmark: 75 dials per 30 min of active calling.
+# Calls-Made benchmark is a TEAM target: the whole BDE team should make CALLS_PER_30MIN
+# dials per 30-min block, sustained over a standard WORKDAY_HALF_HOURS-block (8h) day.
+#   => team daily calls target = 75 x 16 = 1200 calls/day.
+# A single-BDE view shows that BDE's equal share (team target / # in-scope BDEs).
 CALLS_PER_30MIN = 75
+WORKDAY_HALF_HOURS = 16  # a standard 8h calling day = 16 x 30-min blocks
 
 
 def _pct(num: int, den: int) -> float | None:
@@ -413,31 +417,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ps = pe - timedelta(days=length - 1)
         return ps.isoformat(), pe.isoformat()
 
-    def _calls_made_target(bde: str, start: str, end: str) -> int:
-        """Benchmark target for Calls Made = 75 dials / 30 min of ACTIVE calling time.
-        Active time = time spent in continuous calling SESSIONS, computed as the sum of
-        gaps between consecutive calls that are <= SESSION_GAP_MIN (longer gaps = lunch /
-        meetings / off-the-phone and are NOT counted). This avoids over-targeting from a
-        first->last span full of idle time. Summed per BDE per day, then across BDEs for
-        ALL, so the target scales with who actually dialled and for how long."""
-        SESSION_GAP_MIN = 15
-        where = ["c.in_scope", "c.started_at >= %s::date", "c.started_at < (%s::date + 1)"]
-        params: list = [start, end]
+    def _calls_made_target(bde: str, start: str, end: str):
+        """Calls-Made benchmark as a TEAM target: CALLS_PER_30MIN dials per 30-min block
+        over a standard WORKDAY_HALF_HOURS (8h) day => 1200 calls/day for the whole team.
+        Scales by the number of days in the window. A single-BDE view gets that BDE's equal
+        share (team target / # in-scope BDEs). Returns (target_count, half_hours, rate_target)
+        where half_hours is the standard-day denominator for the per-30-min rate."""
+        try:
+            num_days = (_date.fromisoformat(end) - _date.fromisoformat(start)).days + 1
+        except Exception:
+            num_days = 1
+        num_days = max(1, num_days)
+        half_hours = WORKDAY_HALF_HOURS * num_days
         if bde and bde != "ALL":
-            where.append("COALESCE(c.bde_name, c.bde_extension) = %s")
-            params.append(bde)
-        rows = q(
-            "WITH ordered AS (SELECT EXTRACT(EPOCH FROM (c.started_at - LAG(c.started_at) OVER ("
-            "  PARTITION BY COALESCE(c.bde_name, c.bde_extension), c.started_at::date "
-            "  ORDER BY c.started_at)))/60.0 AS gap_min "
-            "FROM calls c WHERE " + " AND ".join(where) + ") "
-            "SELECT COALESCE(SUM(CASE WHEN gap_min > 0 AND gap_min <= %s THEN gap_min ELSE 0 END),0) AS active_min "
-            "FROM ordered",
-            tuple(params) + (SESSION_GAP_MIN,),
-        )
-        active_min = float(rows[0]["active_min"] or 0) if rows else 0.0
-        target = int(round(CALLS_PER_30MIN * active_min / 30.0))
-        return target, active_min
+            r = q("SELECT count(DISTINCT COALESCE(bde_name, extension)) AS n "
+                  "FROM bde_agents WHERE in_scope AND active")
+            n = max(1, int(r[0]["n"]) if r and r[0]["n"] else 1)
+            return int(round(CALLS_PER_30MIN * half_hours / n)), half_hours, round(CALLS_PER_30MIN / n, 1)
+        return CALLS_PER_30MIN * half_hours, half_hours, float(CALLS_PER_30MIN)
 
     @app.get("/api/funnel")
     def funnel(request: Request, date: str | None = None, start: str | None = None,
@@ -475,16 +472,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # ---- Benchmark targets per stage (#4): flag stages below the standard. ----
         totals = {key: col("combined", key) for _, key in STAGES}
         bench: dict = {}
-        cm_target, active_min = _calls_made_target(bde, start, end)
+        cm_target, half_hours, cm_rate_target = _calls_made_target(bde, start, end)
         if cm_target:
-            # Achieved dials per 30 min of active calling — the comparable rate vs 75.
-            rate = round(30.0 * totals["calls_made"] / active_min, 1) if active_min else None
+            # Achieved dials per 30-min block over the standard workday (team basis).
+            rate = round(totals["calls_made"] / half_hours, 1) if half_hours else None
+            scope = "team" if (not bde or bde == "ALL") else "per-BDE share"
             bench["calls_made"] = {
                 "target": cm_target, "actual": totals["calls_made"],
                 "met": totals["calls_made"] >= cm_target,
                 "short": max(0, cm_target - totals["calls_made"]),
-                "rate": rate, "target_rate": CALLS_PER_30MIN,
-                "basis": f"{CALLS_PER_30MIN} dials / 30min active calling",
+                "rate": rate, "target_rate": cm_rate_target,
+                "basis": f"{scope} target: {cm_rate_target} dials/30min over an {WORKDAY_HALF_HOURS // 2}h day ({cm_target} total)",
             }
         # Cascade each stage's target from the Calls-Made TARGET down the funnel using the
         # standard conversion ratios (e.g. 1200 → 40% = 480 connected → 40% = 192 RPC →
