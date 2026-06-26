@@ -191,6 +191,7 @@
   <a class="badge clickable" id="adminBtn" href="/admin" title="User management" style="display:none">⚙️ Admin</a>
   <a class="badge clickable" id="tvBtn" href="/?tv=1" target="_blank" title="Open this dashboard full-screen for an office TV">📺 TV mode</a>
   <div class="spacer"></div>
+  <span class="badge" id="workdayBadge" title="Calling time completed today — 9am start, 8 calling hours (1h lunch)">🕐 <b id="workdayElapsed">—</b></span>
   <label class="muted" for="bde">BDE</label>
   <select id="bde"></select>
   <label class="muted" for="period">Period</label>
@@ -388,7 +389,7 @@ async function refresh(){
   const w=`start=${WIN.start}&end=${WIN.end}&bde=${encodeURIComponent(bde)}`;
   const f = await jget(`/api/funnel?${w}&compare=prev`);
   CMP_WIN = (f.compare && f.compare.window) || null;
-  renderKpis(f); renderFunnel(f); renderFunnelTable(f); renderLead(f);
+  renderKpis(f); renderFunnel(f); renderFunnelTable(f); renderLead(f); renderWorkday(f.workday);
   jget(`/api/callbacks-today?bde=${encodeURIComponent(bde)}`).then(renderCallbacks).catch(()=>{});
   renderPipelines(await jget(`/api/pipelines?bde=${encodeURIComponent(bde)}`), bde);
   renderLeaderboard(await jget(`/api/leaderboard?start=${WIN.start}&end=${WIN.end}`));
@@ -417,6 +418,18 @@ function renderKpis(f){
     <div class="card kpi"><div class="v">${fmt(v)}${d||''}</div><div class="l">${l}</div><div class="sub">${sub||'&nbsp;'}</div></div>`).join('');
 }
 
+function renderWorkday(w){
+  const el=document.getElementById('workdayElapsed'); if(!el) return;
+  if(!w){ el.textContent='—'; return; }
+  const m=w.elapsed_min||0, h=Math.floor(m/60), mm=m%60, th=Math.floor((w.total_min||480)/60);
+  let label;
+  if(w.not_started) label='day not started';
+  else if(w.ended) label=`${th}h / ${th}h · day ended`;
+  else label=`${h}h ${String(mm).padStart(2,'0')}m / ${th}h (${w.pct||0}%)` + (w.on_break?' · lunch':'');
+  el.textContent=label;
+  const b=document.getElementById('workdayBadge');
+  if(b) b.style.borderColor = (w.ended||(w.pct||0)>=100)?'rgba(34,197,94,.5)':'';
+}
 function renderLead(f){
   const L=f.lead||{}, prev=(f.compare&&f.compare.lead)||{};
   const items=[['super_hot','🔥 Super-hot'],['hot','🔥 Hot'],['warm','🌤 Warm'],
@@ -645,7 +658,6 @@ function renderLeaderboard(d){
     ['Right Party Contact','rpc_connect','rpc_connect'],['Full Pitch','full_pitch','full_pitch'],
     ['Meeting Booked','meetings_booked','meetings_booked'],['Qualified Booked','qualified_booked','qualified_booked'],
     ['🔁 Resched','already_booked','already_booked'],
-    ['🌤 Warm','warm','warm'],['🔥 Hot','hot','hot'],['🔥 Super-hot','super_hot','super_hot'],
     ['Conn%','conv_connect',null],['RPC %','conv_rpc',null],['Pitch %','conv_pitch',null],['Booked %','conv_booked',null]];
   $('#leaderboard thead').innerHTML='<tr>'+cols.map(c=>`<th>${c[0]}</th>`).join('')+'</tr>';
   const body=$('#leaderboard tbody');

@@ -460,6 +460,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return int(round(CALLS_PER_30MIN * half_hours / n)), half_hours, round(CALLS_PER_30MIN / n, 1)
         return int(round(CALLS_PER_30MIN * half_hours)), half_hours, float(CALLS_PER_30MIN)
 
+    def _workday_progress() -> dict:
+        """TODAY's calling-day progress vs the 8-hour calling target (9am Melbourne start,
+        9h span minus the 1h lunch). For the header 'time completed' indicator."""
+        tz = ZoneInfo(settings.tz)
+        now = _dt.now(tz)
+        today = now.date()
+        start_dt = _dt.combine(today, _time(WORKDAY_START_HOUR, 0), tzinfo=tz)
+        end_dt = start_dt + timedelta(hours=WORKDAY_HOURS)            # 6:00 PM
+        lunch_s = _dt.combine(today, _time(LUNCH_START_HOUR, 0), tzinfo=tz)
+        lunch_e = lunch_s + timedelta(hours=LUNCH_HOURS)
+        total_min = (WORKDAY_HOURS - LUNCH_HOURS) * 60               # 480 = 8h
+        if now <= start_dt:
+            elapsed = 0.0
+        else:
+            end_pt = min(now, end_dt)
+            gross = (end_pt - start_dt).total_seconds() / 60.0
+            overlap = (min(end_pt, lunch_e) - max(start_dt, lunch_s)).total_seconds() / 60.0
+            elapsed = max(0.0, gross - max(0.0, overlap))
+        elapsed = max(0.0, min(elapsed, total_min))
+        return {
+            "elapsed_min": int(round(elapsed)), "total_min": total_min,
+            "pct": int(round(100 * elapsed / total_min)) if total_min else 0,
+            "on_break": lunch_s <= now < lunch_e,
+            "ended": now >= end_dt, "not_started": now < start_dt,
+        }
+
     @app.get("/api/funnel")
     def funnel(request: Request, date: str | None = None, start: str | None = None,
                end: str | None = None, bde: str = "ALL", compare: str = "") -> JSONResponse:
@@ -529,6 +555,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "coverage": _pct(col("combined", "transcribed"), cm),
             "calls_made": cm, "transcribed": col("combined", "transcribed"),
             "lead": {k: col("combined", k) for k in _LEAD_COLS},
+            "workday": _workday_progress(),
         }
         if compare == "prev":
             ps, pe = _prev_window(start, end)
