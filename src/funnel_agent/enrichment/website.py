@@ -26,6 +26,7 @@ log = get_logger(__name__)
 # Each tracker: (key, human label, list of regex signatures found in page HTML/JS).
 _TRACKERS: list[tuple[str, str, list[str]]] = [
     ("gtm", "Google Tag Manager", [r"googletagmanager\.com/gtm\.js", r"GTM-[A-Z0-9]{4,}"]),
+    ("gsc", "Google Search Console (site verification)", [r"google-site-verification"]),
     ("ga4", "Google Analytics 4", [r"googletagmanager\.com/gtag/js", r"gtag/js\?id=G-", r"\bG-[A-Z0-9]{8,}\b"]),
     ("ua", "Universal Analytics (legacy)", [r"google-analytics\.com/analytics\.js", r"\bUA-\d{4,}-\d+\b"]),
     ("google_ads", "Google Ads (conversion/remarketing)",
