@@ -1126,7 +1126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "(SELECT started_at, dest_number FROM calls WHERE call_id=%(cid)s) cur "
                     "WHERE pc.in_scope AND pc.call_id <> %(cid)s AND pc.started_at < cur.started_at "
                     "AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(cur.dest_number,'[^0-9]','','g'),9) "
-                    "     OR (%(ck)s IS NOT NULL AND pcl.company_key = %(ck)s)) "
+                    "     OR (%(ck)s::text IS NOT NULL AND pcl.company_key = %(ck)s::text)) "
                     "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) "
                     "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false) LIMIT 1",
                     {"cid": call_id, "ck": c0.get("company_key")})
