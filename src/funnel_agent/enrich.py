@@ -586,3 +586,62 @@ def enrich_dataforseo_batch(pool: ConnectionPool, settings: Settings, limit: int
     stats = {"processed": processed, "running_ads": running, "remaining": remaining}
     log.info("enrich_dataforseo_done", **stats)
     return stats
+
+
+def _pending_transparency_domains(pool: ConnectionPool, limit: int) -> list[str]:
+    """ALL Raghav $1-10M domains not yet DataForSEO-checked (for transparency-only sweep)."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH d AS (
+              SELECT DISTINCT lower(domain) AS dom FROM companies
+              WHERE source='raghav' AND revenue_musd BETWEEN 1 AND 10 AND domain IS NOT NULL AND domain<>''
+            )
+            SELECT d.dom FROM d LEFT JOIN enrichment e ON e.domain=d.dom
+            WHERE e.dataforseo IS NULL ORDER BY d.dom LIMIT %s
+            """, (limit,))
+        return [r["dom"] for r in cur.fetchall()]
+
+
+def enrich_transparency_all(pool: ConnectionPool, settings: Settings, limit: int = 10000,
+                            workers: int = 10) -> dict:
+    """Cheap Transparency-ONLY sweep (ads_search, ~$0.002/domain) across ALL Raghav $1-10M
+    domains — the PRIMARY running-ads signal. SEO/rank metrics are added separately (on the
+    confirmed-running ones / on-demand) to control cost. Idempotent."""
+    if not settings.dataforseo_enabled:
+        return {"processed": 0, "remaining": 0, "skipped": "not configured"}
+    from datetime import datetime, timezone
+
+    from .enrichment.dataforseo import DataForSEOClient
+    domains = _pending_transparency_domains(pool, limit)
+    if not domains:
+        return {"processed": 0, "running_ads": 0, "remaining": 0}
+    client = DataForSEOClient(settings)
+
+    def work(dom: str) -> bool:
+        try:
+            ads = client.ads_search(dom)
+            data = {"found": True, "transparency_only": True, "ads": ads,
+                    "running_google_ads": bool(ads.get("running_ads")),
+                    "fetched_at": datetime.now(timezone.utc).isoformat()}
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                    "ON CONFLICT (domain) DO UPDATE SET dataforseo=EXCLUDED.dataforseo, fetched_at=now()",
+                    (dom, Json(data)))
+                conn.commit()
+            return data["running_google_ads"]
+        except Exception as exc:
+            log.warning("transparency_one_failed", domain=dom, error=str(exc)[:160])
+            return False
+
+    processed = running = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for ok in ex.map(work, domains):
+            processed += 1
+            running += 1 if ok else 0
+    client.close()
+    remaining = len(_pending_transparency_domains(pool, 100000))
+    stats = {"processed": processed, "running_ads": running, "remaining": remaining}
+    log.info("enrich_transparency_all_done", **stats)
+    return stats
