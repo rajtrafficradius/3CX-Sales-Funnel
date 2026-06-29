@@ -1562,9 +1562,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/prospect/{key}/enrich-website")
     async def prospect_enrich_website(request: Request, key: str) -> JSONResponse:
-        """FREE 'Enrich now' for website intelligence: fetch the site and detect
-        tracking pixels (GTM/GA4/Meta/Google Ads/etc.), paid-ads activity, emails &
-        socials. No paid API. Stores into enrichment.website keyed by domain."""
+        """FREE 'Enrich now' — fill every FREE prospect tab in one go: website intelligence
+        (tracking pixels / paid-ads activity / emails & socials), SEMrush metrics, Apollo
+        company + decision-makers, website business intel, and Domain/WHOIS. No paid API
+        (DataForSEO is the separate BDM-only paid button). Keyed by domain."""
         u = getattr(request.state, "user", None) or {}
         if u.get("role") == "kiosk":
             raise HTTPException(403, "read-only")
@@ -1573,21 +1574,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
 
         def _do() -> dict:
-            from ..enrichment.website import fetch_website_intel
-            intel = fetch_website_intel(domain)
-            status = "ok" if intel.get("found") else (intel.get("status") or "error")
+            from ..enrich import enrich_domain_full
+            res = enrich_domain_full(pool, settings, domain, with_dataforseo=False, force=True)
             with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO enrichment (domain, website, status, fetched_at) "
-                    "VALUES (%s, %s, %s, now()) "
-                    "ON CONFLICT (domain) DO UPDATE SET website = EXCLUDED.website, "
-                    "  status = COALESCE(enrichment.status, EXCLUDED.status), fetched_at = now()",
-                    (domain, Json(intel), status),
-                )
-                conn.commit()
-            return intel
-        intel = await run_in_threadpool(_do)
-        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "website": intel}))
+                cur.execute("SELECT website FROM enrichment WHERE domain=%s", (domain,))
+                row = cur.fetchone() or {}
+            return {"did": res.get("did"), "website": row.get("website")}
+        out = await run_in_threadpool(_do)
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, **out}))
 
     @app.post("/api/prospect/{key}/enrich-dataforseo")
     async def prospect_enrich_dataforseo(request: Request, key: str) -> JSONResponse:
@@ -1660,8 +1654,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {}
 
         await run_in_threadpool(_do)
-        from ..enrich import enrich_single
-        res = await run_in_threadpool(enrich_single, pool, settings, website)
+        from ..enrich import enrich_domain_full
+        res = await run_in_threadpool(enrich_domain_full, pool, settings, website,
+                                      with_dataforseo=False)
         return JSONResponse({"ok": True, "domain": website, "enriched": bool(res.get("ok"))})
 
     # ---- Master prospect database browser (admin + BDM only, realtime) -- #
@@ -1810,16 +1805,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         return cte, params, conds
 
+    # Allow-listed sortable columns: query key -> ge SQL expression (no user SQL ever).
+    _DB_SORTS = {
+        "name": "name", "domain": "domain", "paid_ads": "runs_google_ads",
+        "source": "sources", "industry": "industry", "sub_industry": "sub_industry",
+        "location": "location", "businesses": "businesses", "revenue": "total_revenue",
+        "employees": "employees", "contacts": "contacts", "phone": "phone",
+        "enriched": "enriched",
+    }
+
     @app.get("/api/database/prospects")
     def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
                            enriched: str = "", pipeline: str = "", paid_ads: str = "",
                            source: str = "", coverage: str = "", revenue: str = "",
                            tracking: str = "", transparency: str = "", industry: str = "",
-                           state: str = "") -> JSONResponse:
+                           state: str = "", sort: str = "revenue", dir: str = "desc") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         All filters combine with AND; `coverage`/`tracking` may carry several comma-separated
-        facets. `total` is the count for the full filter."""
+        facets. `sort`/`dir` order by any column (allow-listed). `total` is the full-filter count."""
         _require_db_access(request)
         limit = max(1, min(limit, 200))
         cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
@@ -1829,13 +1833,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         conds += _coverage_conds(coverage)
         enr_filter = ("WHERE " + " AND ".join(conds)) if conds else ""
         total = q(cte + f"SELECT count(*) AS n FROM ge {enr_filter}", params)[0]["n"]
+        col = _DB_SORTS.get(sort, "total_revenue")
+        direction = "ASC" if (dir or "").lower() == "asc" else "DESC"
+        # Stable, deterministic tiebreak so paging never repeats/skips rows.
+        tiebreak = "total_revenue DESC NULLS LAST, name" if col != "total_revenue" else "businesses DESC, name"
+        order = f"{col} {direction} NULLS LAST, {tiebreak}"
         rows = q(
-            cte + f"SELECT * FROM ge {enr_filter} "
-            "ORDER BY total_revenue DESC NULLS LAST, businesses DESC, name "
-            "LIMIT %(lim)s OFFSET %(off)s",
+            cte + f"SELECT * FROM ge {enr_filter} ORDER BY {order} LIMIT %(lim)s OFFSET %(off)s",
             params,
         )
-        return JSONResponse(jsonable_encoder({"total": total, "limit": limit, "offset": offset, "rows": rows}))
+        return JSONResponse(jsonable_encoder({"total": total, "limit": limit, "offset": offset,
+                                              "rows": rows, "sort": sort, "dir": direction.lower()}))
 
     @app.get("/api/database/stats")
     def database_stats(request: Request, search: str = "", enriched: str = "",

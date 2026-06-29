@@ -190,23 +190,38 @@ def enrich_websites_async(pool: ConnectionPool, *, limit: int = 5000, concurrenc
     return stats
 
 
-def _pending_deep_domains(pool: ConnectionPool, limit: int) -> list[str]:
-    """Raghav companies in the $1-10M band, with a domain, that PASS the paid-ads gate
-    (an ad pixel present, OR GTM + UTM) and haven't been deep-enriched yet."""
+def _pending_deep_domains(pool: ConnectionPool, limit: int, *, with_whois: bool = True,
+                          gated: bool = True) -> list[str]:
+    """Raghav companies in the $1-10M band, with a domain, that haven't been deep-enriched yet.
+
+    gated=True (default): only domains that PASS the paid-ads gate — Transparency-primary
+    (confirmed running Google Ads via DataForSEO) OR an ad pixel present OR GTM+UTM. Running-ads
+    domains are ordered first so the highest-value prospects get enriched first.
+    gated=False: EVERY $1-10M Raghav domain (Apollo company + decision-maker names/titles are FREE,
+    business intel is a cheap LLM call) — used to give the whole core segment baseline coverage so
+    the dashboard never shows an empty Apollo/intel section for a $1-10M prospect.
+
+    with_whois=False restricts the pending set to domains missing the Apollo/business-intel
+    bundle only (business_intel IS NULL) — used for bulk fills where WHOIS stays lazy/on-demand
+    (auDA throttles bulk .au port-43 lookups)."""
+    need = ("(e.business_intel IS NULL OR e.whois IS NULL OR (e.whois->>'found') IS DISTINCT FROM 'true')"
+            if with_whois else "e.business_intel IS NULL")
+    gate = ("""AND ( (e.dataforseo->>'running_google_ads')='true'           -- Transparency-confirmed (primary)
+                    OR (e.website->>'runs_paid_ads')='true'
+                    OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true') )"""
+            if gated else "")
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             WITH d AS (
               SELECT DISTINCT lower(domain) AS dom FROM companies
               WHERE source='raghav' AND revenue_musd BETWEEN 1 AND 10
                 AND domain IS NOT NULL AND domain <> ''
             )
             SELECT d.dom FROM d JOIN enrichment e ON e.domain = d.dom
-            WHERE ( (e.website->>'runs_paid_ads')='true'
-                    OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true') )
-              AND (e.business_intel IS NULL OR e.whois IS NULL
-                   OR (e.whois->>'found') IS DISTINCT FROM 'true')  -- retry failed WHOIS (e.g. 429)
-            ORDER BY d.dom
+            WHERE {need}
+              {gate}
+            ORDER BY ((e.dataforseo->>'running_google_ads')='true') DESC, d.dom
             LIMIT %s
             """,
             (limit,),
@@ -215,16 +230,20 @@ def _pending_deep_domains(pool: ConnectionPool, limit: int) -> list[str]:
 
 
 def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: int = 1000,
-                          workers: int = 6) -> dict:
+                          workers: int = 6, with_whois: bool = True, gated: bool = True) -> dict:
     """Deep-enrich the paid-ads prospects ($1-10M): Apollo (FREE company + decision-maker
     names/titles, no credits) + website business intel (products/services/USPs/ICP). Each
-    source is stored separately on the enrichment row. Idempotent (skips already-done)."""
+    source is stored separately on the enrichment row. Idempotent (skips already-done).
+
+    gated=False deep-enriches EVERY $1-10M Raghav domain (not just paid-ads) so the dashboard
+    never shows an empty Apollo/intel section for a core-segment prospect.
+    with_whois=False skips the WHOIS step (kept lazy/on-demand — auDA throttles bulk .au)."""
     from .enrichment.apollo import ApolloClient
     from .enrichment.business_intel import extract_business_intel
     from .enrichment.whois_lookup import lookup_whois
     from .transcribe import _openai
 
-    domains = _pending_deep_domains(pool, limit)
+    domains = _pending_deep_domains(pool, limit, with_whois=with_whois, gated=gated)
     if not domains:
         return {"processed": 0, "remaining": 0}
     oai = _openai(settings)
@@ -252,9 +271,10 @@ def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: in
                 bi = {"found": False}
             updates["apollo"] = Json(org)
             updates["business_intel"] = Json(bi)
-        _w = row.get("whois")                        # free WHOIS (cheap); retry prior failures
-        if not isinstance(_w, dict) or _w.get("found") is not True:
-            updates["whois"] = Json(lookup_whois(domain))
+        if with_whois:
+            _w = row.get("whois")                     # free WHOIS (cheap); retry prior failures
+            if not isinstance(_w, dict) or _w.get("found") is not True:
+                updates["whois"] = Json(lookup_whois(domain))
         if updates:
             cols = list(updates)
             set_sql = ", ".join(f"{c} = %s" for c in cols) + ", fetched_at = now()"
@@ -274,29 +294,54 @@ def enrich_prospects_deep(pool: ConnectionPool, settings: Settings, *, limit: in
                 log.info("deep_enrich_progress", done=i, total=len(domains),
                          apollo=apollo_ok, people=people_total, bi=bi_ok)
     apollo.close()
-    remaining = len(_pending_deep_domains(pool, 100000))
+    remaining = len(_pending_deep_domains(pool, 100000, with_whois=with_whois, gated=gated))
     stats = {"processed": processed, "apollo_ok": apollo_ok, "decision_makers": people_total,
              "business_intel_ok": bi_ok, "remaining": remaining}
     log.info("enrich_prospects_deep_done", **stats)
     return stats
 
 
-def _pending_domains(pool: ConnectionPool, day: date, refresh_days: int,
-                     limit: int | None = None) -> list[str]:
+_FULL_ENRICH_COLS = ("website", "apollo", "business_intel", "whois")
+
+
+def _pending_domains(pool: ConnectionPool, day: date, limit: int | None = None,
+                     require: tuple[str, ...] = _FULL_ENRICH_COLS) -> list[str]:
+    """Identified domains for the day's in-scope call prospects that are missing any tab.
+
+    A call prospect's domain is identified from EITHER the AI-extracted website OR a
+    phone -> master `prospects` match — so a prospect we have a number for (but the AI
+    didn't name a site) still gets the full enrichment set. The gate is completeness-based
+    (a row missing any required enrichment column), so it self-terminates once a prospect is
+    fully enriched and never reprocesses a complete domain every cycle. `require` lists the
+    enrichment columns that count as complete (DataForSEO is added only when it's enabled)."""
+    incomplete = " OR ".join(f"e.{c} IS NULL" for c in require)
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
-    sql = """
-        SELECT DISTINCT cl.prospect_website AS domain
-        FROM calls c
-        JOIN classifications cl ON cl.call_id = c.call_id
-        LEFT JOIN enrichment e ON e.domain = cl.prospect_website
-        WHERE c.in_scope AND c.started_at >= %(s)s AND c.started_at < %(e)s
-          AND cl.prospect_website IS NOT NULL AND cl.prospect_website <> ''
-          AND (e.domain IS NULL OR e.fetched_at IS NULL
-               OR e.fetched_at < now() - make_interval(days => %(r)s))
+    sql = f"""
+        WITH day_calls AS (
+            SELECT c.dest_number, cl.prospect_website
+            FROM calls c
+            JOIN classifications cl ON cl.call_id = c.call_id
+            WHERE c.in_scope AND c.started_at >= %(s)s AND c.started_at < %(e)s
+        ),
+        dom AS (
+            SELECT lower(prospect_website) AS domain FROM day_calls
+            WHERE prospect_website IS NOT NULL AND prospect_website <> ''
+            UNION
+            SELECT lower(pr.domain) AS domain
+            FROM day_calls dc
+            JOIN prospects pr
+              ON right(regexp_replace(dc.dest_number, '[^0-9]', '', 'g'), 9) = ANY(pr.phones_norm)
+            WHERE pr.domain IS NOT NULL AND pr.domain <> ''
+        )
+        SELECT DISTINCT d.domain
+        FROM dom d
+        LEFT JOIN enrichment e ON e.domain = d.domain
+        WHERE d.domain IS NOT NULL AND d.domain <> ''
+          AND (e.domain IS NULL OR {incomplete})
         ORDER BY 1
     """
-    params: dict = {"s": start, "e": end, "r": refresh_days}
+    params: dict = {"s": start, "e": end}
     if limit:
         sql += " LIMIT %(l)s"
         params["l"] = limit
@@ -351,6 +396,118 @@ def enrich_single(pool: ConnectionPool, settings: Settings, domain: str) -> dict
     ok = bool((semrush and semrush.get("found")) or (apollo and apollo.get("found")))
     _upsert(pool, domain, semrush, apollo, "ok" if ok else "error")
     return {"ok": ok, "domain": domain}
+
+
+def enrich_domain_full(pool: ConnectionPool, settings: Settings, domain: str, *,
+                       with_dataforseo: bool = True, with_whois: bool = True, force: bool = False,
+                       oai=None, apollo=None, dfs=None) -> dict:
+    """Populate EVERY prospect-page tab for a single domain, idempotently. This is the one
+    place that gives a domain its full intel set, so a 3CX/Aircall call prospect (the moment
+    its domain is identified) and the on-demand 'Enrich now' button both fill the same tabs:
+
+      * website            — Website information (trackers / paid-ads pixels / business data)
+      * semrush            — organic/backlink metrics (gap-aware; skips overview if master has it)
+      * apollo             — company + decision-maker names/titles (FREE, no credits)
+      * business_intel     — Website business intel (products / services / USPs / ICP — LLM)
+      * whois              — Domain / WHOIS (single live lookup; fine for .au on-demand)
+      * dataforseo         — Digital marketing insights (Google Ads Transparency + SEO; PAID)
+
+    Each source is independent and skipped when already present (unless force=True). Clients
+    can be passed in for batch reuse; any built here are closed before returning."""
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return {"ok": False, "reason": "no domain"}
+    from .enrichment.website import fetch_website_intel
+    from .enrichment.business_intel import extract_business_intel
+    from .enrichment.whois_lookup import lookup_whois
+
+    built = []
+    if oai is None:
+        from .transcribe import _openai
+        oai = _openai(settings)
+    if apollo is None and settings.apollo_enabled and settings.apollo_api_key:
+        apollo = ApolloClient(settings); built.append(apollo)
+    if dfs is None and with_dataforseo and settings.dataforseo_enabled:
+        from .enrichment.dataforseo import DataForSEOClient
+        dfs = DataForSEOClient(settings); built.append(dfs)
+
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT semrush, apollo, website, business_intel, whois, dataforseo "
+                    "FROM enrichment WHERE domain=%s", (domain,))
+        row = cur.fetchone() or {}
+
+    updates: dict = {}
+    did: dict = {}
+    # Website information (trackers + paid-ads pixels + business data) — free homepage fetch.
+    if force or not row.get("website"):
+        try:
+            updates["website"] = Json(fetch_website_intel(domain)); did["website"] = True
+        except Exception as exc:
+            log.warning("full_website_failed", domain=domain, error=str(exc)[:160])
+    # SEMrush — gap-aware (skip the overview report if the master CSV already has organic metrics).
+    if settings.semrush_api_key and (force or not row.get("semrush")):
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM prospects WHERE domain=%s AND organic_traffic IS NOT NULL LIMIT 1", (domain,))
+            has_overview = cur.fetchone() is not None
+        sem = SemrushClient(settings)
+        try:
+            updates["semrush"] = Json(sem.enrich(domain, want_overview=not has_overview, want_backlinks=True))
+            did["semrush"] = True
+        except Exception as exc:
+            log.warning("full_semrush_failed", domain=domain, error=str(exc)[:160])
+        finally:
+            sem.close()
+    # Apollo company + decision-makers (FREE — names/titles only, never email/phone).
+    _ap = row.get("apollo")
+    need_apollo = force or not isinstance(_ap, dict) or _ap.get("found") is not True or not _ap.get("people")
+    if apollo and need_apollo:
+        try:
+            org = apollo.enrich_organization(domain)
+            if org.get("found"):
+                org["people"] = apollo.search_decision_makers(domain, org_id=org.get("id"))
+            updates["apollo"] = Json(org); did["apollo"] = bool(org.get("found"))
+        except Exception as exc:
+            log.warning("full_apollo_failed", domain=domain, error=str(exc)[:160])
+    # Website business intel (products / services / USPs / ICP) — one LLM call.
+    if force or not row.get("business_intel"):
+        try:
+            updates["business_intel"] = Json(extract_business_intel(oai, settings, domain)); did["business_intel"] = True
+        except Exception as exc:
+            log.warning("full_bi_failed", domain=domain, error=str(exc)[:160])
+    # Domain / WHOIS — single live lookup (works for .au on-demand; bulk is throttled by auDA,
+    # so with_whois=False in bulk backfills leaves it to fill lazily when a prospect is opened).
+    _w = row.get("whois")
+    if with_whois and (force or not isinstance(_w, dict) or _w.get("found") is not True):
+        try:
+            updates["whois"] = Json(lookup_whois(domain)); did["whois"] = True
+        except Exception as exc:
+            log.warning("full_whois_failed", domain=domain, error=str(exc)[:160])
+    # Digital marketing insights — DataForSEO (Google Ads Transparency + SEO). PAID, low volume.
+    if dfs and (force or not row.get("dataforseo")):
+        try:
+            updates["dataforseo"] = Json(dfs.enrich_domain(domain)); did["dataforseo"] = True
+        except Exception as exc:
+            log.warning("full_dataforseo_failed", domain=domain, error=str(exc)[:160])
+
+    if updates:
+        cols = list(updates)
+        ins_cols = ", ".join(cols)
+        ins_vals = ", ".join(["%s"] * len(cols))
+        set_sql = ", ".join(f"{c}=EXCLUDED.{c}" for c in cols)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO enrichment (domain, {ins_cols}, status, fetched_at) "
+                f"VALUES (%s, {ins_vals}, 'ok', now()) "
+                f"ON CONFLICT (domain) DO UPDATE SET {set_sql}, status='ok', fetched_at=now()",
+                [domain] + [updates[c] for c in cols],
+            )
+            conn.commit()
+    for c in built:
+        try:
+            c.close()
+        except Exception:
+            pass
+    return {"ok": bool(updates), "domain": domain, "did": did}
 
 
 def matched_prospect_domains(pool: ConnectionPool, limit: int = 10,
@@ -460,63 +617,135 @@ def enrich_prospects(pool: ConnectionPool, settings: Settings, *, limit: int = 1
 
 def enrich_day(pool: ConnectionPool, settings: Settings, day: date,
                limit: int | None = None, workers: int | None = None) -> dict:
-    """Enrich every not-yet-cached domain seen on `day`. Idempotent."""
-    domains = _pending_domains(pool, day, settings.enrich_refresh_days, limit)
+    """Full-enrich every identified domain seen on `day` so every 3CX/Aircall call prospect
+    gets ALL prospect-page tabs the moment its domain is known: website + SEMrush + Apollo
+    (company + decision-makers) + business intel + WHOIS + DataForSEO. Idempotent — only the
+    missing tabs are fetched, and a fully-enriched domain is never reprocessed."""
+    require = _FULL_ENRICH_COLS + (("dataforseo",) if settings.dataforseo_enabled else ())
+    domains = _pending_domains(pool, day, limit, require=require)
     if not domains:
-        return {"enriched": 0, "errors": 0, "domains": 0, "apollo_calls": 0}
+        return {"enriched": 0, "errors": 0, "domains": 0}
 
     workers = workers or settings.enrich_workers
-    sem = SemrushClient(settings) if settings.semrush_api_key else None
-    apollo_budget = settings.apollo_max_per_day if (settings.apollo_enabled and settings.apollo_api_key) else 0
-    apo = ApolloClient(settings) if apollo_budget else None
-
-    lock = threading.Lock()
-    used = {"apollo": 0}
+    # Shared clients (httpx.Client + the OpenAI client are thread-safe) reused across threads;
+    # enrich_domain_full builds its own short-lived SemrushClient per domain (no sharing).
+    from .transcribe import _openai
+    oai = _openai(settings)
+    apollo = ApolloClient(settings) if (settings.apollo_enabled and settings.apollo_api_key) else None
+    dfs = None
+    if settings.dataforseo_enabled:
+        from .enrichment.dataforseo import DataForSEOClient
+        dfs = DataForSEOClient(settings)
 
     def work(domain: str) -> str:
-        semrush = apollo = None
-        ok = False
-        if sem:
-            try:
-                semrush = sem.enrich(domain)
-                ok = ok or bool(semrush.get("found"))
-            except Exception as exc:
-                log.warning("semrush_failed", domain=domain, error=str(exc)[:160])
-        if apo:
-            with lock:
-                spend = used["apollo"] < apollo_budget
-                if spend:
-                    used["apollo"] += 1
-            if spend:
-                try:
-                    apollo = apo.enrich_organization(domain)
-                    ok = ok or bool(apollo.get("found"))
-                except Exception as exc:
-                    log.warning("apollo_failed", domain=domain, error=str(exc)[:160])
-        status = "ok" if ok else "error"
         try:
-            _upsert(pool, domain, semrush, apollo, status)
+            r = enrich_domain_full(pool, settings, domain, oai=oai, apollo=apollo, dfs=dfs)
+            return "ok" if r.get("ok") else "skip"
         except Exception as exc:
-            log.warning("enrich_upsert_failed", domain=domain, error=str(exc)[:160])
+            log.warning("enrich_day_domain_failed", domain=domain, error=str(exc)[:160])
             return "error"
-        return status
 
-    enriched = errors = 0
+    enriched = errors = skipped = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
         for st in ex.map(work, domains):
             if st == "ok":
                 enriched += 1
-            else:
+            elif st == "error":
                 errors += 1
+            else:
+                skipped += 1
 
-    if sem:
-        sem.close()
-    if apo:
-        apo.close()
+    if apollo:
+        apollo.close()
+    if dfs:
+        dfs.close()
     log.info("enrich_day_done", day=str(day), domains=len(domains),
-             enriched=enriched, errors=errors, apollo_calls=used["apollo"])
-    return {"enriched": enriched, "errors": errors, "domains": len(domains),
-            "apollo_calls": used["apollo"]}
+             enriched=enriched, errors=errors, skipped=skipped)
+    return {"enriched": enriched, "errors": errors, "domains": len(domains), "skipped": skipped}
+
+
+def _all_call_prospect_domains(pool: ConnectionPool, require: tuple[str, ...]) -> list[str]:
+    """Every identified domain across ALL in-scope call prospects (AI website OR phone->master
+    match) that is missing any required enrichment column — for the one-time backfill."""
+    incomplete = " OR ".join(f"e.{c} IS NULL" for c in require)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            WITH d9 AS (
+              SELECT DISTINCT right(regexp_replace(dest_number, '[^0-9]', '', 'g'), 9) AS n
+              FROM calls WHERE in_scope AND dest_number IS NOT NULL
+            ),
+            darr AS (SELECT array_agg(n) AS a FROM d9),
+            dom AS (
+              SELECT DISTINCT lower(cl.prospect_website) AS d
+              FROM classifications cl JOIN calls c ON c.call_id = cl.call_id
+              WHERE c.in_scope AND cl.prospect_website IS NOT NULL AND cl.prospect_website <> ''
+              UNION
+              SELECT DISTINCT lower(pr.domain) AS d
+              FROM prospects pr, darr
+              WHERE pr.domain IS NOT NULL AND pr.domain <> '' AND pr.phones_norm && darr.a
+            )
+            SELECT d.d FROM dom d LEFT JOIN enrichment e ON e.domain = d.d
+            WHERE d.d IS NOT NULL AND d.d <> '' AND (e.domain IS NULL OR {incomplete})
+            ORDER BY d.d
+            """
+        )
+        return [r["d"] for r in cur.fetchall()]
+
+
+def enrich_call_prospects(pool: ConnectionPool, settings: Settings, *, limit: int = 100000,
+                          workers: int = 8, with_dataforseo: bool = False,
+                          with_whois: bool = False) -> dict:
+    """One-time backfill so every ALREADY-called prospect (3CX/Aircall) with an identified
+    domain gets its full FREE enrichment set: website + SEMrush + Apollo company/people +
+    business intel. WHOIS stays lazy by default (auDA throttles bulk .au — it fills when a
+    prospect is opened) and DataForSEO is off by default (paid; the daily loop runs it forward
+    for new prospects). Idempotent — only domains missing a tab are processed."""
+    require = ("website", "apollo", "business_intel")
+    if with_whois:
+        require += ("whois",)
+    if with_dataforseo and settings.dataforseo_enabled:
+        require += ("dataforseo",)
+    domains = _all_call_prospect_domains(pool, require)[:limit]
+    if not domains:
+        return {"processed": 0, "remaining": 0}
+
+    from .transcribe import _openai
+    oai = _openai(settings)
+    apollo = ApolloClient(settings) if (settings.apollo_enabled and settings.apollo_api_key) else None
+    dfs = None
+    if with_dataforseo and settings.dataforseo_enabled:
+        from .enrichment.dataforseo import DataForSEOClient
+        dfs = DataForSEOClient(settings)
+
+    def work(domain: str) -> str:
+        try:
+            r = enrich_domain_full(pool, settings, domain, with_dataforseo=with_dataforseo,
+                                   with_whois=with_whois, oai=oai, apollo=apollo, dfs=dfs)
+            return "ok" if r.get("ok") else "skip"
+        except Exception as exc:
+            log.warning("enrich_call_prospect_failed", domain=domain, error=str(exc)[:160])
+            return "error"
+
+    ok = err = skip = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for i, st in enumerate(ex.map(work, domains), 1):
+            if st == "ok":
+                ok += 1
+            elif st == "error":
+                err += 1
+            else:
+                skip += 1
+            if i % 50 == 0:
+                log.info("enrich_call_prospects_progress", done=i, total=len(domains), ok=ok, errors=err)
+    if apollo:
+        apollo.close()
+    if dfs:
+        dfs.close()
+    remaining = len(_all_call_prospect_domains(pool, require))
+    stats = {"processed": len(domains), "ok": ok, "errors": err, "skipped": skip, "remaining": remaining}
+    log.info("enrich_call_prospects_done", **stats)
+    return stats
 
 
 # --------------------------------------------------------------------------- #

@@ -61,19 +61,36 @@ def _rdap_base(domain: str) -> str | None:
 
 
 def _vcard(entity: dict) -> tuple[str | None, str | None]:
-    """Pull (full name, email) from an RDAP entity's jCard."""
-    name = email = None
+    """Pull (full name, email) from an RDAP entity's jCard (back-compat 2-tuple)."""
+    v = _vcard_full(entity)
+    return v.get("name"), v.get("email")
+
+
+def _vcard_full(entity: dict) -> dict:
+    """Pull name, org, email, phone, address from an RDAP entity's jCard."""
+    out: dict = {}
     arr = entity.get("vcardArray")
     if isinstance(arr, list) and len(arr) == 2:
         for field in arr[1]:
             if not isinstance(field, list) or len(field) < 4:
                 continue
             key, val = field[0], field[3]
-            if key == "fn" and val:
-                name = val if isinstance(val, str) else None
-            elif key == "email" and val and not email:
-                email = val if isinstance(val, str) else None
-    return name, email
+            if key == "fn" and isinstance(val, str) and val:
+                out["name"] = val
+            elif key == "org" and val:
+                out["org"] = val if isinstance(val, str) else " ".join(str(x) for x in val if x)
+            elif key == "email" and isinstance(val, str) and not out.get("email"):
+                out["email"] = val
+            elif key == "tel" and not out.get("tel"):
+                out["tel"] = val if isinstance(val, str) else (str(val[0]) if isinstance(val, list) and val else None)
+            elif key == "adr":
+                # jCard adr value is a 7-part list: [pobox, ext, street, city, region, postcode, country]
+                parts = val if isinstance(val, list) else (entity.get(key) or [])
+                if isinstance(parts, list) and len(parts) >= 7:
+                    out["city"] = parts[3] or out.get("city")
+                    out["state"] = parts[4] or out.get("state")
+                    out["country"] = parts[6] or out.get("country")
+    return out
 
 
 def _whois43_server(domain: str) -> str | None:
@@ -144,15 +161,25 @@ def _whois43(domain: str) -> dict:
         "found": True,
         "source": "whois43",
         "registrar": _first(text, "Registrar Name", "Registrar", "registrar"),
+        "registrar_url": _first(text, "Registrar URL", "Registrar Website"),
+        "registrar_abuse_email": _first(text, "Registrar Abuse Contact Email"),
+        "registrar_abuse_phone": _first(text, "Registrar Abuse Contact Phone"),
         "registrant": registrant,
+        "registrant_name": _first(text, "Registrant Contact Name", "Registrant Name"),
         "registrant_id": abn,            # .au: includes the ABN/ACN ("OTHER 066 397 420")
+        "eligibility": _first(text, "Eligibility Type", "Registrant Eligibility Type", "Eligibility Name"),
         "owner_email": _first(text, "Registrant Contact Email", "Registrant Email"),
         "owner_name": _first(text, "Registrant Contact Name"),
+        "registrant_city": _first(text, "Registrant City"),
+        "registrant_state": _first(text, "Registrant State/Province", "Registrant State"),
+        "registrant_country": _first(text, "Registrant Country", "Registrant Country/Economy"),
         "created": _first(text, "Creation Date", "Registration Date", "created"),
         "updated": _first(text, "Last Modified", "Updated Date", "last-modified", "modified"),
         "expires": _first(text, "Registry Expiry Date", "Expiration Date", "Expiry Date", "expires"),
         "status": _all(text, "Status") or _all(text, "status"),
         "nameservers": ns,
+        "dnssec": _first(text, "DNSSEC"),
+        "reseller": _first(text, "Reseller"),
     }
 
 
@@ -193,23 +220,38 @@ def lookup_whois(domain: str) -> dict:
         return {"found": False, "status": last}
 
     events = {e.get("eventAction"): e.get("eventDate") for e in (d.get("events") or [])}
-    registrar = registrant = owner_email = None
+    out: dict = {"found": True, "source": "rdap"}
     for ent in (d.get("entities") or []):
         roles = ent.get("roles") or []
-        nm, em = _vcard(ent)
-        if "registrar" in roles and nm:
-            registrar = nm
+        v = _vcard_full(ent)
+        if "registrar" in roles:
+            out["registrar"] = out.get("registrar") or v.get("name") or v.get("org")
+            # registrar IANA id + abuse contact (nested sub-entity)
+            for pub in (ent.get("publicIds") or []):
+                if pub.get("type") == "IANA Registrar ID":
+                    out["registrar_iana_id"] = pub.get("identifier")
+            for sub in (ent.get("entities") or []):
+                if "abuse" in (sub.get("roles") or []):
+                    sv = _vcard_full(sub)
+                    out["registrar_abuse_email"] = out.get("registrar_abuse_email") or sv.get("email")
+                    out["registrar_abuse_phone"] = out.get("registrar_abuse_phone") or sv.get("tel")
         if any(r_ in roles for r_ in ("registrant", "administrative", "technical")):
-            registrant = registrant or nm
-            owner_email = owner_email or em
-    return {
-        "found": True,
-        "registrar": registrar,
-        "registrant": registrant,                 # often redacted by privacy/GDPR
-        "owner_email": owner_email,
-        "created": events.get("registration"),
-        "updated": events.get("last changed") or events.get("last update of RDAP database"),
-        "expires": events.get("expiration"),
-        "status": d.get("status") or [],
-        "nameservers": [ns.get("ldhName") for ns in (d.get("nameservers") or []) if ns.get("ldhName")],
-    }
+            out["registrant"] = out.get("registrant") or v.get("org") or v.get("name")
+            out["registrant_name"] = out.get("registrant_name") or v.get("name")
+            out["owner_email"] = out.get("owner_email") or v.get("email")
+            out["registrant_city"] = out.get("registrant_city") or v.get("city")
+            out["registrant_state"] = out.get("registrant_state") or v.get("state")
+            out["registrant_country"] = out.get("registrant_country") or v.get("country")
+    for link in (d.get("links") or []):
+        href = link.get("href")
+        if (link.get("rel") == "related" and isinstance(href, str) and "://" in href
+                and "rdap" not in href.lower()):   # skip RDAP-endpoint links — want the registrar's site
+            out.setdefault("registrar_url", href)
+    sd = d.get("secureDNS") or {}
+    out["dnssec"] = ("signed" if sd.get("delegationSigned") else "unsigned") if sd else None
+    out["created"] = events.get("registration")
+    out["updated"] = events.get("last changed") or events.get("last update of RDAP database")
+    out["expires"] = events.get("expiration")
+    out["status"] = d.get("status") or []
+    out["nameservers"] = [ns.get("ldhName") for ns in (d.get("nameservers") or []) if ns.get("ldhName")]
+    return out

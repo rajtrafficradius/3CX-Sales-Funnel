@@ -241,16 +241,40 @@ def enrich_websites_cmd(
 def enrich_deep_cmd(
     limit: int = typer.Option(1000, help="max paid-ads prospects to deep-enrich this run"),
     workers: int = typer.Option(6, help="parallel workers"),
+    whois: bool = typer.Option(True, help="also run free WHOIS (off for bulk .au — auDA throttles)"),
+    gated: bool = typer.Option(True, help="--no-gated = enrich EVERY $1-10M domain, not just paid-ads"),
 ) -> None:
     """Deep-enrich the PAID-ADS prospects in the $1-10M band: Apollo company + decision-maker
     names/titles (FREE, no credits) + website business intel (products/services/USPs/ICP).
-    Each source stored separately. Idempotent — re-run to continue where it left off."""
+    Each source stored separately. Idempotent — re-run to continue where it left off.
+    Pass --no-gated to cover the WHOLE $1-10M segment (so no core prospect shows empty Apollo)."""
     settings = _settings()
     from .enrich import enrich_prospects_deep
 
     with _analytics_pool(settings) as pool:
-        stats = enrich_prospects_deep(pool, settings, limit=limit, workers=workers)
+        stats = enrich_prospects_deep(pool, settings, limit=limit, workers=workers,
+                                      with_whois=whois, gated=gated)
     typer.echo(f"enrich-deep: {stats}")
+
+
+@app.command(name="enrich-calls")
+def enrich_calls_cmd(
+    limit: int = typer.Option(100000, help="max call-prospect domains to backfill"),
+    workers: int = typer.Option(8, help="parallel workers"),
+    dataforseo: bool = typer.Option(False, help="also run DataForSEO (PAID ~$0.012/domain)"),
+    whois: bool = typer.Option(False, help="also run WHOIS now (off = lazy on-demand; auDA throttles bulk .au)"),
+) -> None:
+    """Backfill EVERY already-called prospect (3CX/Aircall) that has an identified domain with
+    its full FREE enrichment: website + SEMrush + Apollo company/people + business intel. WHOIS
+    stays lazy and DataForSEO is paid/off by default — the daily refresh loop runs both forward
+    for new prospects. Idempotent — re-run to continue."""
+    settings = _settings()
+    from .enrich import enrich_call_prospects
+
+    with _analytics_pool(settings) as pool:
+        stats = enrich_call_prospects(pool, settings, limit=limit, workers=workers,
+                                      with_dataforseo=dataforseo, with_whois=whois)
+    typer.echo(f"enrich-calls: {stats}")
 
 
 @app.command(name="enrich-dataforseo")

@@ -32,6 +32,11 @@
   .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto}
   table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
   th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  th.sortable:hover{color:var(--txt)}
+  th.sortable::after{content:"⇅";opacity:.28;font-size:11px;margin-left:5px}
+  th.sortable.sorted::after{content:"▼";opacity:1;color:var(--accent)}
+  th.sortable.sorted.asc::after{content:"▲"}
   th{position:sticky;top:0;background:#141b24;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);z-index:1}
   tbody tr{cursor:pointer}
   tbody tr:hover{background:rgba(59,130,246,.07)}
@@ -129,10 +134,14 @@
   <div class="resultbar" id="resultbar"></div>
   <div class="tablewrap">
     <table>
-      <thead><tr>
-        <th>Business</th><th>Website</th><th>Paid ads</th><th>Source</th><th>Industry</th><th>Sub-industry</th><th>Location</th>
-        <th class="num">Businesses</th><th class="num">Total revenue</th><th class="num">Employees</th>
-        <th class="num">Contacts</th><th>Phone</th><th>Enriched</th>
+      <thead><tr id="dbhead">
+        <th class="sortable" data-sort="name">Business</th><th class="sortable" data-sort="domain">Website</th>
+        <th class="sortable" data-sort="paid_ads">Paid ads</th><th class="sortable" data-sort="source">Source</th>
+        <th class="sortable" data-sort="industry">Industry</th><th class="sortable" data-sort="sub_industry">Sub-industry</th>
+        <th class="sortable" data-sort="location">Location</th>
+        <th class="num sortable" data-sort="businesses">Businesses</th><th class="num sortable" data-sort="revenue">Total revenue</th>
+        <th class="num sortable" data-sort="employees">Employees</th><th class="num sortable" data-sort="contacts">Contacts</th>
+        <th class="sortable" data-sort="phone">Phone</th><th class="sortable" data-sort="enriched">Enriched</th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="13" class="muted">Loading…</td></tr></tbody>
     </table>
@@ -149,6 +158,7 @@ const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 let offset=0, limit=50, total=0, lastToken=null;
+let sortBy='revenue', sortDir='desc';   // column sort (defaults match the server default)
 let _rowSeq=0, _statSeq=0;           // guards: ignore out-of-order fetch responses
 let searchTimer;
 const cov=new Set();                 // active coverage facets — multi-select, combined with AND
@@ -274,9 +284,17 @@ function rowHtml(r){
   </tr>`;
 }
 
+function updateHead(){
+  document.querySelectorAll('#dbhead th.sortable').forEach(th=>{
+    const on = th.dataset.sort===sortBy;
+    th.classList.toggle('sorted', on);
+    th.classList.toggle('asc', on && sortDir==='asc');
+  });
+}
+
 async function loadRows(flash){
   const my=++_rowSeq;
-  const url=`/api/database/prospects?${qs(curFilters())}&limit=${limit}&offset=${offset}`;
+  const url=`/api/database/prospects?${qs(curFilters())}&limit=${limit}&offset=${offset}&sort=${sortBy}&dir=${sortDir}`;
   let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
   if(my!==_rowSeq) return;               // a newer filter state superseded this request
   total=d.total;
@@ -300,8 +318,18 @@ document.querySelectorAll('.trkchip').forEach(b=>b.onclick=()=>{
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };
 
+// Column sort: click a header to sort by it; click again to flip direction. Text columns
+// default to A→Z, numeric/flag columns to high→low.
+const _TEXTSORT = new Set(['name','domain','source','industry','sub_industry','location','phone']);
+document.querySelectorAll('#dbhead th.sortable').forEach(th=>th.onclick=()=>{
+  const k=th.dataset.sort;
+  if(sortBy===k){ sortDir = sortDir==='asc'?'desc':'asc'; }
+  else { sortBy=k; sortDir = _TEXTSORT.has(k)?'asc':'desc'; }
+  updateHead(); offset=0; loadRows();
+});
+
 // realtime: SSE refresh + a stats poll that detects DB changes and reloads.
-loadStats(); loadRows();
+updateHead(); loadStats(); loadRows();
 try{ const es=new EventSource('/api/events'); es.addEventListener('refresh',()=>loadStats()); }catch(e){}
 setInterval(loadStats, 8000);
 </script>

@@ -352,12 +352,25 @@ function whoisCard(d){
   const w=((d.enrichment||{}).whois)||{};
   if(!w.found) return `<div class="card full"><h2>🌐 Domain / WHOIS</h2><div class="muted small">No WHOIS lookup yet (runs for paid-ads prospects).</div></div>`;
   const dt=v=>v?esc(String(v).slice(0,10)):null;
-  const rows=[['Registrar',esc(w.registrar)],
+  const loc=[w.registrant_city,w.registrant_state,w.registrant_country].filter(Boolean).map(esc).join(', ')||null;
+  const reg = w.registrar ? esc(w.registrar)+(w.registrar_url?` · <a href="${esc(w.registrar_url.startsWith('http')?w.registrar_url:'http://'+w.registrar_url)}" target="_blank">site ↗</a>`:'') : null;
+  const abuse=[w.registrar_abuse_email,w.registrar_abuse_phone].filter(Boolean).map(esc).join(' · ')||null;
+  const rows=[
+    ['Registrar',reg],
+    ['Registrar abuse',abuse],
     ['Owner / registrant',w.registrant?esc(w.registrant):'<span class="muted">redacted (privacy/GDPR)</span>'],
-    ['Owner email',esc(w.owner_email)],['Registered',dt(w.created)],['Last updated',dt(w.updated)],
-    ['Expires',dt(w.expires)],['Nameservers',(w.nameservers||[]).map(esc).join(', ')||null],
-    ['Status',(w.status||[]).map(esc).join(', ')||null]].filter(r=>r[1]!=null&&r[1]!=='');
-  return `<div class="card full"><h2>🌐 Domain / WHOIS</h2><div class="kv">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div></div>`;
+    ['Registrant name',esc(w.registrant_name||w.owner_name)],
+    ['Registrant ID / ABN',esc(w.registrant_id)],
+    ['Eligibility',esc(w.eligibility)],
+    ['Owner email',esc(w.owner_email)],
+    ['Location',loc],
+    ['Registered',dt(w.created)],['Last updated',dt(w.updated)],['Expires',dt(w.expires)],
+    ['DNSSEC',esc(w.dnssec)],['Reseller',esc(w.reseller)],
+    ['Nameservers',(w.nameservers||[]).map(esc).join(', ')||null],
+    ['Status',(w.status||[]).map(esc).join(', ')||null],
+  ].filter(r=>r[1]!=null&&r[1]!=='');
+  const src=w.source?`<span class="muted small" style="float:right;font-weight:400">via ${esc(w.source)}</span>`:'';
+  return `<div class="card full"><h2>🌐 Domain / WHOIS${src}</h2><div class="kv">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div></div>`;
 }
 
 // ---- Google Ads Transparency Center + SEO (DataForSEO) — separate tab ----
