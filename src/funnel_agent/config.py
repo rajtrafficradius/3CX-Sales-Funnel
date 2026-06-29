@@ -145,6 +145,12 @@ class Settings(BaseSettings):
     website_scan_per_cycle: int = 80
     website_scan_workers: int = 8
 
+    # FREE WHOIS trickle: how many running-ads prospects to (re)lookup WHOIS for each refresh
+    # cycle. auDA rate-limits .au WHOIS per IP, so this MUST be paced (sequential, small batch,
+    # oldest-attempt first) — never bulk. Over a few hours it fills the whole running-ads set
+    # without tripping the registry limit. 0 disables the in-loop trickle.
+    whois_trickle_per_cycle: int = 12
+
     # --- Roster in-scope rule ---
     # PRIMARY rule (preferred): BDE names. BDEs keep one stable name but rotate across
     # many extensions (mobile, landline, new numbers). Any 3CX line whose name matches

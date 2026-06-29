@@ -1477,12 +1477,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Lazy on-demand WHOIS. auDA throttles bulk .au and a FAILING lookup can take tens of
         # seconds (port-43 timeout + RDAP 429 backoff), so it must NEVER run synchronously on
-        # the request path. Fire it ONCE in the background (only when no whois row exists yet —
-        # the result, found or not, is cached so it isn't retried on every open) and let it
-        # appear on the next page load. This keeps the prospect page fast.
+        # the request path. Fire it in the BACKGROUND (non-blocking) and let it appear on the
+        # next page load. Retry not-found/absent WHOIS too (single lookups succeed even when a
+        # bulk run was throttled), but throttle retries to ~once/day via the row's fetched_at
+        # so a permanently-failing domain isn't hammered on every open. Self-heals over time.
         _ew = enr.get("whois") if enr else None
-        if domain and _ew is None:
-            _fire_bg_whois(domain)
+        if domain and not (isinstance(_ew, dict) and _ew.get("found") is True):
+            _fa = enr.get("fetched_at") if enr else None
+            stale = True
+            if _ew is not None and _fa is not None:
+                try:
+                    fa = _fa if isinstance(_fa, _dt) else _dt.fromisoformat(str(_fa))
+                    if fa.tzinfo is None:
+                        fa = fa.replace(tzinfo=ZoneInfo("UTC"))
+                    stale = (_dt.now(ZoneInfo("UTC")) - fa).total_seconds() > 86400
+                except Exception:
+                    stale = True
+            if stale:
+                _fire_bg_whois(domain)
 
         # If the domain was only resolved from the calls above (phone access), fetch the
         # given business data now (companies were not found by phone earlier).

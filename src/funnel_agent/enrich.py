@@ -664,6 +664,52 @@ def enrich_day(pool: ConnectionPool, settings: Settings, day: date,
     return {"enriched": enriched, "errors": errors, "domains": len(domains), "skipped": skipped}
 
 
+def enrich_whois_trickle(pool: ConnectionPool, settings: Settings, limit: int = 12) -> dict:
+    """Paced WHOIS fill for the confirmed running-ads set. auDA hard-rate-limits .au WHOIS per
+    IP (HTTP 429 after a small burst), so this is deliberately SEQUENTIAL + small-batch +
+    oldest-attempt-first: each refresh cycle fills a few, a just-failed domain goes to the back
+    of the queue (fetched_at bumped), and over a few hours the whole set fills without throttling.
+    Idempotent; safe to run every cycle. Returns {checked, found}."""
+    if limit <= 0:
+        return {"checked": 0, "found": 0}
+    from .enrichment.whois_lookup import lookup_whois
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH d AS (
+              SELECT DISTINCT lower(domain) AS dom FROM companies
+              WHERE source='raghav' AND revenue_musd BETWEEN 1 AND 10
+                AND domain IS NOT NULL AND domain <> ''
+            )
+            SELECT e.domain FROM enrichment e JOIN d ON d.dom = e.domain
+            WHERE (e.dataforseo->>'running_google_ads')='true'
+              AND (e.whois->>'found') IS DISTINCT FROM 'true'
+            ORDER BY e.fetched_at ASC NULLS FIRST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        domains = [r["domain"] for r in cur.fetchall()]
+    if not domains:
+        return {"checked": 0, "found": 0}
+    found = 0
+    for dom in domains:                       # sequential — never parallel (registry rate limit)
+        try:
+            w = lookup_whois(dom)
+        except Exception:
+            w = {"found": False, "status": "error"}
+        if w.get("found"):
+            found += 1
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO enrichment (domain, whois, fetched_at) VALUES (%s,%s,now()) "
+                "ON CONFLICT (domain) DO UPDATE SET whois = EXCLUDED.whois, fetched_at = now()",
+                (dom, Json(w)))
+            conn.commit()
+    log.info("enrich_whois_trickle", checked=len(domains), found=found)
+    return {"checked": len(domains), "found": found}
+
+
 def _all_call_prospect_domains(pool: ConnectionPool, require: tuple[str, ...]) -> list[str]:
     """Every identified domain across ALL in-scope call prospects (AI website OR phone->master
     match) that is missing any required enrichment column — for the one-time backfill."""

@@ -598,12 +598,20 @@ def refresh(
             from .enrich import enrich_websites
             ws = enrich_websites(ana, limit=settings.website_scan_per_cycle,
                                  workers=settings.website_scan_workers)
+        # Paced WHOIS fill for running-ads prospects (auDA rate-limits per IP, so a few/cycle).
+        wh = {"checked": 0, "found": 0}
+        if settings.whois_trickle_per_cycle > 0:
+            from .enrich import enrich_whois_trickle
+            try:
+                wh = enrich_whois_trickle(ana, settings, limit=settings.whois_trickle_per_cycle)
+            except Exception as exc:
+                log.warning("whois_trickle_failed", error=str(exc)[:160])
         # WhatsApp nurturing: schedule sequences for new bookings + send due messages
         # (dry-run until WHATSAPP_ENABLED + credentials are configured).
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whois: {wh} | whatsapp: {wa}")
 
 
 @app.command()
