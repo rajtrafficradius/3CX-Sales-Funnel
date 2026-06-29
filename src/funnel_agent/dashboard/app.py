@@ -1680,7 +1680,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # coverage facet -> `ge` boolean column. Multiple selected facets combine with AND.
     _COV = {"scanned": "ge.scanned", "gate": "ge.gate_pass", "apollo": "ge.has_apollo",
-            "intel": "ge.has_intel", "whois": "ge.has_whois"}
+            "intel": "ge.has_intel", "whois": "ge.has_whois", "dataforseo": "ge.has_dataforseo",
+            "transparency": "ge.dfs_checked"}
+
+    # tracking-tag type -> `ge` boolean column (supportive signal). Multiple combine with OR.
+    _TRACK = {"google_ads": "ge.has_google_ads_tag", "meta_pixel": "ge.has_meta_pixel",
+              "gtm": "ge.has_gtm", "ga4": "ge.has_ga4", "bing": "ge.has_bing",
+              "tiktok": "ge.has_tiktok", "linkedin": "ge.has_linkedin"}
 
     def _coverage_conds(coverage: str) -> list:
         """Parse a comma-separated coverage list into `ge` conditions (deduped, AND-ed)."""
@@ -1699,11 +1705,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "50-100": "ge.total_revenue >= 50 AND ge.total_revenue < 100",
             "100up": "ge.total_revenue >= 100"}  # avoid '+' (URL-decodes to space)
 
-    def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = ""):
+    def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = "",
+                tracking: str = "", transparency: str = "", industry: str = "", state: str = ""):
         """Shared companies+enrichment CTE for the Database browser. Returns
         (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
-        into the CTE; enriched/paid_ads/revenue come back as `ge` conditions. Coverage
-        filters are added by the caller, so /stats can facet independent of them."""
+        into the CTE; the rest come back as `ge` conditions. Coverage filters are added by
+        the caller, so /stats can facet independent of them."""
         term = search.strip().lower()
         digits = re.sub(r"[^0-9]", "", search)
         params: dict = {}
@@ -1726,12 +1733,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conds.append("ge.enriched")
         elif enriched == "no":
             conds.append("NOT ge.enriched")
-        if paid_ads == "yes":
-            conds.append("ge.runs_paid_ads")
-        elif paid_ads == "no":
-            conds.append("ge.scanned AND NOT ge.runs_paid_ads")  # scanned, no ad pixels
+        # Master "runs paid ads": Google = Transparency Center (PRIMARY); Meta = pixel
+        # (supportive — no Meta ad-library source). Legacy yes/no map to either/none.
+        if paid_ads == "google":
+            conds.append("ge.runs_google_ads")
+        elif paid_ads == "meta":
+            conds.append("ge.has_meta_pixel")
+        elif paid_ads == "both":
+            conds.append("ge.runs_google_ads AND ge.has_meta_pixel")
+        elif paid_ads in ("either", "yes"):
+            conds.append("(ge.runs_google_ads OR ge.has_meta_pixel)")
+        elif paid_ads in ("none", "no"):
+            conds.append("ge.scanned AND NOT ge.runs_google_ads AND NOT ge.has_meta_pixel")
         elif paid_ads == "unscanned":
             conds.append("NOT ge.scanned")
+        # Tracking-tag TYPE (supportive): OR of the selected tags present.
+        tsel = [_TRACK[t.strip()] for t in (tracking or "").split(",") if t.strip() in _TRACK]
+        if tsel:
+            conds.append("(" + " OR ".join(dict.fromkeys(tsel)) + ")")
+        # Transparency-check state.
+        if transparency == "checked":
+            conds.append("ge.dfs_checked")
+        elif transparency == "running":
+            conds.append("ge.runs_google_ads")
+        elif transparency == "not_running":
+            conds.append("ge.dfs_checked AND NOT ge.runs_google_ads")
+        if industry.strip():
+            conds.append("ge.industry ILIKE %(ind)s")
+            params["ind"] = f"%{industry.strip()}%"
+        if state.strip():
+            conds.append("ge.location ILIKE %(st)s")
+            params["st"] = f"%{state.strip()}%"
         if revenue in _REV:
             conds.append(_REV[revenue])
         cte = f"""
@@ -1758,6 +1790,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  ((e.website->>'runs_paid_ads') = 'true') AS runs_paid_ads,
                  (((e.website->>'runs_paid_ads')='true')
                    OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true')) AS gate_pass,
+                 -- tracking-tag presence (supportive signals)
+                 ((e.website->'trackers'->>'google_ads') IS NOT NULL) AS has_google_ads_tag,
+                 ((e.website->'trackers'->>'meta_pixel') IS NOT NULL) AS has_meta_pixel,
+                 ((e.website->'trackers'->>'gtm') IS NOT NULL) AS has_gtm,
+                 ((e.website->'trackers'->>'ga4') IS NOT NULL) AS has_ga4,
+                 ((e.website->'trackers'->>'bing_uet') IS NOT NULL) AS has_bing,
+                 ((e.website->'trackers'->>'tiktok') IS NOT NULL) AS has_tiktok,
+                 ((e.website->'trackers'->>'linkedin') IS NOT NULL) AS has_linkedin,
+                 -- DataForSEO Transparency Center (PRIMARY running-ads signal)
+                 (e.dataforseo IS NOT NULL) AS dfs_checked,
+                 (e.dataforseo IS NOT NULL) AS has_dataforseo,
+                 ((e.dataforseo->>'running_google_ads')='true') AS runs_google_ads,
                  (e.apollo IS NOT NULL AND (e.apollo->>'found')='true') AS has_apollo,
                  (e.business_intel IS NOT NULL AND (e.business_intel->>'found')='true') AS has_intel,
                  (e.whois IS NOT NULL AND (e.whois->>'found')='true') AS has_whois
@@ -1769,14 +1813,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/database/prospects")
     def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
                            enriched: str = "", pipeline: str = "", paid_ads: str = "",
-                           source: str = "", coverage: str = "", revenue: str = "") -> JSONResponse:
+                           source: str = "", coverage: str = "", revenue: str = "",
+                           tracking: str = "", transparency: str = "", industry: str = "",
+                           state: str = "") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
-        All filters combine with AND; `coverage` may carry several comma-separated facets
-        (e.g. apollo,whois) which all must hold. `total` is the count for the full filter."""
+        All filters combine with AND; `coverage`/`tracking` may carry several comma-separated
+        facets. `total` is the count for the full filter."""
         _require_db_access(request)
         limit = max(1, min(limit, 200))
-        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue)
+        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
+                                     tracking, transparency, industry, state)
         params["lim"] = limit
         params["off"] = offset
         conds += _coverage_conds(coverage)
@@ -1793,7 +1840,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/database/stats")
     def database_stats(request: Request, search: str = "", enriched: str = "",
                        paid_ads: str = "", source: str = "", coverage: str = "",
-                       revenue: str = "") -> JSONResponse:
+                       revenue: str = "", tracking: str = "", transparency: str = "",
+                       industry: str = "", state: str = "") -> JSONResponse:
         _require_db_access(request)
         r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
               "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
@@ -1806,16 +1854,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # a SELECTED chip equals the table's grand total, an unselected one previews adding
         # it. `matching` == /prospects.total (full filter incl. coverage), kept consistent.
         # `sel` conditions come from the fixed _COV whitelist, so inlining them is safe.
-        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue)
+        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
+                                     tracking, transparency, industry, state)
         base = ("WHERE " + " AND ".join(conds)) if conds else ""
         sel = _coverage_conds(coverage)
         sel_and = " AND ".join(sel) if sel else "true"
         cov = q(cte + f"""SELECT
             count(*) FILTER (WHERE {sel_and} AND ge.scanned) AS scanned,
-            count(*) FILTER (WHERE {sel_and} AND ge.gate_pass) AS gate,
+            count(*) FILTER (WHERE {sel_and} AND ge.runs_google_ads) AS running_ads,
+            count(*) FILTER (WHERE {sel_and} AND ge.has_meta_pixel) AS meta,
+            count(*) FILTER (WHERE {sel_and} AND ge.dfs_checked) AS transparency,
             count(*) FILTER (WHERE {sel_and} AND ge.has_apollo) AS apollo,
             count(*) FILTER (WHERE {sel_and} AND ge.has_intel) AS intel,
             count(*) FILTER (WHERE {sel_and} AND ge.has_whois) AS whois,
+            count(*) FILTER (WHERE {sel_and} AND ge.has_dataforseo) AS dataforseo,
             count(*) FILTER (WHERE ge.kind='domain') AS domains,
             count(*) FILTER (WHERE {sel_and}) AS matching
           FROM ge {base}""", params)[0]

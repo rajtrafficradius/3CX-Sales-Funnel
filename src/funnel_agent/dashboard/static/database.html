@@ -57,6 +57,9 @@
   .fpill button:hover{color:var(--bad)}
   #clearAll{border-color:rgba(239,68,68,.5);color:#fca5a5;padding:5px 11px;font-size:12px}
   #clearAll:hover{border-color:var(--bad);background:rgba(239,68,68,.08)}
+  .trkchip{background:#0b0f15;border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+  .trkchip:hover{border-color:var(--accent);color:var(--txt)}
+  .trkchip.active{background:rgba(59,130,246,.16);border-color:var(--accent);color:#cfe0ff;font-weight:700}
 </style>
 </head>
 <body>
@@ -71,24 +74,14 @@
 
 <main>
   <div class="stats" id="stats"></div>
+  <!-- Row 1: who -->
   <div class="bar">
-    <input id="search" type="search" placeholder="Search business name, website, or phone…" autocomplete="off" />
+    <input id="search" type="search" placeholder="🔎 Search business name, website, or phone…" autocomplete="off" />
     <select id="source">
       <option value="">All sources</option>
       <option value="raghav">Raghav (D&amp;B)</option>
       <option value="raven">Raven</option>
       <option value="3cx_calls">3CX calls</option>
-    </select>
-    <select id="enriched">
-      <option value="">All enrichment</option>
-      <option value="yes">Enriched</option>
-      <option value="no">Not enriched</option>
-    </select>
-    <select id="paidAds">
-      <option value="">All (paid ads)</option>
-      <option value="yes">🎯 Running paid ads</option>
-      <option value="no">No ad pixels</option>
-      <option value="unscanned">Not scanned yet</option>
     </select>
     <select id="revenue">
       <option value="">All revenue</option>
@@ -98,7 +91,40 @@
       <option value="50-100">$50M – $100M</option>
       <option value="100up">$100M+</option>
     </select>
-    <span class="muted" style="font-size:12px">Coverage filters → click the chips below (combine several)</span>
+    <input id="industry" type="search" placeholder="Industry…" autocomplete="off" style="max-width:150px;flex:0 1 150px" />
+    <input id="state" type="search" placeholder="State / location…" autocomplete="off" style="max-width:150px;flex:0 1 150px" />
+    <select id="enriched">
+      <option value="">All enrichment</option>
+      <option value="yes">Enriched</option>
+      <option value="no">Not enriched</option>
+    </select>
+  </div>
+  <!-- Row 2: paid ads (Transparency = primary) -->
+  <div class="bar covbar">
+    <span class="muted" style="font-size:12px;font-weight:700;letter-spacing:.3px">PAID ADS</span>
+    <select id="paidAds">
+      <option value="">All</option>
+      <option value="google">🎯 Running Google Ads (Transparency · confirmed)</option>
+      <option value="meta">📘 Has Meta pixel</option>
+      <option value="both">Google + Meta</option>
+      <option value="either">Any paid ads</option>
+      <option value="none">No paid ads (scanned)</option>
+      <option value="unscanned">Not scanned yet</option>
+    </select>
+    <select id="transparency">
+      <option value="">Transparency: any</option>
+      <option value="checked">Transparency checked</option>
+      <option value="running">Confirmed running Google Ads</option>
+      <option value="not_running">Checked · not running</option>
+    </select>
+    <span class="muted" style="font-size:12px">Tracking tags:</span>
+    <button class="trkchip" data-trk="google_ads">Google Ads</button>
+    <button class="trkchip" data-trk="meta_pixel">Meta Pixel</button>
+    <button class="trkchip" data-trk="gtm">GTM</button>
+    <button class="trkchip" data-trk="ga4">GA4</button>
+    <button class="trkchip" data-trk="bing">Bing</button>
+    <button class="trkchip" data-trk="tiktok">TikTok</button>
+    <button class="trkchip" data-trk="linkedin">LinkedIn</button>
   </div>
   <div class="resultbar" id="resultbar"></div>
   <div class="tablewrap">
@@ -126,19 +152,27 @@ let offset=0, limit=50, total=0, lastToken=null;
 let _rowSeq=0, _statSeq=0;           // guards: ignore out-of-order fetch responses
 let searchTimer;
 const cov=new Set();                 // active coverage facets — multi-select, combined with AND
-const COV=[['scanned','✅ Tracking scanned'],['gate','🎯 Paid-ads gate'],['apollo','🏢 Apollo'],
-           ['intel','🧩 Website intel'],['whois','🌐 WHOIS']];
+const trk=new Set();                 // active tracking-tag chips — OR-combined
+const COV=[['scanned','✅ Scanned'],['transparency','🔭 Transparency checked'],['apollo','🏢 Apollo'],
+           ['intel','🧩 Website intel'],['whois','🌐 WHOIS'],['dataforseo','📊 DataForSEO']];
 const COVLBL=Object.fromEntries(COV);
-const PA_LBL={yes:'🎯 Running paid ads',no:'No ad pixels',unscanned:'Not scanned yet'};
+const PA_LBL={google:'🎯 Running Google Ads',meta:'📘 Has Meta pixel',both:'Google + Meta',
+              either:'Any paid ads',none:'No paid ads',unscanned:'Not scanned',yes:'Any paid ads',no:'No paid ads'};
+const TRANSP_LBL={checked:'Transparency checked',running:'Confirmed running ads',not_running:'Checked · not running'};
+const TRK_LBL={google_ads:'Google Ads tag',meta_pixel:'Meta Pixel',gtm:'GTM',ga4:'GA4',bing:'Bing',tiktok:'TikTok',linkedin:'LinkedIn'};
 const REV_LBL={lt1:'< $1M',['1-10']:'$1M–$10M',['10-50']:'$10M–$50M',['50-100']:'$50M–$100M',['100up']:'$100M+'};
 
 function curFilters(){
   return {q:$('#search').value.trim(), source:$('#source').value, enriched:$('#enriched').value,
-          paid_ads:$('#paidAds').value, revenue:$('#revenue').value, coverage:[...cov].join(',')};
+          paid_ads:$('#paidAds').value, revenue:$('#revenue').value, coverage:[...cov].join(','),
+          tracking:[...trk].join(','), transparency:$('#transparency').value,
+          industry:$('#industry').value.trim(), state:$('#state').value.trim()};
 }
 function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComponent(f.source)}`
   +`&enriched=${encodeURIComponent(f.enriched)}&paid_ads=${encodeURIComponent(f.paid_ads)}`
-  +`&revenue=${encodeURIComponent(f.revenue)}&coverage=${encodeURIComponent(f.coverage)}`; }
+  +`&revenue=${encodeURIComponent(f.revenue)}&coverage=${encodeURIComponent(f.coverage)}`
+  +`&tracking=${encodeURIComponent(f.tracking)}&transparency=${encodeURIComponent(f.transparency)}`
+  +`&industry=${encodeURIComponent(f.industry)}&state=${encodeURIComponent(f.state)}`; }
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
 function covCard(key,l,n){
@@ -147,6 +181,13 @@ function covCard(key,l,n){
     <div class="n">${fmtN(n||0)}</div><div class="l">${l}</div></div>`;
 }
 function toggleCov(key){ cov.has(key)?cov.delete(key):cov.add(key); offset=0; loadRows(); loadStats(); }
+// paid-ads shortcut stat card: clicking sets the Paid-ads filter
+function paidCard(n,l,val){
+  const on=$('#paidAds').value===val?' active':'';
+  return `<div class="stat cov${on}" title="Filter: ${l}" onclick="setPaid('${val}')"><div class="n">${fmtN(n||0)}</div><div class="l">${l}</div></div>`;
+}
+function setPaid(val){ $('#paidAds').value = ($('#paidAds').value===val?'':val); offset=0; loadRows(); loadStats(); }
+function syncTrkChips(){ document.querySelectorAll('.trkchip').forEach(b=>b.classList.toggle('active', trk.has(b.dataset.trk))); }
 
 async function loadStats(){
   const my=++_statSeq;
@@ -155,7 +196,7 @@ async function loadStats(){
     if(my!==_statSeq) return;            // a newer filter state superseded this request
     const c=s.coverage||{};
     $('#stats').innerHTML = statCard(fmtN(s.businesses),'Businesses')+statCard(fmtN(s.domains),'Domains')
-      +statCard(fmtN(s.no_domain),'No website')+statCard(fmtN(s.with_phone),'With phone')
+      +paidCard(c.running_ads,'🎯 Running Google Ads','google')+paidCard(c.meta,'📘 Meta pixel','meta')
       +COV.map(([k,l])=>covCard(k,l,c[k])).join('');
     if(lastToken!==null && s.token!==lastToken){ $('#liveText').textContent='updated'; loadRows(true); setTimeout(()=>$('#liveText').textContent='live',1500); }
     lastToken = s.token;
@@ -170,7 +211,11 @@ function renderResult(){
   if(f.source) _pills.push([(SRC_LABEL[f.source]||f.source), ()=>{$('#source').value='';}]);
   if(f.enriched) _pills.push([(f.enriched==='yes'?'Enriched':'Not enriched'), ()=>{$('#enriched').value='';}]);
   if(f.paid_ads) _pills.push([(PA_LBL[f.paid_ads]||f.paid_ads), ()=>{$('#paidAds').value='';}]);
+  if(f.transparency) _pills.push([(TRANSP_LBL[f.transparency]||f.transparency), ()=>{$('#transparency').value='';}]);
   if(f.revenue) _pills.push([(REV_LBL[f.revenue]||f.revenue), ()=>{$('#revenue').value='';}]);
+  if(f.industry) _pills.push(['Industry: '+f.industry, ()=>{$('#industry').value='';}]);
+  if(f.state) _pills.push(['Location: '+f.state, ()=>{$('#state').value='';}]);
+  trk.forEach(k=>_pills.push(['tag: '+(TRK_LBL[k]||k), ()=>trk.delete(k)]));
   cov.forEach(k=>_pills.push([COVLBL[k], ()=>cov.delete(k)]));
   const any=_pills.length>0;
   const out=[`<span class="resultcount">${any?'🔎 ':''}<b>${total.toLocaleString()}</b> `
@@ -179,9 +224,10 @@ function renderResult(){
   if(any) out.push(`<button id="clearAll" onclick="clearAll()">Clear all</button>`);
   $('#resultbar').innerHTML=out.join(' ');
 }
-function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; loadRows(); loadStats(); } }
-function clearAll(){ clearTimeout(searchTimer); $('#search').value='';$('#source').value='';$('#enriched').value='';
-  $('#paidAds').value='';$('#revenue').value=''; cov.clear(); offset=0; loadRows(); loadStats(); }
+function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; syncTrkChips(); loadRows(); loadStats(); } }
+function clearAll(){ clearTimeout(searchTimer);
+  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state'].forEach(s=>$(s).value='');
+  cov.clear(); trk.clear(); syncTrkChips(); offset=0; loadRows(); loadStats(); }
 
 // Revenue stored in millions USD; show as $X.XM / $X.XB.
 function fmtRev(m){
@@ -192,8 +238,12 @@ function fmtRev(m){
   return '$'+(v*1000).toLocaleString(undefined,{maximumFractionDigits:0})+'K';
 }
 function paidAdsCell(r){
-  if(r.runs_paid_ads) return '<span class="pill" style="background:rgba(239,68,68,.16);color:#fca5a5">🎯 Yes</span>';
-  if(r.scanned) return '<span class="muted">No</span>';
+  const bits=[];
+  if(r.runs_google_ads) bits.push('<span class="pill" style="background:rgba(239,68,68,.16);color:#fca5a5" title="Confirmed via Google Ads Transparency Center">🎯 Google</span>');
+  if(r.has_meta_pixel) bits.push('<span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd" title="Meta Pixel present (supportive)">📘 Meta</span>');
+  if(bits.length) return bits.join(' ');
+  if(r.dfs_checked) return '<span class="muted" title="Transparency checked — no Google ads">No</span>';
+  if(r.scanned) return '<span class="muted" title="not transparency-checked yet">·</span>';
   return '<span class="muted" title="website not scanned yet">·</span>';
 }
 const SRC_LABEL={raghav:'Raghav (D&B)',raven:'Raven','3cx_calls':'3CX calls',dnb_wholesale:'Raghav (D&B)',given_data:'Uploaded'};
@@ -238,11 +288,15 @@ async function loadRows(flash){
   renderResult();
 }
 
-$('#search').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();loadStats();},250); });
-$('#enriched').onchange=()=>{offset=0;loadRows();loadStats();};
-$('#paidAds').onchange=()=>{offset=0;loadRows();loadStats();};
-$('#revenue').onchange=()=>{offset=0;loadRows();loadStats();};
-$('#source').onchange=()=>{offset=0;loadRows();loadStats();};
+const _deb=()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();loadStats();},300); };
+$('#search').addEventListener('input',_deb);
+$('#industry').addEventListener('input',_deb);
+$('#state').addEventListener('input',_deb);
+['#enriched','#paidAds','#revenue','#source','#transparency'].forEach(s=>$(s).onchange=()=>{offset=0;loadRows();loadStats();});
+document.querySelectorAll('.trkchip').forEach(b=>b.onclick=()=>{
+  const k=b.dataset.trk; trk.has(k)?trk.delete(k):trk.add(k); b.classList.toggle('active', trk.has(k));
+  offset=0; loadRows(); loadStats();
+});
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };
 
