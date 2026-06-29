@@ -546,10 +546,13 @@ async function load(){
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],
     ['tracking','Tracking codes available', trackingCodesCard(d)],
   ];
+  // Lead with Call intelligence for called prospects (so a fresh call never looks "empty");
+  // otherwise lead with the uploaded/enrichment view.
+  const defPane = (d.calls||[]).length ? 'calls' : 'uploaded';
   document.getElementById('main').innerHTML =
     heroCard(d)
-    + `<div class="tabs">${tabs.map((t,i)=>`<button class="tab${i===0?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
-    + tabs.map((t,i)=>`<div class="tabpane${i===0?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');
+    + `<div class="tabs">${tabs.map(t=>`<button class="tab${t[0]===defPane?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
+    + tabs.map(t=>`<div class="tabpane${t[0]===defPane?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');
   document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.tabpane').forEach(x=>x.classList.remove('active'));
