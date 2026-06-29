@@ -242,24 +242,59 @@ function businessIntelCard(d){
 }
 
 // ---- Digital marketing insights (SEO/ads + paid-ads status) ----
+// ad creatives grid (Transparency Center) — larger + readable, graceful no-image fallback
+function adCreatives(ads){
+  const items=(ads&&ads.items)||[];
+  if(!items.length) return '<div class="muted small">No ad creatives returned by the Transparency Center.</div>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px">'+items.map(it=>{
+    const fb=`<div style="display:none;height:150px;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px">${esc((it.format||'ad').toUpperCase())} (no preview)</div>`;
+    const img = it.preview_image
+      ? `<img src="${esc(it.preview_image)}" loading="lazy" referrerpolicy="no-referrer" style="width:100%;height:150px;object-fit:contain;background:#0b0f15;border-radius:8px;border:1px solid var(--line)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">${fb}`
+      : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:12px">${esc((it.format||'ad').toUpperCase())} ad (no image)</div>`;
+    const dates=`${esc((it.first_shown||'').slice(0,10))} → ${esc((it.last_shown||'').slice(0,10))}`;
+    return `<div style="width:230px">${img}
+      <div class="small" style="margin-top:5px">${esc(it.format||'')}${it.verified?' · ✅ verified':''}
+      <div class="muted">${dates}</div>${it.url?`<a href="${esc(it.url)}" target="_blank">Transparency ↗</a>`:''}</div></div>`;
+  }).join('')+'</div>';
+}
 function digitalMarketingCard(d){
-  const m=d.master||{}, e=d.enrichment||{}, sm=(e&&e.semrush)||{}, w=(e&&e.website)||{};
-  const pick=(en,ma)=>{ if(en!=null&&en!=='') return [en,'SEMrush']; if(ma!=null&&ma!=='') return [ma,'Master DB']; return [null,null]; };
-  const [otraf,otrafS]=pick(sm.organic_traffic,m.organic_traffic);
-  const [okw,okwS]=pick(sm.organic_keywords,m.organic_keywords);
-  const [ocost,ocostS]=pick(sm.organic_cost,m.organic_cost);
-  const [adkw,adkwS]=pick(sm.paid_keywords,m.adwords_keywords);
-  const mset=[];
-  if(otraf!=null) mset.push(metric(fmtN(otraf),'Organic traffic /mo',otrafS));
-  if(okw!=null) mset.push(metric(fmtN(okw),'Organic keywords',okwS));
-  if(ocost!=null) mset.push(metric('$'+fmtN(ocost),'Traffic value /mo',ocostS));
-  if(adkw!=null) mset.push(metric(fmtN(adkw),'Google Ads keywords',adkwS));
-  if(sm.authority_score!=null) mset.push(metric(sm.authority_score+'/100','Authority','SEMrush'));
-  if(sm.backlinks!=null) mset.push(metric(fmtN(sm.backlinks),'Backlinks','SEMrush'));
-  return `<div class="card full"><h2>📈 Digital marketing insights</h2>
+  const m=d.master||{}, e=d.enrichment||{}, sm=(e&&e.semrush)||{}, df=(e&&e.dataforseo)||null;
+  const rank=(df&&df.rank)||{}, org=rank.organic||{}, paid=rank.paid||{}, ads=(df&&df.ads)||{}, bl=(df&&df.backlinks)||{};
+  const can=d.can_download;
+  const btn = can?`<button class="btn" id="dfsBtn" style="margin-left:8px">${df?'Refresh':'Enrich'} DataForSEO (paid)</button>`:'';
+  // ---- ORGANIC / SEO (DataForSEO primary; SEMrush/master fallback) ----
+  const orgM=[];
+  if(org.count!=null) orgM.push(metric(fmtN(org.count),'Organic keywords','DataForSEO'));
+  if(org.etv!=null) orgM.push(metric(fmtN(org.etv),'Organic traffic /mo','DataForSEO'));
+  if(org.traffic_cost!=null) orgM.push(metric('$'+fmtN(org.traffic_cost),'Organic traffic value /mo','DataForSEO'));
+  if(bl.rank!=null) orgM.push(metric(fmtN(bl.rank),'Domain rank','DataForSEO'));
+  if(bl.referring_domains!=null) orgM.push(metric(fmtN(bl.referring_domains),'Referring domains','DataForSEO'));
+  if(bl.backlinks!=null) orgM.push(metric(fmtN(bl.backlinks),'Backlinks','DataForSEO'));
+  if(!orgM.length){
+    if(sm.organic_traffic!=null||m.organic_traffic!=null) orgM.push(metric(fmtN(sm.organic_traffic??m.organic_traffic),'Organic traffic /mo',sm.organic_traffic!=null?'SEMrush':'Master DB'));
+    if(sm.organic_keywords!=null||m.organic_keywords!=null) orgM.push(metric(fmtN(sm.organic_keywords??m.organic_keywords),'Organic keywords',sm.organic_keywords!=null?'SEMrush':'Master DB'));
+  }
+  // ---- PAID (Transparency Center primary + paid keyword/traffic metrics) ----
+  const running = df&&df.running_google_ads;
+  const verdict = running
+    ? `<span class="pill" style="background:rgba(239,68,68,.16);color:#fca5a5">🎯 Running Google Ads — ${fmtN(ads.count)} active ads · last seen ${esc(ads.last_shown||'?')}</span>`
+    : (df?`<span class="pill none">No active Google Ads (Transparency Center)</span>`:'');
+  const fmts = Object.entries(ads.formats||{}).map(([k,v])=>esc(k)+': '+v).join(' · ');
+  const paidM=[];
+  if(paid.count!=null) paidM.push(metric(fmtN(paid.count),'Paid keywords','DataForSEO'));
+  if(paid.etv!=null) paidM.push(metric(fmtN(paid.etv),'Paid traffic /mo','DataForSEO'));
+  if(paid.traffic_cost!=null) paidM.push(metric('$'+fmtN(paid.traffic_cost),'Est. paid spend /mo','DataForSEO'));
+  if((ads.advertisers||[]).length) paidM.push(metric(fmtN(ads.advertisers.length),'Advertiser IDs','Transparency'));
+  return `<div class="card full"><h2>📈 Digital marketing — SEO &amp; Paid Ads</h2>
     ${paidAdsVerdict(d.paid_ads)}
-    <div class="subh">SEO &amp; ads</div>
-    ${mset.length?`<div class="metrics">${mset.join('')}</div>`:'<div class="muted small">No SEO metrics yet (SEMrush to be added later).</div>'}
+    <div class="subh">🌿 Organic / SEO performance</div>
+    ${orgM.length?`<div class="metrics">${orgM.join('')}</div>`:`<div class="muted small">No organic data yet.${btn}</div>`}
+    <div class="subh" style="margin-top:16px">🎯 Paid ads performance — Google Ads Transparency Center</div>
+    ${df?`<div style="margin:6px 0">${verdict}${fmts?` <span class="muted small">${esc(fmts)}</span>`:''}</div>
+      ${paidM.length?`<div class="metrics" style="margin-bottom:8px">${paidM.join('')}</div>`:''}
+      ${adCreatives(ads)}`
+      :`<div class="muted small">Not DataForSEO-checked yet — auto-runs for $1–10M prospects.${btn}</div>`}
+    ${df&&df.fetched_at?`<div class="muted small" style="margin-top:10px">Fetched ${fmtDate(df.fetched_at)}.${btn}</div>`:''}
     ${m.competitor_relevance?`<div class="small mt6"><b>Competitor relevance:</b> ${esc(m.competitor_relevance)}</div>`:''}
   </div>`;
 }
@@ -506,7 +541,6 @@ async function load(){
     ['apollo','Apollo (company + people)', apolloCard(d)],
     ['business','Website business intel', businessIntelCard(d)],
     ['whois','Domain / WHOIS', whoisCard(d)],
-    ['ads','Google Ads Transparency', dataforseoCard(d)],
     ['website','Website information', websiteInfoCard(d)],
     ['digital','Digital marketing insights', digitalMarketingCard(d)],
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],

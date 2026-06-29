@@ -133,8 +133,20 @@ class DataForSEOClient:
             "cost": d.get("cost"),
         }
 
-    def enrich_domain(self, domain: str) -> dict:
-        """Combined SEO + Transparency Center enrichment for a domain. Never raises."""
+    def backlinks_summary(self, domain: str) -> dict:
+        """Domain authority + backlink profile (rank, referring domains, backlinks count)."""
+        body = [{"target": domain, "internal_list_limit": 1, "backlinks_status_type": "live"}]
+        d = self._post("/v3/backlinks/summary/live", body)
+        res = self._first_result(d)
+        return {"rank": res.get("rank"), "backlinks": res.get("backlinks"),
+                "referring_domains": res.get("referring_domains"),
+                "referring_main_domains": res.get("referring_main_domains"),
+                "referring_pages": res.get("referring_pages"),
+                "broken_backlinks": res.get("broken_backlinks"), "cost": d.get("cost")}
+
+    def enrich_domain(self, domain: str, with_backlinks: bool = False) -> dict:
+        """Combined SEO + Transparency Center enrichment for a domain. Never raises.
+        (Backlinks API needs a separate DataForSEO subscription this account lacks -> off.)"""
         out: dict = {"found": False, "fetched_at": datetime.now(timezone.utc).isoformat()}
         try:
             out["rank"] = self.domain_rank_overview(domain)
@@ -146,6 +158,11 @@ class DataForSEOClient:
             out["found"] = True
         except Exception as exc:
             log.warning("dataforseo_ads_failed", domain=domain, error=str(exc)[:160])
+        if with_backlinks:
+            try:
+                out["backlinks"] = self.backlinks_summary(domain)
+            except Exception as exc:
+                log.warning("dataforseo_backlinks_failed", domain=domain, error=str(exc)[:160])
         # headline verdict
         ads = out.get("ads") or {}
         out["running_google_ads"] = bool(ads.get("running_ads"))
