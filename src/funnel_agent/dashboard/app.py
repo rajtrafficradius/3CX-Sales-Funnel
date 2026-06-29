@@ -980,10 +980,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # A booking counts once per PROSPECT — only the FIRST booked call to a number; a later
     # booked call to the same prospect is a duplicate/re-touch (don't double-count the lead).
     _FIRST_BOOKING = ("NOT EXISTS (SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id=pc.call_id "
-                      "WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at < c.started_at "
+                      "WHERE pc.in_scope AND ("
+                      "right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) "
+                      "OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key)) AND pc.started_at < c.started_at "
                       "AND pc.answered AND pc.talk_seconds >= %(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
                       "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) "
-                      "AND NOT COALESCE(pcl.meeting_rescheduled,false))")
+                      "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))")
     _STAGE_COND = {
         "calls_made": "TRUE",
         "connected": _CONN,
@@ -996,11 +998,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "meetings_booked": f"{_CONN} AND cl.meeting_booked "
                            "AND NOT COALESCE(cl.meeting_confirmation, false) "
                            "AND NOT COALESCE(cl.meeting_rescheduled, false) "
+                           "AND NOT COALESCE(cl.booking_already_exists, false) "
                            f"AND {_FIRST_BOOKING}",
         # Qualified Booked = strict subset (also qualified, BAPU). Qualification is a
         # PROSPECT-level fact: this call qualified OR any in-scope call to the same number.
         "qualified_booked": f"{_CONN} AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false) "
-                            f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND {_FIRST_BOOKING} "
+                            f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND NOT COALESCE(cl.booking_already_exists, false) AND {_FIRST_BOOKING} "
                             "AND (COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified) "
                             "OR EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
                             "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
@@ -1009,7 +1012,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # bookings, so qualified_booked + booked_unqualified = meetings_booked. (Same
         # first-booking dedup + override + prospect-level qualification, negated.)
         "booked_unqualified": f"{_CONN} AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false) "
-                              f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND {_FIRST_BOOKING} "
+                              f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND NOT COALESCE(cl.booking_already_exists, false) AND {_FIRST_BOOKING} "
                               "AND NOT COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified, false) "
                               "AND NOT EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
                               "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
@@ -1017,7 +1020,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Reference-only drill-downs (NOT counted in the funnel). The sidebar "Rescheduled /
         # confirmed" link uses `already_booked`; the two split views are also available.
         "already_booked": f"{_CONN} AND cl.meeting_booked AND "
-                          "(COALESCE(cl.meeting_confirmation, false) OR COALESCE(cl.meeting_rescheduled, false))",
+                          "(COALESCE(cl.meeting_confirmation, false) OR COALESCE(cl.meeting_rescheduled, false) "
+                          "OR COALESCE(cl.booking_already_exists, false))",
         "meeting_confirmation": f"{_CONN} AND cl.meeting_booked "
                                 "AND COALESCE(cl.meeting_confirmation, false)",
         "meeting_rescheduled": f"{_CONN} AND cl.meeting_booked "
@@ -1109,6 +1113,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             enr = rows[0] if rows else None
         ovr = q("SELECT qualified, reason, override_by, created_at FROM qualification_overrides WHERE call_id=%s",
                 (call_id,))
+        # Does THIS booking actually count, or is the company already booked earlier? Mirrors
+        # the funnel dedup (first genuine booking per number OR company counts; later ones don't).
+        booking_counts = None
+        c0 = cl[0] if cl else None
+        if c0 and c0.get("meeting_booked"):
+            if c0.get("meeting_confirmation") or c0.get("meeting_rescheduled") or c0.get("booking_already_exists"):
+                booking_counts = False
+            else:
+                prior = q(
+                    "SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id=pc.call_id, "
+                    "(SELECT started_at, dest_number FROM calls WHERE call_id=%(cid)s) cur "
+                    "WHERE pc.in_scope AND pc.call_id <> %(cid)s AND pc.started_at < cur.started_at "
+                    "AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(cur.dest_number,'[^0-9]','','g'),9) "
+                    "     OR (%(ck)s IS NOT NULL AND pcl.company_key = %(ck)s)) "
+                    "AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false) "
+                    "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false) LIMIT 1",
+                    {"cid": call_id, "ck": c0.get("company_key")})
+                booking_counts = not prior
         u = getattr(request.state, "user", None) or {}
         # jsonable_encoder converts numeric->float and datetime->iso so confidences serialize.
         return JSONResponse(jsonable_encoder({
@@ -1119,6 +1141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "domain": domain,
             "enrichment": enr,
             "qual_override": ovr[0] if ovr else None,
+            "booking_counts": booking_counts,  # None=n/a, True=counts, False=company already booked
             "can_override": can_manage_pipeline(u),  # BDM/admin only
         }))
 

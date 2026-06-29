@@ -254,6 +254,7 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
         meeting_datetime="",
         meeting_confirmation_only=sv(),
         meeting_rescheduled=sv(),
+        booking_already_exists=sv(),
         budget=sv(),
         authority=sv(),
         problem=sv(),
@@ -314,18 +315,28 @@ class Classifier:
             model_used = strong
         return verdict, model_used
 
-    def classify_one(self, call_row: dict, transcript_row: dict) -> dict:
-        """Classify a single transcribed call -> a `classifications` record dict."""
+    def classify_one(self, call_row: dict, transcript_row: dict, memory: str | None = None,
+                     master_domain: str | None = None) -> dict:
+        """Classify a single transcribed call -> a `classifications` record dict.
+
+        `memory` is an optional [COMPANY MEMORY] block injected so the model knows a meeting
+        was already booked for this company (prevents double-counting referral hand-offs).
+        `master_domain` (resolved from the master prospects table by phone) stabilises the
+        company_key when the AI doesn't extract a website.
+        """
         call_id = str(call_row["call_id"])
+        dest_number = call_row.get("dest_number")
 
         # CDR pre-filter: don't spend an LLM call on a dial that never connected.
         if not call_row.get("answered") or call_row.get("is_voicemail"):
             outcome = "voicemail" if call_row.get("is_voicemail") else "other"
             verdict = _all_false_verdict(outcome, "CDR pre-filter: not a live conversation")
-            return self._record(call_id, verdict, model="cdr_prefilter", needs_review=False)
+            return self._record(call_id, verdict, model="cdr_prefilter", needs_review=False,
+                                dest_number=dest_number, master_domain=master_domain)
 
         text = (transcript_row.get("text") or "")[: self._s.llm_max_transcript_chars]
-        user = build_user_message(text, transcript_row.get("sentiment"), transcript_row.get("summary"))
+        user = build_user_message(text, transcript_row.get("sentiment"),
+                                  transcript_row.get("summary"), memory=memory or None)
         verdict, model_used = self._run_with_escalation(user)
         apply_auto_validation(verdict)      # budget/aspiration from running ads / having an agency
         enforce_booking_firmness(verdict)   # a non-firm/cancelled booking does not count
@@ -335,10 +346,18 @@ class Classifier:
             min_quality_confidence(verdict) < self._s.confidence_threshold
             or monotonicity_violation(verdict)
         )
-        return self._record(call_id, verdict, model=model_used, needs_review=needs_review)
+        return self._record(call_id, verdict, model=model_used, needs_review=needs_review,
+                            dest_number=dest_number, master_domain=master_domain)
 
     @staticmethod
-    def _record(call_id: str, v: CallClassification, *, model: str, needs_review: bool) -> dict:
+    def _record(call_id: str, v: CallClassification, *, model: str, needs_review: bool,
+                dest_number: str | None = None, master_domain: str | None = None) -> dict:
+        from .memory import company_key
+        # a booking that already existed for the company is not a NEW booking (only meaningful
+        # when a booking was actually detected on this call)
+        already_exists = bool(v.booking_already_exists.value and v.meeting_booked.value)
+        # domain identity: AI-extracted website, else the master-prospects domain for the phone
+        _domain = v.prospect_website or master_domain
         return {
             "call_id": call_id,
             "rpc_connect": v.rpc_connect.value,
@@ -354,6 +373,8 @@ class Classifier:
             "meeting_datetime": v.meeting_datetime or None,
             "meeting_confirmation": v.meeting_confirmation_only.value,
             "meeting_rescheduled": v.meeting_rescheduled.value,
+            "booking_already_exists": already_exists,
+            "company_key": company_key(_domain, v.prospect_company, dest_number),
             # lead qualification (BANT + AO)
             "budget": v.budget.value,
             "authority": v.authority.value,
@@ -400,7 +421,8 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 call_id, rpc_connect, rpc_confidence, full_pitch, pitch_confidence,
                 is_lead, lead_confidence, qualified, qual_confidence, meeting_booked,
                 booking_status, meeting_datetime,
-                meeting_confirmation, meeting_rescheduled, budget, authority, problem, urgency,
+                meeting_confirmation, meeting_rescheduled, booking_already_exists, company_key,
+                budget, authority, problem, urgency,
                 aspiration, open_to_listening, runs_paid_ads, has_marketing_agency, do_not_contact,
                 gatekeeper_handled_well, gatekeeper_notes, problem_summary,
                 lead_temperature,
@@ -412,7 +434,8 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 %(call_id)s, %(rpc_connect)s, %(rpc_confidence)s, %(full_pitch)s, %(pitch_confidence)s,
                 %(is_lead)s, %(lead_confidence)s, %(qualified)s, %(qual_confidence)s, %(meeting_booked)s,
                 %(booking_status)s, %(meeting_datetime)s,
-                %(meeting_confirmation)s, %(meeting_rescheduled)s, %(budget)s, %(authority)s, %(problem)s, %(urgency)s,
+                %(meeting_confirmation)s, %(meeting_rescheduled)s, %(booking_already_exists)s, %(company_key)s,
+                %(budget)s, %(authority)s, %(problem)s, %(urgency)s,
                 %(aspiration)s, %(open_to_listening)s, %(runs_paid_ads)s, %(has_marketing_agency)s, %(do_not_contact)s,
                 %(gatekeeper_handled_well)s, %(gatekeeper_notes)s, %(problem_summary)s,
                 %(lead_temperature)s,
@@ -429,6 +452,8 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 booking_status = EXCLUDED.booking_status, meeting_datetime = EXCLUDED.meeting_datetime,
                 meeting_confirmation = EXCLUDED.meeting_confirmation,
                 meeting_rescheduled = EXCLUDED.meeting_rescheduled,
+                booking_already_exists = EXCLUDED.booking_already_exists,
+                company_key = EXCLUDED.company_key,
                 budget = EXCLUDED.budget, authority = EXCLUDED.authority,
                 problem = EXCLUDED.problem, urgency = EXCLUDED.urgency,
                 aspiration = EXCLUDED.aspiration, open_to_listening = EXCLUDED.open_to_listening,
@@ -468,7 +493,7 @@ def _pending_calls_for_day(
     end = start + timedelta(days=1)
     not_classified = "" if force else "AND cl.call_id IS NULL"
     sql = f"""
-        SELECT c.call_id, c.answered, c.is_voicemail,
+        SELECT c.call_id, c.answered, c.is_voicemail, c.dest_number,
                t.text, t.sentiment, t.summary, t.diarized
         FROM calls c
         JOIN transcripts t ON t.call_id = c.call_id
@@ -508,10 +533,19 @@ def classify_day(
 
     def work(row: dict) -> tuple[str, bool]:
         try:
+            # Company memory: does this call's company already have a firm booking on
+            # record? If so, tell the model so a referral/hand-off isn't double-counted.
+            # Resolve the domain from the master prospects table (by phone) so calls to the
+            # same company get a STABLE domain-based company_key even if the AI doesn't
+            # extract a website (this is what cross-contact booking dedup keys on).
+            from .memory import _master_domain, format_memory, lookup_booking_memory
+            mdom = _master_domain(pool, row.get("dest_number"))
+            mem = format_memory(lookup_booking_memory(
+                pool, row.get("dest_number"), domain=mdom, before_call_id=str(row.get("call_id"))))
             rec = clf.classify_one(row, {
                 "text": row.get("text"), "sentiment": row.get("sentiment"),
                 "summary": row.get("summary"),
-            })
+            }, memory=mem, master_domain=mdom)
             upsert_classification(pool, rec)
             return ("ok", bool(rec["needs_human_review"]))
         except Exception as exc:  # one bad call must not abort the batch

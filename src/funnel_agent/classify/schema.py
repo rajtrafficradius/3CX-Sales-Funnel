@@ -59,6 +59,13 @@ class CallClassification(BaseModel):
     # here. (Reschedules + confirmations are NOT counted again in the funnel — the
     # booking was already counted on the day it was first made.)
     meeting_rescheduled: StageVerdict
+    # TRUE when a meeting for this PROSPECT/COMPANY was ALREADY arranged before this call —
+    # most importantly when this call is a referral / hand-off to a DIFFERENT person at the
+    # SAME company (e.g. "I booked the session with your manager Ravi; he asked me to brief
+    # you"), or the prospect states a meeting is already on the books. Distinct from
+    # meeting_confirmation_only/meeting_rescheduled (which are about the SAME contact's prior
+    # call). When TRUE the booking is NOT a new booking and is excluded from the funnel count.
+    booking_already_exists: StageVerdict
 
     # ---- Lead qualification: BANT + AO ----
     # Budget, Authority, Need(Problem), Timeline(Urgency) + Aspiration, Open-to-listening.

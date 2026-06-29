@@ -132,6 +132,17 @@ Stage definitions (in funnel order):
   FALSE. Set FALSE for a brand-new first-time booking (no earlier meeting existed) and for a pure
   re-confirmation (no new date set). When in doubt between confirmation_only and rescheduled, prefer
   rescheduled if any new date/time was agreed on this call.
+- booking_already_exists: set TRUE when a meeting for this PROSPECT/COMPANY was ALREADY arranged
+  BEFORE this call — the key case is a REFERRAL / HAND-OFF to a DIFFERENT person at the SAME
+  company. Tell-tale signs: the BDE says the session/meeting was already booked or scheduled with
+  someone else there (a manager/owner/colleague — e.g. "I scheduled the meeting with your manager
+  Ravi", "he asked me to talk to you / loop you in"), or the prospect says "we already have a
+  meeting booked". In these cases this call is just briefing/handing-off the SAME already-arranged
+  meeting — it is NOT a new booking, so it must NOT be counted again. (meeting_booked may still be
+  TRUE for the record, but booking_already_exists=TRUE removes it from the funnel's new-booking
+  count, exactly like a reschedule/confirmation does.) Set FALSE for a genuinely NEW, separate
+  meeting. If a [COMPANY MEMORY] note is provided below saying a meeting was already booked for this
+  company, and this call concerns that same meeting, set booking_already_exists=TRUE.
 
 Also set call_outcome (voicemail | gatekeeper | wrong_number | conversation | other) and a
 one-line overall_notes.
@@ -282,9 +293,16 @@ CONVERSATION INTELLIGENCE (for coaching — base strictly on the transcript):
 """
 
 
-def build_user_message(transcript_text: str, sentiment: str | None, summary: str | None) -> str:
-    """Assemble the user message from the transcript and any aux fields from Phase B."""
+def build_user_message(transcript_text: str, sentiment: str | None, summary: str | None,
+                       memory: str | None = None) -> str:
+    """Assemble the user message from the transcript and any aux fields from Phase B.
+
+    `memory` is an optional [COMPANY MEMORY] block (prior booking for this company) that makes
+    the model aware of an existing booking so a referral/hand-off isn't double-counted.
+    """
     parts: list[str] = []
+    if memory:
+        parts.append(memory)
     if summary:
         parts.append(f"[3CX summary]\n{summary}\n")
     if sentiment:

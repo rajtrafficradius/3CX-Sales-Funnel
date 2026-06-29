@@ -58,12 +58,17 @@ WITH base AS (
                    AND cl.meeting_booked
                    AND NOT COALESCE(cl.meeting_confirmation, false)
                    AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND NOT COALESCE(cl.booking_already_exists, false)  -- referral/hand-off to a 2nd contact of an already-booked company
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
-                         WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at < c.started_at
+                         WHERE pc.in_scope
+                           -- same PROSPECT: same phone number OR same COMPANY (domain/name-slug key)
+                           AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
+                                OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
+                           AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
                            AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
-                           AND NOT COALESCE(pcl.meeting_rescheduled,false))
+                           AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
               THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
         -- QUALIFIED. Effective qualification = a BDM/admin OVERRIDE if present (#4b),
@@ -73,12 +78,16 @@ WITH base AS (
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false)
                    AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND NOT COALESCE(cl.booking_already_exists, false)
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
-                         WHERE pc.in_scope AND right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND pc.started_at < c.started_at
+                         WHERE pc.in_scope
+                           AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
+                                OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
+                           AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
                            AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
-                           AND NOT COALESCE(pcl.meeting_rescheduled,false))
+                           AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
                    AND (COALESCE(qo.qualified, cl.qualified) OR EXISTS (
                          SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
                          LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id

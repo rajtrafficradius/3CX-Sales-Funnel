@@ -113,7 +113,15 @@ ALTER TABLE classifications ADD COLUMN IF NOT EXISTS prospect_email text;
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS do_not_contact boolean;  -- rude / asked to be removed (#5)
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS gatekeeper_handled_well boolean;  -- RPC gatekeeper handling (#5)
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS gatekeeper_notes text;
+-- Company-level booking memory (2026-06-29): a referral/handoff to a 2nd contact at a
+-- company that ALREADY had the meeting arranged is NOT a new booking. booking_already_exists
+-- flags that case (like reschedule/confirmation but across DIFFERENT contacts). company_key
+-- is a stable per-company id (domain -> company-name-slug -> phone) used to dedup bookings
+-- at the COMPANY level, not just per phone number.
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS booking_already_exists boolean;
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS company_key text;
 CREATE INDEX IF NOT EXISTS idx_class_website ON classifications (prospect_website);
+CREATE INDEX IF NOT EXISTS idx_class_company_key ON classifications (company_key);
 
 -- WhatsApp nurturing queue (#13). One row per scheduled message in the meeting-
 -- confirmation sequence. The engine schedules these when a meeting is booked and a
