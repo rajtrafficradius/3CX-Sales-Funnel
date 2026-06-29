@@ -285,8 +285,27 @@ function digitalMarketingCard(d){
   if(paid.etv!=null) paidM.push(metric(fmtN(paid.etv),'Paid traffic /mo','DataForSEO'));
   if(paid.traffic_cost!=null) paidM.push(metric('$'+fmtN(paid.traffic_cost),'Est. paid spend /mo','DataForSEO'));
   if((ads.advertisers||[]).length) paidM.push(metric(fmtN(ads.advertisers.length),'Advertiser IDs','Transparency'));
+  // TOP VERDICT — Transparency Center is PRIMARY (overrides tracking-tag guess). Only fall
+  // back to the tracking+call heuristic when DataForSEO hasn't checked this domain.
+  let topVerdict;
+  if(df && df.running_google_ads){
+    topVerdict = `<div style="border:1px solid #3fb95055;background:#16331f;border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:18px">🎯</span>
+      <b style="color:#3fb950;font-size:15px">Running paid ads — confirmed by Google Ads Transparency Center</b>
+      <span class="pill" style="background:#3fb95022;color:#3fb950;border:1px solid #3fb95055">high confidence</span></div>
+      <div class="small" style="color:#8b949e;margin-top:6px">${fmtN(ads.count)} active Google ad${ads.count===1?'':'s'} (last seen ${esc(ads.last_shown||'?')})${(d.paid_ads&&d.paid_ads.platforms||[]).includes('Meta')||((e.website||{}).trackers||{}).meta_pixel?' · Meta pixel also present':''}. Tracking tags &amp; traffic are supportive only.</div></div>`;
+  } else if(df){
+    const metaNote = ((e.website||{}).trackers||{}).meta_pixel ? ' A Meta Pixel is present (may run Meta ads — not covered by Google Transparency).' : '';
+    topVerdict = `<div style="border:1px solid #8b949e55;background:#1c2430;border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:18px">🚫</span>
+      <b style="color:#a371f7;font-size:15px">Not running Google Ads</b>
+      <span class="pill" style="background:#8b949e22;color:#8b949e;border:1px solid #8b949e55">Transparency Center checked</span></div>
+      <div class="small" style="color:#8b949e;margin-top:6px">No active ads found in the Google Ads Transparency Center (the authoritative source).${metaNote}</div></div>`;
+  } else {
+    topVerdict = paidAdsVerdict(d.paid_ads);  // no DataForSEO yet -> tracking + call heuristic
+  }
   return `<div class="card full"><h2>📈 Digital marketing — SEO &amp; Paid Ads</h2>
-    ${paidAdsVerdict(d.paid_ads)}
+    ${topVerdict}
     <div class="subh">🌿 Organic / SEO performance</div>
     ${orgM.length?`<div class="metrics">${orgM.join('')}</div>`:`<div class="muted small">No organic data yet.${btn}</div>`}
     <div class="subh" style="margin-top:16px">🎯 Paid ads performance — Google Ads Transparency Center</div>
