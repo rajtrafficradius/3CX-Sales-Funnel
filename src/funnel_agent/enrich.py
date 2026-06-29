@@ -517,3 +517,72 @@ def enrich_day(pool: ConnectionPool, settings: Settings, day: date,
              enriched=enriched, errors=errors, apollo_calls=used["apollo"])
     return {"enriched": enriched, "errors": errors, "domains": len(domains),
             "apollo_calls": used["apollo"]}
+
+
+# --------------------------------------------------------------------------- #
+# DataForSEO — SEO metrics + Google Ads Transparency Center (PAID)
+# --------------------------------------------------------------------------- #
+def _pending_dataforseo_domains(pool: ConnectionPool, limit: int) -> list[str]:
+    """Raghav $1-10M, paid-ads-gated domains not yet DataForSEO-enriched."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH d AS (
+              SELECT DISTINCT lower(domain) AS dom FROM companies
+              WHERE source='raghav' AND revenue_musd BETWEEN 1 AND 10
+                AND domain IS NOT NULL AND domain <> ''
+            )
+            SELECT d.dom FROM d JOIN enrichment e ON e.domain = d.dom
+            WHERE ( (e.website->>'runs_paid_ads')='true'
+                    OR ((e.website->'trackers'->>'gtm') IS NOT NULL AND (e.website->>'uses_utm')='true') )
+              AND e.dataforseo IS NULL
+            ORDER BY d.dom LIMIT %s
+            """,
+            (limit,),
+        )
+        return [r["dom"] for r in cur.fetchall()]
+
+
+def enrich_dataforseo_one(pool: ConnectionPool, client, domain: str) -> dict:
+    """DataForSEO-enrich a single domain and upsert into enrichment.dataforseo. Never raises."""
+    data = client.enrich_domain(domain)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s, %s, now()) "
+            "ON CONFLICT (domain) DO UPDATE SET dataforseo = EXCLUDED.dataforseo, fetched_at = now()",
+            (domain, Json(data)),
+        )
+        conn.commit()
+    return data
+
+
+def enrich_dataforseo_batch(pool: ConnectionPool, settings: Settings, limit: int = 1000,
+                            workers: int = 6) -> dict:
+    """Batch DataForSEO enrichment for Raghav $1-10M paid-ads-gated domains. Idempotent."""
+    if not settings.dataforseo_enabled:
+        return {"processed": 0, "remaining": 0, "skipped": "dataforseo not configured"}
+    from .enrichment.dataforseo import DataForSEOClient
+    domains = _pending_dataforseo_domains(pool, limit)
+    if not domains:
+        return {"processed": 0, "remaining": 0, "running_ads": 0}
+    client = DataForSEOClient(settings)
+    running = 0
+
+    def work(dom: str) -> bool:
+        try:
+            d = enrich_dataforseo_one(pool, client, dom)
+            return bool(d.get("running_google_ads"))
+        except Exception as exc:
+            log.warning("dataforseo_one_failed", domain=dom, error=str(exc)[:160])
+            return False
+
+    processed = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for ok in ex.map(work, domains):
+            processed += 1
+            running += 1 if ok else 0
+    client.close()
+    remaining = len(_pending_dataforseo_domains(pool, 100000))
+    stats = {"processed": processed, "running_ads": running, "remaining": remaining}
+    log.info("enrich_dataforseo_done", **stats)
+    return stats

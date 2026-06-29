@@ -1108,7 +1108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         domain = (cl[0].get("prospect_website") if cl else None) or (master.get("domain") if master else None)
         enr = None
         if domain:
-            rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, status, fetched_at FROM enrichment WHERE domain=%s",
+            rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, dataforseo, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
         ovr = q("SELECT qualified, reason, override_by, created_at FROM qualification_overrides WHERE call_id=%s",
@@ -1442,7 +1442,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             domain = max(set(sites), key=sites.count) if sites else None
         enr = None
         if domain:
-            rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, status, fetched_at FROM enrichment WHERE domain=%s",
+            rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, dataforseo, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
 
@@ -1588,6 +1588,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return intel
         intel = await run_in_threadpool(_do)
         return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "website": intel}))
+
+    @app.post("/api/prospect/{key}/enrich-dataforseo")
+    async def prospect_enrich_dataforseo(request: Request, key: str) -> JSONResponse:
+        """PAID on-demand: DataForSEO SEO metrics + Google Ads Transparency Center for this
+        prospect's domain. Restricted to BDM/admin (each run costs ~$0.012)."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "DataForSEO is paid — restricted to BDM / admin")
+        if not settings.dataforseo_enabled:
+            raise HTTPException(503, "DataForSEO not configured")
+        _master, domain, _norm = _resolve_prospect(key)
+        if not domain:
+            return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
+
+        def _do() -> dict:
+            from ..enrich import enrich_dataforseo_one
+            from ..enrichment.dataforseo import DataForSEOClient
+            c = DataForSEOClient(settings)
+            try:
+                return enrich_dataforseo_one(pool, c, domain)
+            finally:
+                c.close()
+        data = await run_in_threadpool(_do)
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "dataforseo": data}))
 
     @app.post("/api/prospect/{key}/set-website")
     async def prospect_set_website(request: Request, key: str) -> JSONResponse:

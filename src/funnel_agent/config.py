@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     aircall_base: str = "https://api.aircall.io/v1"
     aircall_page_size: int = 50  # Aircall's max per_page
 
+    # --- DataForSEO (SEO metrics + Google Ads Transparency Center; PAID, pay-per-request) ---
+    # Auto-enriched for Raghav $1-10M paid-ads-gated prospects; on-demand for everyone else.
+    dataforseo_login: str = ""        # account email
+    dataforseo_password: str = ""     # API password OR the base64 "login:password" token (auto-detected)
+    dataforseo_base: str = "https://api.dataforseo.com"
+    dataforseo_location_code: int = 2036   # Australia
+    dataforseo_language_code: str = "en"
+    dataforseo_ads_recent_days: int = 45   # last_shown within N days => "currently running ads"
+
     # --- Marketing enrichment (per-domain, cached in the `enrichment` table) ---
     semrush_api_key: str = ""        # SEMRUSH_API_KEY
     apollo_api_key: str = ""         # APOLLO_API_KEY
@@ -202,6 +211,10 @@ class Settings(BaseSettings):
     def aircall_enabled(self) -> bool:
         """Pull Aircall calls only when both credentials are present."""
         return bool(self.aircall_app_id and self.aircall_api_key)
+
+    @property
+    def dataforseo_enabled(self) -> bool:
+        return bool(self.dataforseo_login and self.dataforseo_password)
 
     @property
     def inscope_names(self) -> list[str]:

@@ -306,6 +306,47 @@ function whoisCard(d){
   return `<div class="card full"><h2>🌐 Domain / WHOIS</h2><div class="kv">${rows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div></div>`;
 }
 
+// ---- Google Ads Transparency Center + SEO (DataForSEO) — separate tab ----
+function dataforseoCard(d){
+  const df=((d.enrichment||{}).dataforseo)||null;
+  const can=d.can_download;  // BDM/admin (paid on-demand)
+  const btn = can?`<button class="btn" id="dfsBtn" style="margin-left:8px">Enrich now (DataForSEO · paid ~$0.01)</button>`:'';
+  if(!df || !df.found){
+    return `<div class="card full"><h2>📣 Google Ads Transparency &amp; SEO</h2>
+      <div class="muted small">No DataForSEO data yet — auto-runs for $1–10M paid-ads prospects.${btn}</div></div>`;
+  }
+  const ads=df.ads||{}, rank=df.rank||{}, org=rank.organic||{}, paid=rank.paid||{};
+  const verdict = df.running_google_ads
+    ? `<span style="background:rgba(239,68,68,.16);color:#fca5a5;padding:4px 10px;border-radius:999px;font-weight:700">🎯 Running Google Ads — ${fmtN(ads.count)} ads · last seen ${esc(ads.last_shown||'?')}</span>`
+    : `<span style="background:rgba(148,163,184,.16);color:#cbd5e1;padding:4px 10px;border-radius:999px">No active Google Ads found</span>`;
+  const fmts = Object.entries(ads.formats||{}).map(([k,v])=>esc(k)+': '+v).join(' · ');
+  const advs = (ads.advertisers||[]).length;
+  const creatives = (ads.items||[]).map(it=>{
+    const img = it.preview_image?`<img src="${esc(it.preview_image)}" loading="lazy" style="width:120px;height:auto;max-height:90px;object-fit:cover;border-radius:6px;border:1px solid var(--line)">`
+      :`<div class="muted small" style="width:120px">(${esc(it.format||'ad')})</div>`;
+    const dates=`${esc((it.first_shown||'').slice(0,10))} → ${esc((it.last_shown||'').slice(0,10))}`;
+    return `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">
+      ${img}<div class="small"><div>${esc(it.format||'')}${it.verified?' · ✅ verified':''}</div>
+      <div class="muted">${dates}</div>${it.url?`<a href="${esc(it.url)}" target="_blank">Transparency ↗</a>`:''}</div></div>`;
+  }).join('');
+  return `<div class="card full"><h2>📣 Google Ads Transparency &amp; SEO (DataForSEO)</h2>
+    <div style="margin-bottom:12px">${verdict}${fmts?` <span class="muted small">${esc(fmts)} · ${advs} advertiser(s)</span>`:''}</div>
+    <div class="metrics" style="margin-bottom:12px">
+      ${metric(fmtN(org.count),'Organic keywords')}${metric(fmtN(org.etv),'Organic visits/mo')}
+      ${metric(fmtN(paid.count),'Paid keywords')}${metric('$'+fmtN(paid.traffic_cost||0),'Est. paid spend/mo')}
+    </div>
+    ${creatives?`<div class="muted small" style="margin-bottom:4px">Live ad creatives (Transparency Center)</div>${creatives}`:'<div class="muted small">No ad creatives returned.</div>'}
+    <div class="muted small" style="margin-top:10px">Fetched ${fmtDate(df.fetched_at)}.${btn}</div></div>`;
+}
+async function enrichDataforseo(){
+  if(!confirm('Run DataForSEO enrichment for this prospect? Paid lookup (~$0.01).'))return;
+  const b=document.getElementById('dfsBtn'); if(b){b.disabled=true;b.textContent='Enriching…';}
+  try{ const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)+'/enrich-dataforseo',{method:'POST'});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); alert(e.detail||e.error||('error '+r.status)); if(b){b.disabled=false;b.textContent='Enrich now (DataForSEO · paid ~$0.01)';} return; }
+    location.reload();
+  }catch(e){ alert('failed: '+e.message); if(b)b.disabled=false; }
+}
+
 // ---- Business data (the GIVEN data — companies under this domain) ----
 function fmtRevM(m){ if(m==null||m==='')return null; const v=Number(m); if(!isFinite(v)||v<=0)return null;
   return v>=1000?'$'+(v/1000).toLocaleString(undefined,{maximumFractionDigits:1})+'B'
@@ -465,6 +506,7 @@ async function load(){
     ['apollo','Apollo (company + people)', apolloCard(d)],
     ['business','Website business intel', businessIntelCard(d)],
     ['whois','Domain / WHOIS', whoisCard(d)],
+    ['ads','Google Ads Transparency', dataforseoCard(d)],
     ['website','Website information', websiteInfoCard(d)],
     ['digital','Digital marketing insights', digitalMarketingCard(d)],
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],
@@ -482,6 +524,7 @@ async function load(){
   const ab=document.getElementById('apBtn'); if(ab) ab.onclick=addPhone;
   const wb=document.getElementById('awBtn'); if(wb) wb.onclick=addWebsite;
   const eb=document.getElementById('ewBtn'); if(eb) eb.onclick=enrichWebsite;
+  const db=document.getElementById('dfsBtn'); if(db) db.onclick=enrichDataforseo;
 }
 load();
 </script>
