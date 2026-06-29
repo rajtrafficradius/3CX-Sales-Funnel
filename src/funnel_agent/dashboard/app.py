@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime as _dt, time as _time, timedelta
 from zoneinfo import ZoneInfo
@@ -1306,6 +1307,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             master = m[0] if m else None
         return master, (master["domain"] if master else None), norm
 
+    _whois_inflight: set = set()
+    _whois_lock = threading.Lock()
+
+    def _fire_bg_whois(domain: str) -> None:
+        """Fetch + cache a domain's WHOIS in a daemon thread so it NEVER blocks the prospect
+        page (a failing .au lookup can take tens of seconds). De-dupes concurrent lookups."""
+        with _whois_lock:
+            if domain in _whois_inflight:
+                return
+            _whois_inflight.add(domain)
+
+        def run():
+            try:
+                from ..enrichment.whois_lookup import lookup_whois
+                w = lookup_whois(domain)
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO enrichment (domain, whois, fetched_at) VALUES (%s,%s,now()) "
+                        "ON CONFLICT (domain) DO UPDATE SET whois = EXCLUDED.whois, fetched_at = now()",
+                        (domain, Json(w)))
+                    conn.commit()
+            except Exception:
+                pass
+            finally:
+                with _whois_lock:
+                    _whois_inflight.discard(domain)
+        threading.Thread(target=run, daemon=True).start()
+
     # Paid-ad pixels actually placed on a site are remarketing/conversion tags that are
     # only added when running campaigns; analytics tags (GA4/GTM) just measure traffic.
     _PAID_TRACKERS = {
@@ -1446,27 +1475,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      (domain,))
             enr = rows[0] if rows else None
 
-        # Lazy on-demand WHOIS. auDA blocks BULK free WHOIS for .au (429 on RDAP, refuses
-        # port-43 under load) — but a SINGLE live lookup from this server works. So fetch
-        # once, the first time a prospect is actually opened, and cache it. This naturally
-        # respects the registry's per-IP limits (one query per prospect view, never bulk).
+        # Lazy on-demand WHOIS. auDA throttles bulk .au and a FAILING lookup can take tens of
+        # seconds (port-43 timeout + RDAP 429 backoff), so it must NEVER run synchronously on
+        # the request path. Fire it ONCE in the background (only when no whois row exists yet —
+        # the result, found or not, is cached so it isn't retried on every open) and let it
+        # appear on the next page load. This keeps the prospect page fast.
         _ew = enr.get("whois") if enr else None
-        if domain and not (isinstance(_ew, dict) and _ew.get("found") is True):
-            try:
-                from ..enrichment.whois_lookup import lookup_whois
-                w = lookup_whois(domain)
-                with pool.connection() as conn, conn.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO enrichment (domain, whois, fetched_at) VALUES (%s,%s,now()) "
-                        "ON CONFLICT (domain) DO UPDATE SET whois = EXCLUDED.whois, fetched_at = now()",
-                        (domain, Json(w)))
-                    conn.commit()
-                if enr is None:
-                    enr = {"domain": domain, "whois": w}
-                else:
-                    enr["whois"] = w
-            except Exception:
-                pass  # WHOIS is best-effort; never block the prospect page
+        if domain and _ew is None:
+            _fire_bg_whois(domain)
 
         # If the domain was only resolved from the calls above (phone access), fetch the
         # given business data now (companies were not found by phone earlier).
