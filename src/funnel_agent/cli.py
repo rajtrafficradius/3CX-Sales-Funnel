@@ -253,6 +253,21 @@ def enrich_deep_cmd(
     typer.echo(f"enrich-deep: {stats}")
 
 
+@app.command(name="enrich-dataforseo")
+def enrich_dataforseo_cmd(
+    limit: int = typer.Option(1000, help="max Raghav $1-10M gated domains to DataForSEO-enrich"),
+    workers: int = typer.Option(8, help="parallel workers"),
+) -> None:
+    """DataForSEO enrichment (PAID ~$0.012/domain) for Raghav $1-10M paid-ads-gated domains:
+    Google Ads Transparency Center creatives + SEO/paid metrics. Idempotent (skips done)."""
+    settings = _settings()
+    from .enrich import enrich_dataforseo_batch
+
+    with _analytics_pool(settings) as pool:
+        stats = enrich_dataforseo_batch(pool, settings, limit=limit, workers=workers)
+    typer.echo(f"enrich-dataforseo: {stats}")
+
+
 @app.command(name="whatsapp")
 def whatsapp_run() -> None:
     """Schedule WhatsApp nurturing for new bookings + send any due messages (#13).
