@@ -118,11 +118,13 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
                 )
                 upserts += 1
 
-            # Anyone not returned this run is no longer active in 3CX.
+            # Anyone not returned this run is no longer active in 3CX. Aircall agents
+            # (extension 'aircall:<id>') aren't in the 3CX user list — exclude them so
+            # this 3CX sweep never deactivates them (their own ingest keeps them active).
             if seen:
                 cur.execute(
                     "UPDATE bde_agents SET active = false, synced_at = %s "
-                    "WHERE extension <> ALL(%s)",
+                    "WHERE extension <> ALL(%s) AND extension NOT LIKE 'aircall:%%'",
                     (now, seen),
                 )
                 deactivated = cur.rowcount

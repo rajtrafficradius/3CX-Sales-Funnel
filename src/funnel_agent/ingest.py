@@ -145,11 +145,11 @@ def ingest_day(
                         call_id, bde_extension, bde_name, direction, dest_number,
                         started_at, ring_seconds, talk_seconds, answered, is_voicemail,
                         call_type, recording_present, has_transcript, fresh_or_followup,
-                        in_scope, lead_id)
+                        in_scope, lead_id, provider)
                     VALUES (
                         %(call_id)s, %(ext)s, %(bde_name)s, %(direction)s, %(dest)s,
                         %(started)s, %(ring)s, %(talk)s, %(answered)s, %(voicemail)s,
-                        %(call_type)s, %(rec)s, %(has_t)s, %(ff)s, %(in_scope)s, %(lead_id)s)
+                        %(call_type)s, %(rec)s, %(has_t)s, %(ff)s, %(in_scope)s, %(lead_id)s, '3cx')
                     ON CONFLICT (call_id) DO UPDATE SET
                         bde_extension = EXCLUDED.bde_extension,
                         bde_name = EXCLUDED.bde_name,
@@ -292,11 +292,11 @@ def ingest_day_api(
                         call_id, bde_extension, bde_name, direction, dest_number,
                         started_at, ring_seconds, talk_seconds, answered, is_voicemail,
                         call_type, recording_present, recording_id, has_transcript,
-                        fresh_or_followup, in_scope, lead_id)
+                        fresh_or_followup, in_scope, lead_id, provider)
                     VALUES (
                         %(call_id)s, %(ext)s, %(bde_name)s, %(direction)s, %(dest)s,
                         %(started)s, %(ring)s, %(talk)s, %(answered)s, %(voicemail)s,
-                        %(call_type)s, %(rec)s, %(rec_id)s, %(has_t)s, 'fresh', %(in_scope)s, NULL)
+                        %(call_type)s, %(rec)s, %(rec_id)s, %(has_t)s, 'fresh', %(in_scope)s, NULL, '3cx')
                     ON CONFLICT (call_id) DO UPDATE SET
                         bde_extension = EXCLUDED.bde_extension, bde_name = EXCLUDED.bde_name,
                         direction = EXCLUDED.direction, dest_number = EXCLUDED.dest_number,

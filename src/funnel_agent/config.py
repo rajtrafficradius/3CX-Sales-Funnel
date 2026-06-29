@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     # calls for free; we only pay to fill genuine gaps (and on intraday refreshes).
     transcribe_min_age_minutes: int = 15
 
+    # --- Aircall (some BDEs / the BDM dial via Aircall instead of 3CX) ---
+    # Basic-auth REST API: API ID (AIRCALL_APP_ID) + API token (AIRCALL_API_KEY).
+    # Auto-enabled when both are set; only in-scope agents' calls (matched by name against
+    # ROSTER_INSCOPE_NAMES) are ingested, so non-BDE Aircall users are ignored.
+    aircall_app_id: str = ""
+    aircall_api_key: str = ""
+    aircall_base: str = "https://api.aircall.io/v1"
+    aircall_page_size: int = 50  # Aircall's max per_page
+
     # --- Marketing enrichment (per-domain, cached in the `enrichment` table) ---
     semrush_api_key: str = ""        # SEMRUSH_API_KEY
     apollo_api_key: str = ""         # APOLLO_API_KEY
@@ -188,6 +197,11 @@ class Settings(BaseSettings):
             return v
         v = re.sub(r"^[a-zA-Z]+://", "", v)  # strip any malformed scheme prefix
         return "https://" + v
+
+    @property
+    def aircall_enabled(self) -> bool:
+        """Pull Aircall calls only when both credentials are present."""
+        return bool(self.aircall_app_id and self.aircall_api_key)
 
     @property
     def inscope_names(self) -> list[str]:

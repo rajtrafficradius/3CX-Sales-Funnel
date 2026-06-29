@@ -78,7 +78,7 @@ def _wav_chunks(wav: bytes, chunk_seconds: int = 120) -> list[bytes] | None:
     return out
 
 
-def transcribe_wav(oai, settings: Settings, wav: bytes) -> str:
+def transcribe_wav(oai, settings: Settings, wav: bytes, filename: str = "recording.wav") -> str:
     """Transcribe a recording, robust to long mid-call hold music.
 
     Whisper falls into a repetition ("looping") failure mode on hold music: on a long
@@ -87,10 +87,13 @@ def transcribe_wav(oai, settings: Settings, wav: bytes) -> str:
     (1) split calls >2min into ~2min chunks transcribed INDEPENDENTLY, so the post-hold
     conversation can't be swallowed by an earlier loop; (2) temperature=0 + an English
     hint reduce looping within a chunk. Finally de-loop to strip repeated hold jingles.
+
+    `filename` sets the upload name so OpenAI detects the audio container (e.g. an
+    Aircall recording served as .wav). Chunking only applies to parseable PCM WAV.
     """
     def _one(b: bytes) -> str:
         bio = io.BytesIO(b)
-        bio.name = "recording.wav"
+        bio.name = filename
         resp = oai.audio.transcriptions.create(
             model=settings.transcribe_model, file=bio, temperature=0, language="en")
         return (resp.text or "").strip()
@@ -112,6 +115,7 @@ def _pending(pool: ConnectionPool, day: date, limit: int | None, min_age_minutes
         "SELECT call_id, recording_id FROM calls "
         "WHERE started_at >= %(s)s AND started_at < %(e)s AND in_scope "
         "AND recording_id IS NOT NULL AND NOT has_transcript "
+        "AND provider IS DISTINCT FROM 'aircall' "  # Aircall has its own transcribe step
         "AND started_at < now() - make_interval(mins => %(age)s) "
         "ORDER BY started_at"
     )

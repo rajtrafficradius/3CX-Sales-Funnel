@@ -1133,6 +1133,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _tcx["c"] = cli
         return cli
 
+    # One cached Aircall client for streaming Aircall recordings on demand.
+    _acx: dict = {}
+
+    def _aircall():
+        cli = _acx.get("c")
+        if cli is None:
+            from ..aircall.api import AircallClient
+            cli = AircallClient(settings)
+            _acx["c"] = cli
+        return cli
+
     @app.get("/api/call/{call_id}/recording")
     def call_recording(request: Request, call_id: str, download: int = 0):
         """Stream a call's recording audio from 3CX on demand. PLAY is available to any
@@ -1140,7 +1151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         u = getattr(request.state, "user", None) or {}
         if u.get("role") == "kiosk":               # the public TV display can't pull audio
             raise HTTPException(403, "login required")
-        rows = q("SELECT bde_name, bde_extension, recording_id FROM calls WHERE call_id=%s", (call_id,))
+        rows = q("SELECT bde_name, bde_extension, recording_id, provider FROM calls WHERE call_id=%s", (call_id,))
         if not rows:
             raise HTTPException(404, "call not found")
         call = rows[0]
@@ -1153,14 +1164,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "no recording for this call")
         if download and not can_manage_pipeline(u):
             raise HTTPException(403, "download is restricted to BDM / admin")
-        try:
-            wav = _threecx().download_recording(rec_id)
-        except Exception:
-            _tcx.pop("c", None)                     # token may be stale — rebuild + retry once
-            wav = _threecx().download_recording(rec_id)
+        ext, media_type = "wav", "audio/wav"
+        if call.get("provider") == "aircall":       # Aircall recording (signed S3 URL)
+            if not settings.aircall_enabled:
+                raise HTTPException(503, "Aircall recordings unavailable: credentials not configured")
+            try:
+                wav = _aircall().download_recording(rec_id)
+            except Exception:
+                _acx.pop("c", None)
+                wav = _aircall().download_recording(rec_id)
+            from ..aircall.calls import sniff_audio  # Aircall serves WAV or MP3 — detect
+            ext, media_type = sniff_audio(wav)
+        else:
+            try:
+                wav = _threecx().download_recording(rec_id)
+            except Exception:
+                _tcx.pop("c", None)                 # token may be stale — rebuild + retry once
+                wav = _threecx().download_recording(rec_id)
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id)
         disp = "attachment" if download else "inline"
-        return Response(content=wav, media_type="audio/wav", headers={
-            "Content-Disposition": f'{disp}; filename="call_{call_id}.wav"',
+        return Response(content=wav, media_type=media_type, headers={
+            "Content-Disposition": f'{disp}; filename="call_{safe_id}.{ext}"',
             "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600",
         })
 

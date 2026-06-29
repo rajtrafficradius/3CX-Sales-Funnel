@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS calls (
   lead_id           text
 );
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS recording_id text;
+-- Which telephony system the call came from. Some BDEs / the BDM dial via Aircall
+-- instead of 3CX; this routes recording download + transcription to the right client.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT '3cx';
 CREATE INDEX IF NOT EXISTS idx_calls_day ON calls (started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_dest ON calls (dest_number, started_at);
 CREATE INDEX IF NOT EXISTS idx_calls_ext_day ON calls (bde_extension, started_at);
