@@ -1848,28 +1848,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
               "(SELECT count(*) FROM companies WHERE domain IS NULL) AS no_domain, "
               "(SELECT count(*) FROM companies WHERE phone_norm IS NOT NULL) AS with_phone, "
               "(SELECT count(*) FROM enrichment WHERE status='ok') AS enriched")[0]
-        # Filter-aware coverage facets. Each facet count is scoped to the active
-        # NON-coverage filters (search/source/enriched/paid_ads) AND every OTHER selected
-        # coverage facet, so a chip reads as "the result total if this facet is (also) on":
-        # a SELECTED chip equals the table's grand total, an unselected one previews adding
-        # it. `matching` == /prospects.total (full filter incl. coverage), kept consistent.
-        # `sel` conditions come from the fixed _COV whitelist, so inlining them is safe.
-        cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
-                                     tracking, transparency, industry, state)
+        # Stat cards are INDEPENDENT reference counts — the breakdown of the current
+        # WHO-set (search/source/revenue/industry/state) only. They deliberately ignore the
+        # SIGNAL filters (paid_ads/transparency/tracking/coverage/enriched) so e.g.
+        # "Transparency checked" (all swept) stays >> "Running Google Ads" instead of
+        # collapsing to the active filter. The result-bar total (/prospects.total) reflects
+        # the FULL filter; these cards are reference + one-click shortcuts.
+        cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state)
         base = ("WHERE " + " AND ".join(conds)) if conds else ""
-        sel = _coverage_conds(coverage)
-        sel_and = " AND ".join(sel) if sel else "true"
         cov = q(cte + f"""SELECT
-            count(*) FILTER (WHERE {sel_and} AND ge.scanned) AS scanned,
-            count(*) FILTER (WHERE {sel_and} AND ge.runs_google_ads) AS running_ads,
-            count(*) FILTER (WHERE {sel_and} AND ge.has_meta_pixel) AS meta,
-            count(*) FILTER (WHERE {sel_and} AND ge.dfs_checked) AS transparency,
-            count(*) FILTER (WHERE {sel_and} AND ge.has_apollo) AS apollo,
-            count(*) FILTER (WHERE {sel_and} AND ge.has_intel) AS intel,
-            count(*) FILTER (WHERE {sel_and} AND ge.has_whois) AS whois,
-            count(*) FILTER (WHERE {sel_and} AND ge.has_dataforseo) AS dataforseo,
+            count(*) FILTER (WHERE ge.scanned) AS scanned,
+            count(*) FILTER (WHERE ge.runs_google_ads) AS running_ads,
+            count(*) FILTER (WHERE ge.has_meta_pixel) AS meta,
+            count(*) FILTER (WHERE ge.dfs_checked) AS transparency,
+            count(*) FILTER (WHERE ge.has_apollo) AS apollo,
+            count(*) FILTER (WHERE ge.has_intel) AS intel,
+            count(*) FILTER (WHERE ge.has_whois) AS whois,
+            count(*) FILTER (WHERE ge.has_dataforseo) AS dataforseo,
             count(*) FILTER (WHERE ge.kind='domain') AS domains,
-            count(*) FILTER (WHERE {sel_and}) AS matching
+            count(*) AS matching
           FROM ge {base}""", params)[0]
         # a freshness fingerprint so the client can poll cheaply for changes
         f = q("SELECT (SELECT count(*) FROM companies) AS cc, "
