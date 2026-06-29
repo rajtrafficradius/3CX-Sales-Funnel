@@ -218,8 +218,18 @@ function apolloCard(d){
   const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
   // Decision-makers (FREE: name + title; email/phone require Apollo credits, shown as a flag)
   const people=(ap.people||[]);
+  // LinkedIn per decision-maker: use Apollo's real profile URL if present (rare — it's
+  // credit-gated like email/phone), else a FREE LinkedIn people-search deep-link built from
+  // the free fields (first name + company) so the team can one-click find them.
+  const liLink=p=>{
+    if(p.linkedin_url) return `<a class="lnk" href="${esc(p.linkedin_url)}" target="_blank" title="LinkedIn profile">in↗</a>`;
+    const kw=((p.name||'')+' '+(ap.name||'')).trim();
+    if(!kw) return '';
+    const u=`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(kw)}`;
+    return `<a class="lnk" href="${u}" target="_blank" title="Search LinkedIn (Apollo's exact profile URL needs a credit)">find on LinkedIn ↗</a>`;
+  };
   const peopleHtml=people.length?`<div class="subh">Decision-makers (${people.length})</div>
-    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'}${p.linkedin_url?` <a class="lnk" href="${esc(p.linkedin_url)}" target="_blank">in↗</a>`:''}</div>
+    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'} <span class="muted" style="font-size:11px">${liLink(p)}</span></div>
       <div>${esc(p.title)||'—'}${(p.has_email||p.has_phone)?` <span class="muted" style="font-size:11px">(${[p.has_email?'email':null,p.has_phone?'phone':null].filter(Boolean).join('/')} on file — credits to reveal)</span>`:''}</div>`).join('')}</div>`
     :'<div class="muted small mt6">No decision-makers found (only for paid-ads prospects).</div>';
   return `<div class="card full"><h2>🏢 Apollo data</h2>${aHtml}${descr}${techHtml}${peopleHtml}</div>`;
