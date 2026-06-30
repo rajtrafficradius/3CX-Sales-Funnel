@@ -312,6 +312,7 @@ async function load(){
   </div></div>`;
 
   const verdicts=`<div class="card"><h2>Funnel verdicts (AI)</h2>
+    ${d.sms_confirmed?`<div style="background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.45);color:#86efac;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:700">📱 Booking confirmed by the prospect via SMS — this firmed the meeting (see the SMS / chat tab).</div>`:''}
     ${bookingBanner(ev, d.booking_counts)}
     ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
     ${stageRow('Full Pitch', ev.full_pitch)}
@@ -335,10 +336,23 @@ async function load(){
   else txBody = '<span class="muted">⚠ No transcript — this call was not recorded.</span>';
   const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${txBody}</div></div>`;
 
+  const msgs=(d.messages||[]);
+  const messagesPane = msgs.length ? `<div class="card full"><h2>💬 SMS / chat from prospect (${msgs.length})</h2>${
+    msgs.map(m=>{
+      const badge = m.is_booking_confirmation ? `<span class="pill yes">📅 booking confirmation</span>`
+        : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.2);color:#cbd5e1">${esc(m.intent)}</span>` : '');
+      const firmed = m.applied_call_id===c.call_id ? ` · <span style="color:#4ade80;font-weight:700">firmed THIS booking</span>` : (m.applied_call_id?` · <span class="muted">firmed another call</span>`:'');
+      const when = esc(String(m.time_sent||'').slice(0,16).replace('T',' '));
+      const mt = m.meeting_datetime ? `<div class="muted" style="font-size:12px;margin-top:3px">🗓 ${esc(m.meeting_datetime)}</div>` : '';
+      return `<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div class="muted" style="font-size:12px">${when} · ${esc(m.sender_name||m.sender_phone||'')} ${badge}${firmed}</div><div style="margin-top:3px">${esc(m.body||'')}</div>${mt}</div>`;
+    }).join('')}</div>`
+    : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
+
   const tabs=[
     ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + meta + verdicts + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
+    ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],
     ['transcript','Transcript', transcript],
   ];
   document.getElementById('main').innerHTML =

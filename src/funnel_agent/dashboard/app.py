@@ -1195,6 +1195,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false) LIMIT 1",
                     {"cid": call_id, "ck": c0.get("company_key")})
                 booking_counts = not prior
+        # Inbound SMS/chat from this prospect (same number) + flag any that firmed THIS booking.
+        _d9 = re.sub(r"\D", "", call.get("dest_number") or "")[-9:]
+        messages = q(
+            "SELECT message_id, sender_phone, sender_name, body, time_sent, intent, "
+            "       is_booking_confirmation, meeting_datetime, applied_call_id "
+            "FROM messages WHERE dest9 = %s ORDER BY time_sent DESC LIMIT 30",
+            (_d9,)) if _d9 else []
+        for m in messages:
+            m["time_sent"] = str(m["time_sent"]) if m.get("time_sent") else None
+        sms_confirmed = any(m.get("applied_call_id") == call_id and m.get("is_booking_confirmation") for m in messages)
+
         u = getattr(request.state, "user", None) or {}
         # jsonable_encoder converts numeric->float and datetime->iso so confidences serialize.
         return JSONResponse(jsonable_encoder({
@@ -1207,6 +1218,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "qual_override": ovr[0] if ovr else None,
             "booking_counts": booking_counts,  # None=n/a, True=counts, False=company already booked
             "can_override": can_manage_pipeline(u),  # BDM/admin only
+            "messages": messages,
+            "sms_confirmed": sms_confirmed,  # booking firmed by a prospect SMS
         }))
 
     # One cached 3CX client (reuses its OAuth token) for streaming recordings on demand.
