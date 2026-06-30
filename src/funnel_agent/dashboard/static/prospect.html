@@ -578,6 +578,22 @@ async function load(){
   if(!d.found){ document.getElementById('main').innerHTML='<div class="card full">No prospect or calls found for <b>'+esc(KEY)+'</b>.</div>'; return; }
   document.querySelector('header h1').textContent = (d.master&&d.master.business_name)||d.domain||KEY;
   // The 6 sections exactly as requested.
+  function messagesCard(d){
+    const ms=(d.messages||[]);
+    if(!ms.length) return `<div class="card full"><h2>💬 SMS / chat</h2><div class="muted small">No inbound SMS/chat captured for this prospect.</div></div>`;
+    const rows=ms.map(m=>{
+      const badge = m.is_booking_confirmation ? `<span class="pill yes">📅 booking confirmation</span>`
+        : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.16);color:#cbd5e1">${esc(m.intent)}</span>` : '');
+      const when = esc(String(m.time_sent||'').slice(0,16).replace('T',' '));
+      const mt = m.meeting_datetime ? `<div class="muted small" style="margin-top:3px">🗓 ${esc(m.meeting_datetime)}</div>` : '';
+      const lnk = m.applied_call_id ? ` · <a class="lnk" href="/call/${esc(m.applied_call_id)}" target="_blank">firmed booking ↗</a>` : '';
+      return `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
+        <div class="muted small">${when} · ${esc(m.sender_name||m.sender_phone||'')} ${badge}${lnk}</div>
+        <div style="margin-top:4px">${esc(m.body||'')}</div>${mt}</div>`;
+    }).join('');
+    return `<div class="card full"><h2>💬 SMS / chat (${ms.length})</h2>${rows}</div>`;
+  }
+
   const tabs=[
     ['uploaded','Uploaded database info', businessDataCard(d)+contactsCard(d)],
     ['apollo','Apollo (company + people)', apolloCard(d)],
@@ -586,6 +602,7 @@ async function load(){
     ['website','Website information', websiteInfoCard(d)],
     ['digital','Digital marketing insights', digitalMarketingCard(d)],
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],
+    ['messages','SMS / chat ('+((d.messages||[]).length)+')', messagesCard(d)],
     ['tracking','Tracking codes available', trackingCodesCard(d)],
   ];
   // Lead with Call intelligence for called prospects (so a fresh call never looks "empty");

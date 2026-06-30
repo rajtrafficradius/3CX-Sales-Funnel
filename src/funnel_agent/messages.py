@@ -33,14 +33,18 @@ _MSG_SCHEMA = {
 
 _SYS = (
     "You classify a SHORT inbound SMS/chat that a B2B prospect sent to a sales team's number. "
-    "Decide the intent. Set is_booking_confirmation=true ONLY when the prospect is confirming or "
-    "agreeing a meeting (a marketing strategy session / audit / appointment) at a SPECIFIC time, "
-    "and put that time in meeting_datetime in their own words (e.g. 'Thu 9 July 2026 10:00 AM'). "
-    "intent values: 'booking_confirmation' (agreeing/confirming a specific appointment time), "
-    "'reschedule' (move an existing meeting to a new time), 'cancel' (call off a meeting), "
-    "'optout' (asked to stop contact / unsubscribe / do not call / remove me), 'reply' (a generic "
-    "reply, e.g. 'call me later', 'thanks'), 'other'. If no concrete appointment time is being "
-    "agreed, is_booking_confirmation MUST be false."
+    "Decide the intent. Set is_booking_confirmation=true whenever the prospect is ENGAGING TO "
+    "SCHEDULE the meeting (a marketing strategy session / audit / appointment) — i.e. they "
+    "CONFIRM, AGREE, or PROPOSE a specific day and/or time for it. This INCLUDES offering options "
+    "or a preference (e.g. 'Friday the 10th at 9am preferred or Thursday 9th at 10am', 'Thursday "
+    "works', 'let's do 10am', 'yes Tuesday is fine') — the prospect is committing to meet, just "
+    "settling the slot. Put the proposed/agreed time(s) in meeting_datetime in their own words. "
+    "intent values: 'booking_confirmation' (confirming/agreeing/proposing a specific meeting "
+    "day/time), 'reschedule' (asking to MOVE an already-agreed meeting to a different time), "
+    "'cancel' (call off a meeting), 'optout' (stop contact / unsubscribe / do not call / remove "
+    "me), 'reply' (a generic reply with NO scheduling — 'call me later', 'thanks', 'send info'), "
+    "'other'. Only set is_booking_confirmation=false when NO specific meeting day/time is being "
+    "offered or agreed. A vague 'call me sometime' with no day/time is NOT a confirmation."
 )
 
 

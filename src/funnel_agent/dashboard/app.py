@@ -185,15 +185,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not (is_admin(u) or u.get("role") == "bdm"):
             raise HTTPException(status_code=403, detail="admin / BDM only")
         rows = q(
-            "SELECT c.call_id, c.started_at, COALESCE(c.bde_name, c.bde_extension) AS bde, "
-            "       cl.prospect_company, c.dest_number, cl.meeting_datetime "
-            "FROM calls c JOIN classifications cl ON cl.call_id = c.call_id "
-            "WHERE c.in_scope AND cl.meeting_booked = true "
-            "  AND NOT COALESCE(cl.meeting_confirmation_only, false) "
-            "  AND NOT COALESCE(cl.meeting_rescheduled, false) "
-            "  AND NOT COALESCE(cl.booking_already_exists, false) "
-            "  AND c.started_at > now() - interval '6 hours' "
-            "ORDER BY c.started_at DESC LIMIT 30"
+            "SELECT call_id, started_at, bde, prospect_company, dest_number, meeting_datetime, source FROM ( "
+            # new bookings made on a call in the last 6h
+            "  SELECT c.call_id, c.started_at, COALESCE(c.bde_name, c.bde_extension) AS bde, "
+            "         cl.prospect_company, c.dest_number, cl.meeting_datetime, 'call' AS source "
+            "  FROM calls c JOIN classifications cl ON cl.call_id = c.call_id "
+            "  WHERE c.in_scope AND cl.meeting_booked = true "
+            "    AND NOT COALESCE(cl.meeting_confirmation, false) "
+            "    AND NOT COALESCE(cl.meeting_rescheduled, false) "
+            "    AND NOT COALESCE(cl.booking_already_exists, false) "
+            "    AND c.started_at > now() - interval '6 hours' "
+            "  UNION ALL "
+            # bookings a prospect CONFIRMED BY SMS in the last 6h (firmed a prior call)
+            "  SELECT m.applied_call_id AS call_id, m.time_sent AS started_at, "
+            "         COALESCE(m.bde_name, c2.bde_name, c2.bde_extension) AS bde, "
+            "         cl2.prospect_company, m.sender_phone AS dest_number, m.meeting_datetime, 'sms' AS source "
+            "  FROM messages m JOIN calls c2 ON c2.call_id = m.applied_call_id "
+            "  LEFT JOIN classifications cl2 ON cl2.call_id = m.applied_call_id "
+            "  WHERE m.is_booking_confirmation AND m.applied_call_id IS NOT NULL "
+            "    AND m.time_sent > now() - interval '6 hours' "
+            ") t ORDER BY started_at DESC LIMIT 30"
         )
         for r in rows:
             r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
@@ -1605,6 +1616,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for c in calls:
             c["started_at"] = str(c["started_at"]) if c.get("started_at") else None
 
+        # Inbound SMS/chat for this prospect (any of its numbers) — booking confirmations etc.
+        d9s = set()
+        if norm:
+            d9s.add(norm)
+        for p in (master or {}).get("phones_norm") or []:
+            d9s.add(p)
+        for c in calls:
+            dn = re.sub(r"\D", "", c.get("dest_number") or "")
+            if dn:
+                d9s.add(dn[-9:])
+        messages = q(
+            "SELECT message_id, sender_phone, sender_name, body, time_sent, intent, "
+            "       is_booking_confirmation, meeting_datetime, applied_call_id "
+            "FROM messages WHERE dest9 = ANY(%s) ORDER BY time_sent DESC LIMIT 50",
+            (list(d9s),)) if d9s else []
+        for m in messages:
+            m["time_sent"] = str(m["time_sent"]) if m.get("time_sent") else None
+
         return JSONResponse(jsonable_encoder({
             "found": True,
             "key": key,
@@ -1617,6 +1646,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "paid_ads": _paid_ads_intel(enr, calls),
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
             "calls": calls,
+            "messages": messages,
         }))
 
     @app.post("/api/prospect/{key}/add-phone")
