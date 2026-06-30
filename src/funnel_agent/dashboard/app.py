@@ -1147,6 +1147,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from ..prospects import match_prospect_by_phone
         master = match_prospect_by_phone(pool, call.get("dest_number"))
         domain = (cl[0].get("prospect_website") if cl else None) or (master.get("domain") if master else None)
+        if not domain and call.get("dest_number"):
+            # Resilient fallback: if THIS call has no website (e.g. a re-classification didn't
+            # re-extract it), use the most common website the AI extracted across the prospect's
+            # OTHER calls to the same number — so the domain/marketing card never blanks out.
+            sib = q("SELECT cl2.prospect_website AS d, count(*) n FROM calls c2 "
+                    "JOIN classifications cl2 ON cl2.call_id=c2.call_id "
+                    "WHERE c2.in_scope AND cl2.prospect_website IS NOT NULL AND cl2.prospect_website<>'' "
+                    "AND right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)="
+                    "    right(regexp_replace(%s,'[^0-9]','','g'),9) "
+                    "GROUP BY 1 ORDER BY n DESC LIMIT 1", (call.get("dest_number"),))
+            if sib:
+                domain = sib[0]["d"]
         enr = None
         if domain:
             rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, dataforseo, status, fetched_at FROM enrichment WHERE domain=%s",

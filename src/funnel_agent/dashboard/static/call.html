@@ -154,7 +154,9 @@ function qualOverrideCard(d){
   const cl=d.classification||{}, ev=cl.evidence||{};
   const booked = ev.meeting_booked && ev.meeting_booked.value;
   const o=d.qual_override;
-  if(!booked && !o) return '';  // only relevant for booked meetings
+  // Always available to BDM/admin so they can review/override ANY call (the AI's booked verdict
+  // can change); regular users still only see it on a booked meeting or an existing override.
+  if(!booked && !o && !d.can_override) return '';
   const aiQ = ev.qualified && ev.qualified.value;
   const eff = o ? o.qualified : aiQ;
   const effPill = `<span class="pill ${eff?'yes':'no'}">${eff?'✓ Qualified':'Not qualified'}</span>`;
@@ -171,7 +173,8 @@ function qualOverrideCard(d){
         ${o?`<button id="qoClear" style="background:#0b0f15;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:8px 13px;cursor:pointer">Clear override (revert to AI)</button>`:''}
       </div></div>`;
   }
-  return `<div class="card full"><h2>Qualification review (BDM) ${effPill}</h2>
+  const notBooked = !booked ? `<span class="muted" style="font-size:12px;font-weight:400"> · AI: not a booked meeting</span>` : '';
+  return `<div class="card full"><h2>Qualification review (BDM) ${effPill}${notBooked}</h2>
     <div>${src}${o?` · AI said ${aiQ?'qualified':'not qualified'}`:''}</div>${reason}${controls}</div>`;
 }
 async function setQualOverride(qualified){
