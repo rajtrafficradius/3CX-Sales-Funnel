@@ -71,6 +71,21 @@ responded, and whether any concrete commitment (a booked meeting) was made. Then
 transcript for every stage. Be strict and literal: if something is not clearly supported by the
 transcript, set value=false and LOWER the confidence rather than guessing true.
 
+VOICEMAIL / NO-ANSWER GATE — CHECK THIS FIRST, IT OVERRIDES EVERYTHING ELSE: If the recording is
+the prospect's voicemail or an automated system (NOT a live person answering the BDE), then the
+prospect did NOT answer. Tell-tale phrases: "record your name and reason for calling", "I'll see if
+this person is available", "the person you are calling is not available", "please leave a message
+after the tone / beep", "please stay on the line", "your call has been forwarded to an automated
+voice messaging system", "at the tone please record your message". When it is a voicemail:
+  * set call_outcome="voicemail", who_answered="voicemail";
+  * set rpc_connect, full_pitch, is_lead, qualified, meeting_booked ALL = FALSE, booking_status="none";
+  * IGNORE any conversational, scheduling or booking language ("Monday at one o'clock", "I've sent the
+    calendar invite", names of people) — in an open-plan call centre, ANOTHER agent's live call bleeds
+    into the recording, so that content belongs to a DIFFERENT call and must NOT drive this call's
+    verdicts. A meeting can NEVER be booked on a voicemail.
+Only treat it as a real conversation if THIS prospect actually speaks back to the BDE in a genuine
+two-way exchange. A monologue (BDE leaving a message) ending in a voicemail tone is NOT a conversation.
+
 Stage definitions (in funnel order):
 - rpc_connect (Right-Party Contact): TRUE only if the BDE actually reached and held a real
   two-way conversation with a DECISION-MAKER — the business owner/principal/manager with the
