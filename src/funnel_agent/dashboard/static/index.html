@@ -382,7 +382,8 @@ async function boot(){
   }
   if(u.role==='kiosk'){ const lo=$('#logoutBtn'); if(lo) lo.style.display='none'; }
   if(u.role==='admin'){ const ab=$('#adminBtn'); if(ab) ab.style.display=''; }
-  if(u.role==='admin'||u.role==='bdm'){ const db=$('#dbBtn'); if(db) db.style.display=''; }
+  if(u.role==='admin'||u.role==='bdm'){ const db=$('#dbBtn'); if(db) db.style.display='';
+    window._bkNotify=true; setupBookingNotifications(); }   // browser alert on each new booking
   if(s.dates.length){ const lo=s.dates[s.dates.length-1], hi=s.dates[0];
     for(const el of ['#startDate','#endDate']){ $(el).min=lo; $(el).max=hi; }
     $('#startDate').value=hi; $('#endDate').value=hi; }
@@ -856,6 +857,39 @@ function markData(delta){
 // 1s ticker keeps the relative time fresh; rotate the idle phrase every ~5s.
 setInterval(()=>{ _aiSec++; if(_aiSec%5===0) _aiPhrase++; renderAI(); }, 1000);
 
+// ---- Meeting-booked browser notifications (admin / BDM) ----
+// First check after load just SEEDS the seen-set (no flood); thereafter a notification
+// fires for each NEW booking while the dashboard is open (driven by SSE + a 30s poll).
+const _BK_SEEN='bk_seen_ids_v1';
+let _bkFirst=true;
+function _bkSeenSet(){ try{return new Set(JSON.parse(localStorage.getItem(_BK_SEEN)||'[]'));}catch(e){return new Set();} }
+function _bkSave(s){ try{localStorage.setItem(_BK_SEEN, JSON.stringify([...s].slice(-400)));}catch(e){} }
+function setupBookingNotifications(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='default'){ try{Notification.requestPermission();}catch(e){} }
+  checkBookings();
+  setInterval(checkBookings, 30000);
+}
+async function checkBookings(){
+  if(!window._bkNotify) return;
+  let d; try{ d=await fetch('/api/recent-bookings').then(r=>r.ok?r.json():null); }catch(e){ return; }
+  if(!d||!d.bookings) return;
+  const seen=_bkSeenSet();
+  d.bookings.slice().reverse().forEach(b=>{                 // oldest first
+    if(seen.has(b.call_id)) return;
+    seen.add(b.call_id);
+    if(!_bkFirst && Notification.permission==='granted'){
+      try{
+        const who=b.prospect_company||b.dest_number||'a prospect';
+        const when=b.meeting_datetime?(' · '+b.meeting_datetime):'';
+        const n=new Notification('🎯 New meeting booked',{body:(b.bde||'BDE')+' → '+who+when, tag:b.call_id, renotify:true});
+        n.onclick=()=>{ try{window.focus();}catch(e){} window.open('/call/'+b.call_id,'_blank'); n.close(); };
+      }catch(e){}
+    }
+  });
+  _bkSave(seen); _bkFirst=false;
+}
+
 let _es=null, _esRetry=null;
 function startStream(){
   if(_es){ try{_es.close();}catch(e){} }
@@ -865,6 +899,8 @@ function startStream(){
       const d=tokenDelta(e.data);
       if(d && (d.calls>0 || d.scored>0)) markData(d);  // narrate only a genuine change
       autoRefresh(); pollProgress();
+      if(window._bkNotify) checkBookings();            // surface any new meeting bookings
+
     });
     _es.onopen = ()=>{ _ai.sse='live'; renderAI(); };
     _es.onerror = ()=>{

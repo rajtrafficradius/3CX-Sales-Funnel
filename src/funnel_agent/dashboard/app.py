@@ -177,6 +177,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              "role": u.get("role"), "bde_name": u.get("bde_name"),
                              "is_admin": is_admin(u)})
 
+    @app.get("/api/recent-bookings")
+    def recent_bookings(request: Request) -> JSONResponse:
+        """Recent NEW meetings booked (counted, last 6h) for admin/BDM browser notifications.
+        Excludes confirmations, reschedules and already-booked hand-offs (not new bookings)."""
+        u = getattr(request.state, "user", None) or {}
+        if not (is_admin(u) or u.get("role") == "bdm"):
+            raise HTTPException(status_code=403, detail="admin / BDM only")
+        rows = q(
+            "SELECT c.call_id, c.started_at, COALESCE(c.bde_name, c.bde_extension) AS bde, "
+            "       cl.prospect_company, c.dest_number, cl.meeting_datetime "
+            "FROM calls c JOIN classifications cl ON cl.call_id = c.call_id "
+            "WHERE c.in_scope AND cl.meeting_booked = true "
+            "  AND NOT COALESCE(cl.meeting_confirmation_only, false) "
+            "  AND NOT COALESCE(cl.meeting_rescheduled, false) "
+            "  AND NOT COALESCE(cl.booking_already_exists, false) "
+            "  AND c.started_at > now() - interval '6 hours' "
+            "ORDER BY c.started_at DESC LIMIT 30"
+        )
+        for r in rows:
+            r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
+        return JSONResponse(jsonable_encoder({"bookings": rows}))
+
     # ---- admin: user management (admin role only) ----------------------- #
     def _require_admin(request: Request) -> dict:
         u = getattr(request.state, "user", None) or {}
