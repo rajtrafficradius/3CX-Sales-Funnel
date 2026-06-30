@@ -118,10 +118,18 @@ def _firm_up_booking(pool: ConnectionPool, settings: Settings, d9: str,
         row = cur.fetchone()
         if not row:
             return None
+        note = "Confirmed by the prospect via SMS" + (f" ({meeting_datetime})" if meeting_datetime else "")
+        # Update the columns (drive the funnel) AND the evidence JSON (drives the call-page
+        # verdict panel + banner) so both agree the meeting is a firm booking.
         cur.execute(
             "UPDATE classifications SET meeting_booked=true, booking_status='firm', "
-            "  meeting_datetime=COALESCE(%s, meeting_datetime) WHERE call_id=%s",
-            (meeting_datetime, row["call_id"]))
+            "  meeting_datetime=COALESCE(%s, meeting_datetime), "
+            "  evidence = jsonb_set( "
+            "    jsonb_set(COALESCE(evidence,'{}'::jsonb), '{meeting_booked}', "
+            "      jsonb_build_object('value', true, 'confidence', 1.0, 'evidence', %s::text)), "
+            "    '{booking_status}', to_jsonb('firm'::text)) "
+            "WHERE call_id=%s",
+            (meeting_datetime, note, row["call_id"]))
         conn.commit()
     day = row["started_at"].date() if row.get("started_at") else None
     if day:
