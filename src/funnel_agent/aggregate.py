@@ -56,27 +56,19 @@ WITH base AS (
         -- later one is a duplicate/re-touch and must NOT count again — one booking per lead.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.meeting_booked
-                   -- A NEW booking: a CLEAN one (not a confirmation / reschedule / already-booked
-                   -- hand-off), OR one a BDM/admin has explicitly affirmed via a qualification
-                   -- override (human authority overrides the AI's dedup flags for this call).
-                   AND (COALESCE(qo.qualified, false)
-                        OR (NOT COALESCE(cl.meeting_confirmation, false)
-                            AND NOT COALESCE(cl.meeting_rescheduled, false)
-                            AND NOT COALESCE(cl.booking_already_exists, false)))
+                   AND NOT COALESCE(cl.meeting_confirmation, false)
+                   AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND NOT COALESCE(cl.booking_already_exists, false)  -- referral/hand-off to a 2nd contact of an already-booked company
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
-                         LEFT JOIN qualification_overrides pqo ON pqo.call_id = pc.call_id
                          WHERE pc.in_scope
                            -- same PROSPECT: same phone number OR same COMPANY (domain/name-slug key)
                            AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND pcl.meeting_booked
-                           AND (COALESCE(pqo.qualified, false)
-                                OR (NOT COALESCE(pcl.meeting_confirmation,false)
-                                    AND NOT COALESCE(pcl.meeting_rescheduled,false)
-                                    AND NOT COALESCE(pcl.booking_already_exists,false))))
+                           AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
               THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
         -- QUALIFIED. Effective qualification = a BDM/admin OVERRIDE if present (#4b),
@@ -84,24 +76,18 @@ WITH base AS (
         -- call is (effectively) qualified OR ANY other in-scope call to the same number is.
         -- Same exclusion: confirmation/reschedule of an existing booking is not re-counted.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   AND cl.meeting_booked
-                   AND (COALESCE(qo.qualified, false)
-                        OR (NOT COALESCE(cl.meeting_confirmation, false)
-                            AND NOT COALESCE(cl.meeting_rescheduled, false)
-                            AND NOT COALESCE(cl.booking_already_exists, false)))
+                   AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false)
+                   AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND NOT COALESCE(cl.booking_already_exists, false)
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
-                         LEFT JOIN qualification_overrides pqo ON pqo.call_id = pc.call_id
                          WHERE pc.in_scope
                            AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND pcl.meeting_booked
-                           AND (COALESCE(pqo.qualified, false)
-                                OR (NOT COALESCE(pcl.meeting_confirmation,false)
-                                    AND NOT COALESCE(pcl.meeting_rescheduled,false)
-                                    AND NOT COALESCE(pcl.booking_already_exists,false))))
+                           AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
                    -- Effective qualification is a PROSPECT/COMPANY-level fact: this booking counts
                    -- as qualified if THIS call is (effectively) qualified, OR ANY in-scope call to
                    -- the same NUMBER **or the same COMPANY** is (so a BDM override on a referral /
