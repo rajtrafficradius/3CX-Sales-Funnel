@@ -1265,6 +1265,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         })
 
     @app.post("/api/call/{call_id}/qualify-override")
+    def _reaggregate_for_call(call_id: str) -> None:
+        """Re-aggregate EVERY day that has an in-scope call to the same NUMBER or COMPANY as
+        `call_id`. A qualification override is a prospect/company-level fact, and the company's
+        COUNTED booking may sit on a different (earlier) day than the overridden call — so we must
+        recompute all related days, not just the overridden call's day, for the funnel to update."""
+        from ..aggregate import aggregate_day
+        days = q(
+            "WITH cur AS (SELECT right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AS d9, "
+            "                    cl.company_key AS ck "
+            "             FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+            "             WHERE c.call_id=%(cid)s) "
+            "SELECT DISTINCT c.started_at::date AS d FROM calls c "
+            "LEFT JOIN classifications cl ON cl.call_id=c.call_id, cur "
+            "WHERE c.in_scope AND c.started_at IS NOT NULL AND ("
+            "  right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)=cur.d9 "
+            "  OR (cur.ck IS NOT NULL AND cl.company_key=cur.ck))",
+            {"cid": call_id})
+        for r in days:
+            if r.get("d"):
+                aggregate_day(pool, settings, r["d"])
+
     async def call_qualify_override(request: Request, call_id: str) -> JSONResponse:
         """#4b — BDM/admin re-qualifies a booked meeting with a MANDATORY reason. The
         funnel's Qualified Booked count then honours this over the AI verdict."""
@@ -1287,13 +1308,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "VALUES (%s,%s,%s,%s, now()) ON CONFLICT (call_id) DO UPDATE SET "
                     "qualified=EXCLUDED.qualified, reason=EXCLUDED.reason, override_by=EXCLUDED.override_by, created_at=now()",
                     (call_id, qualified, reason, u.get("email") or u.get("name")))
-                # re-aggregate the affected day so the funnel updates immediately
-                cur.execute("SELECT started_at::date AS d FROM calls WHERE call_id=%s", (call_id,))
-                row = cur.fetchone()
                 conn.commit()
-            if row and row["d"]:
-                from ..aggregate import aggregate_day
-                aggregate_day(pool, settings, row["d"])
+            _reaggregate_for_call(call_id)
         await run_in_threadpool(_do)
         return JSONResponse({"ok": True, "qualified": qualified})
 
@@ -1307,12 +1323,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def _do():
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute("DELETE FROM qualification_overrides WHERE call_id=%s", (call_id,))
-                cur.execute("SELECT started_at::date AS d FROM calls WHERE call_id=%s", (call_id,))
-                row = cur.fetchone()
                 conn.commit()
-            if row and row["d"]:
-                from ..aggregate import aggregate_day
-                aggregate_day(pool, settings, row["d"])
+            _reaggregate_for_call(call_id)
         await run_in_threadpool(_do)
         return JSONResponse({"ok": True})
 
