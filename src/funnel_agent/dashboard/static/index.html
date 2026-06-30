@@ -3,8 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>3CX Sales-Funnel Dashboard</title>
+<title>Traffic Radius — Sales Analytics</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/htm@3/dist/htm.umd.js"></script>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --line:#2a3240;
@@ -193,44 +196,350 @@
   html.tv #tvFs{display:block;position:fixed;bottom:10px;right:12px;z-index:60;background:rgba(28,36,48,.7);
     color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font-size:13px;cursor:pointer;opacity:.4}
   html.tv #tvFs:hover{opacity:1}
+
+  /* ============================================================================
+     ANALYTICS-AI REDESIGN (desk view) — synthesized final.
+     Disciplined dark "analytics tool" system: one indigo-blue accent for
+     interaction, a small reconciled semantic set (pos/warn/neg MATCHING the
+     engine's inline #4ade80/#fbbf24/#f87171), a neutral data-ink scale, an 8px
+     spacing rhythm, ONE modular type scale (10 / 10.5 / 11 / 12 / 13 / 14 / 16 /
+     22 / 27 / 30 px — no near-duplicate sizes), role-mapped weights, and
+     tabular numerals on every figure. Two elevation tiers (hero KPI/funnel
+     raised, secondary tables flat).
+     Appended last so it overrides base styles + :root via the cascade. Keeps
+     EVERY engine selector styled and the html.tv overrides verbatim (TV wall
+     mode unchanged). Restraint over decoration: no neon, no heavy glass, no
+     decorative gradients.
+     ============================================================================ */
+  :root{
+    /* near-monochrome ink surface (figure/ground separation, not flat) */
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    /* text + neutral data-ink scale (axis/grid/muted, distinct from semantics) */
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --ink-grid:#1c2430; --ink-axis:#7f8b9b;
+    /* ONE interactive accent */
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14);
+    --ring:0 0 0 3px rgba(91,140,255,.30);
+    /* semantics — reconciled to the engine's inline hexes */
+    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    /* spacing scale (8px rhythm) */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+    /* radii + elevation */
+    --r1:8px; --r2:10px; --r3:12px; --r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+    /* content frame: <main> max-width + side padding (progress bar mirrors these) */
+    --content-w:1560px; --content-pad:24px;
+    /* ONE modular type scale — every text size in the UI maps to a step here */
+    --t-micro:10px;     /* legal/uppercase micro overline */
+    --t-eyebrow:10.5px; /* table TH, KPI label, sectionlabel overlines */
+    --t-meta:11px;      /* badge/chip sublines, deltas */
+    --t-cap:12px;       /* captions, control labels-as-text, nav inactive meta */
+    --t-body:13px;      /* default body / table cell / nav links */
+    --t-base:14px;      /* base body + brand/card-strong */
+    --t-strong:16px;    /* drawer headers, large drill figures */
+    --t-fig:22px;       /* lead-chip figure */
+    --t-kpi:27px;       /* KPI value */
+    --t-h1:30px;        /* page H1 (top of hierarchy) */
+  }
+  body{background:radial-gradient(1100px 560px at 82% -12%,#10161f 0%,#0a0d13 60%) fixed,#0a0d13;
+    color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:var(--accent-soft)}
+  *{scrollbar-width:thin;scrollbar-color:#2a3344 transparent}
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-thumb{background:#28313f;border:2px solid transparent;background-clip:padding-box;border-radius:8px}
+  *::-webkit-scrollbar-thumb:hover{background:#34404f;background-clip:padding-box}
+  *::-webkit-scrollbar-track{background:transparent}
+
+  /* --- form controls: flat, hairline, single accent focus ring --- */
+  select,button,input[type=date]{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+    border-radius:var(--r1);padding:7px 10px;font:inherit;font-variant-numeric:tabular-nums;
+    transition:border-color .14s,box-shadow .14s,background .14s}
+  select:hover,input[type=date]:hover{border-color:var(--line2)}
+  select:focus,input[type=date]:focus,button:focus-visible,select:focus-visible{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+  input[type=date]{color-scheme:dark}
+
+  /* --- top app bar (3 zones: brand | nav | controls/status) ---
+     Overflow fix: bar never wraps; the .right cluster can shrink (min-width:0);
+     only the livebadge is allowed to flex-shrink; who + logout are pinned to the
+     end via order so they are ALWAYS visible at 100% zoom on >=1280px. */
+  header.appbar{display:flex;align-items:center;gap:14px;flex-wrap:nowrap;min-width:0;padding:10px 22px;
+    background:rgba(11,15,22,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  header.appbar .brandblock{display:flex;align-items:center;gap:11px;flex:none}
+  header.appbar .brand{display:flex;align-items:center;background:#fff;border-radius:9px;padding:5px 10px;line-height:0;
+    box-shadow:0 1px 3px rgba(0,0,0,.4)}
+  header.appbar .brand img{height:26px;display:block}
+  .appttl{display:flex;flex-direction:column;line-height:1.16}
+  .appttl .t{font-size:var(--t-base);font-weight:700;letter-spacing:-.1px}
+  .appttl .s{font-size:var(--t-meta);color:var(--muted);font-weight:500;letter-spacing:.1px}
+  .vdiv{width:1px;height:26px;background:var(--line2);flex:none}
+  /* segmented nav */
+  nav.appnav{display:flex;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--r2);padding:3px;flex:none}
+  nav.appnav a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:7px;
+    font-size:var(--t-cap);font-weight:600;letter-spacing:-.05px;color:var(--muted);text-decoration:none;white-space:nowrap;
+    border:1px solid transparent;transition:color .14s,background .14s}
+  nav.appnav a:hover{color:var(--txt);background:var(--panel2)}
+  nav.appnav a:focus-visible{outline:none;color:var(--txt);box-shadow:var(--ring)}
+  /* right-side control cluster — can shrink so the end items stay on screen */
+  .appbar .right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:nowrap;min-width:0;flex:1 1 auto;justify-content:flex-end}
+  .ctlgroup{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--r2);padding:5px 10px;flex:none}
+  .ctlgroup label{font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:700}
+  .ctlgroup select,.ctlgroup input[type=date]{background:var(--panel2);border:1px solid var(--line);
+    border-radius:7px;padding:6px 9px;font-size:var(--t-cap)}
+  .appbar .who{font-size:var(--t-cap);color:var(--muted);min-width:0;max-width:160px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;order:98;flex:0 1 auto}
+  .appbar .iconbtn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+    flex:none;order:99;border-radius:var(--r1);border:1px solid var(--line);background:var(--panel);color:var(--muted);
+    text-decoration:none;font-size:var(--t-base);transition:color .14s,border-color .14s,background .14s}
+  .appbar .iconbtn:hover{color:var(--txt);border-color:var(--line2);background:var(--panel2)}
+  .appbar .iconbtn:focus-visible{outline:none;color:var(--txt);box-shadow:var(--ring)}
+  /* header status badges (workday / review) */
+  .badge{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:5px 11px;flex:none;
+    color:var(--txt-dim);font-size:var(--t-cap);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;
+    transition:border-color .14s,background .14s}
+  .badge b{color:var(--warn);font-weight:700}
+  .badge.clickable{cursor:pointer}
+  .badge.clickable:hover{border-color:var(--line2);background:var(--panel2)}
+  .badge.clickable:focus-visible{outline:none;box-shadow:var(--ring)}
+
+  /* --- live AI badge — quiet hairline language; allowed to SHRINK (not fixed) so
+     the end-cap (who + logout) never overflows on narrower desktop widths --- */
+  .livebadge{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 10px;border-radius:20px;
+    border:1px solid rgba(74,222,128,.30);background:rgba(74,222,128,.08);white-space:nowrap;
+    transition:background .3s,border-color .3s;flex:0 1 248px;min-width:0;width:auto;box-sizing:border-box}
+  .livebadge .lb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--good);
+    box-shadow:0 0 0 0 rgba(74,222,128,.55);animation:lb-pulse 1.6s ease-out infinite}
+  .livebadge .lb-text{flex:none;font-size:var(--t-meta);font-weight:800;letter-spacing:.7px;color:#86efac}
+  .livebadge .lb-sub{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:var(--t-meta);color:var(--muted);font-variant-numeric:tabular-nums}
+  .livebadge .lb-spark{flex:none;font-size:var(--t-cap);line-height:1;color:#86efac;animation:lb-twinkle 2.2s ease-in-out infinite}
+  .livebadge.connecting{border-color:rgba(251,191,36,.34);background:rgba(251,191,36,.08)}
+  .livebadge.connecting .lb-dot{background:var(--warn);animation-duration:1s}
+  .livebadge.connecting .lb-text{color:#fcd34d}
+  .livebadge.connecting .lb-spark{color:#fcd34d}
+  .livebadge.offline{border-color:rgba(248,113,113,.34);background:rgba(248,113,113,.08)}
+  .livebadge.offline .lb-dot{background:var(--bad);box-shadow:none;animation:none}
+  .livebadge.offline .lb-text{color:#fca5a5}
+  .livebadge.offline .lb-spark{color:#fca5a5;animation:none}
+
+  /* --- classification progress bar — flat accent fill (no neon/rainbow flow).
+     Full-bleed background + divider span the viewport; the INNER content
+     (.clshead + .clstrack) is constrained to the same frame as <main>
+     (max-width 1560px, 24px side padding) so its edges line up with the cards. */
+  .clsbar{padding:10px 0;background:rgba(11,15,22,.86);border-bottom:1px solid var(--line)}
+  .clshead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px;
+    max-width:var(--content-w);margin-left:auto;margin-right:auto;padding:0 var(--content-pad);box-sizing:border-box}
+  .clslabel{font-size:var(--t-cap);color:var(--txt-dim);font-weight:500;display:flex;align-items:center;gap:8px;min-width:0}
+  .clslabel .dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 0 0 rgba(91,140,255,.5);animation:cls-livedot 1.4s ease-out infinite}
+  .clsbadge{flex:none;font-variant-numeric:tabular-nums;font-weight:700;font-size:var(--t-cap);color:var(--txt-dim);
+    background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:3px 11px;min-width:58px;
+    text-align:center;transition:color .3s,border-color .3s}
+  .clstrack{position:relative;height:6px;background:#0a0d13;border:1px solid var(--line);
+    border-radius:999px;overflow:hidden;max-width:var(--content-w);margin:0 auto;box-sizing:border-box;
+    width:calc(100% - (var(--content-pad) * 2))}
+  .clsfill{position:relative;height:100%;width:0;border-radius:999px;
+    background:linear-gradient(90deg,var(--accent2),var(--accent));background-size:auto;
+    box-shadow:none;transition:width .6s cubic-bezier(.22,.61,.36,1);animation:none}
+  .clsfill::after{content:"";position:absolute;inset:0;border-radius:999px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent);
+    transform:translateX(-100%);animation:cls-shimmer 1.7s ease-in-out infinite;will-change:transform}
+  .clsfill::before{content:none}
+  .clsbar.done .clsfill{background:linear-gradient(90deg,#16a34a,var(--good));box-shadow:none;animation:none}
+  .clsbar.done .clsfill::after{animation:none;opacity:0}
+  .clsbar.done .clslabel .dot{background:var(--good);animation:none;box-shadow:0 0 6px rgba(74,222,128,.55)}
+  .clsbar.done .clsbadge{color:#86efac;border-color:rgba(74,222,128,.35)}
+
+  /* --- layout shell --- */
+  main{padding:20px var(--content-pad);max-width:var(--content-w);margin:0 auto}
+  .grid{display:grid;gap:var(--s4)}
+  .cols-2{grid-template-columns:1.06fr .94fr}
+  .cols-kpi{grid-template-columns:repeat(5,1fr);gap:var(--s3)}
+  @media(max-width:980px){.cols-2{grid-template-columns:1fr}.cols-kpi{grid-template-columns:repeat(2,1fr)}.appbar .who{display:none}}
+
+  /* --- page head above the KPI strip (H1 clearly > any KPI number) --- */
+  .pagehead{display:flex;align-items:baseline;gap:12px;margin:var(--s2) 0 var(--s5)}
+  .pagehead h1{font-size:var(--t-h1);font-weight:750;margin:0;letter-spacing:-.6px;color:var(--txt);line-height:1.08}
+  .pagehead .sub,.pagehead #pageScope{font-size:var(--t-body);color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
+  .sectionlabel{font-size:var(--t-meta);text-transform:uppercase;letter-spacing:.9px;color:var(--faint);
+    font-weight:700;margin:var(--s5) 2px var(--s3)}
+
+  /* --- cards: two elevation tiers --- */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r4);padding:16px 18px;box-shadow:var(--elev1)}
+  .card h2{font-size:var(--t-cap);margin:0 0 var(--s3);color:var(--muted);font-weight:700;text-transform:uppercase;
+    letter-spacing:.7px;line-height:1.3;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .card h2 .muted{font-weight:500;letter-spacing:0;text-transform:none;color:var(--faint)}
+  /* hero tier: funnel + leaderboard sit slightly raised vs secondary tables */
+  #funnelCard,#leaderboardCard,#trendCard{box-shadow:var(--elev2);border-color:var(--line2)}
+
+  /* --- KPI strip: normalized anatomy, polarity-driven rail --- */
+  .card.kpi{position:relative;padding:15px 16px;overflow:hidden;background:var(--panel2);box-shadow:var(--elev2);
+    transition:border-color .14s,background .14s,transform .14s}
+  .card.kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.85}
+  /* polarity tint: if the card contains an up/down delta, color the rail by direction */
+  .card.kpi:has(.delta.up)::before{background:var(--good)}
+  .card.kpi:has(.delta.down)::before{background:var(--bad)}
+  .card.kpi:hover{border-color:var(--line2);background:var(--panel3);transform:translateY(-1px)}
+  .card.kpi .v{font-size:var(--t-kpi);font-weight:800;letter-spacing:-.6px;font-variant-numeric:tabular-nums;
+    line-height:1.1;color:var(--txt);display:flex;align-items:baseline;flex-wrap:wrap}
+  .card.kpi .l{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
+    font-weight:700;margin-top:7px}
+  .card.kpi .sub{font-size:var(--t-meta);color:var(--faint);font-weight:500;margin-top:5px;line-height:1.35;
+    min-height:16px;font-variant-numeric:tabular-nums}
+
+  /* --- deltas: small colored lozenges --- */
+  .delta{font-size:var(--t-meta);font-weight:800;margin-left:7px;font-variant-numeric:tabular-nums;letter-spacing:.2px;
+    padding:1px 6px;border-radius:6px}
+  .delta.up{color:#86efac;background:rgba(74,222,128,.13)}
+  .delta.down{color:#fca5a5;background:rgba(248,113,113,.13)}
+  .delta.flat{color:var(--faint);background:rgba(139,150,166,.10)}
+
+  /* --- lead chips --- */
+  .leadchips{display:flex;gap:10px;flex-wrap:wrap}
+  .leadchip{display:flex;flex-direction:column;gap:3px;min-width:108px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:var(--r3);padding:11px 14px;transition:border-color .14s,background .14s,transform .14s}
+  .leadchip .n{font-size:var(--t-fig);font-weight:800;font-variant-numeric:tabular-nums;color:var(--txt);
+    display:flex;align-items:baseline;gap:2px;letter-spacing:-.4px;line-height:1.1}
+  .leadchip .t{font-size:var(--t-eyebrow);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .leadchip.drill{cursor:pointer}
+  .leadchip.drill:hover{border-color:var(--accent);background:var(--panel3);transform:translateY(-1px)}
+  .leadchip.drill:focus-visible{outline:none;box-shadow:var(--ring)}
+
+  /* --- tables: one unified treatment, sticky headers, tabular nums --- */
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--t-body)}
+  th,td{text-align:right;padding:10px 14px;border-bottom:1px solid var(--line-soft);white-space:nowrap;
+    font-variant-numeric:tabular-nums;vertical-align:middle}
+  th:first-child,td:first-child{text-align:left;padding-left:16px}
+  th:last-child,td:last-child{padding-right:16px}
+  th{color:var(--muted);font-weight:700;font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.65px;
+    line-height:1.3;cursor:default}
+  tbody td:first-child{color:var(--txt);font-weight:600;letter-spacing:-.1px}
+  /* sticky header so wide leaderboard/RPC tables keep headers while the body scrolls */
+  thead th{position:sticky;top:0;z-index:2;background:var(--panel3);border-bottom:1px solid var(--line2);
+    box-shadow:0 1px 0 var(--line)}
+  thead th:first-child{border-top-left-radius:8px}
+  thead th:last-child{border-top-right-radius:8px}
+  tbody tr{transition:background .12s}
+  tbody tr:hover{background:var(--panel2)}
+  tbody tr:hover td:first-child{color:var(--txt)}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr.clickable{cursor:pointer}
+  tbody tr.clickable:hover{background:var(--panel3)}
+  td.muted,tbody td.muted{color:var(--faint);font-weight:500}
+  .empty,td.empty{color:var(--muted);padding:30px 16px;text-align:center;font-weight:500;letter-spacing:.1px}
+
+  /* funnel/stages table specifics */
+  #funnelTable .funnelrow:first-child th{color:var(--muted);font-weight:700;font-size:var(--t-eyebrow);
+    text-transform:uppercase;letter-spacing:.65px;text-align:right;padding:8px 14px;border-bottom:1px solid var(--line2);background:transparent}
+  #funnelTable .funnelrow td{border-bottom:1px solid var(--line-soft)}
+  .funnelrow td:first-child{color:var(--txt);font-weight:600}
+  #funnelTable tr:last-child td{border-bottom:none}
+  #funnelTable td b.drill{cursor:pointer;font-weight:800;color:var(--txt);text-decoration:underline dotted;
+    text-decoration-color:#39424f;text-underline-offset:3px}
+  #funnelTable td b.drill:hover{color:var(--accent);text-decoration-color:var(--accent)}
+  #funnelTable td.benchcell,#funnelTable th.benchhead{text-align:left;padding-left:18px;color:var(--muted)}
+  .bench{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-meta);font-weight:800;
+    font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.4}
+  .bench.ok{color:#86efac}.bench.bad{color:#fca5a5}
+  .bench .muted{font-weight:500}
+
+  /* pipeline table (center-aligned, larger drill numbers) */
+  #pipelineTable{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--t-body)}
+  #pipelineTable th,#pipelineTable td{padding:11px 14px;border-bottom:1px solid var(--line-soft);text-align:center;
+    font-variant-numeric:tabular-nums;vertical-align:middle}
+  #pipelineTable thead th{position:sticky;top:0;z-index:2;background:var(--panel3);border-bottom:1px solid var(--line2);box-shadow:0 1px 0 var(--line)}
+  #pipelineTable th{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.65px;color:var(--muted);font-weight:700}
+  #pipelineTable tbody td:first-child{text-align:left;color:var(--txt);font-weight:600}
+  #pipelineTable tr:last-child td{border-bottom:none}
+  #pipelineTable td .drill{cursor:pointer;font-weight:800;font-size:var(--t-strong);font-variant-numeric:tabular-nums;
+    color:var(--txt);border-bottom:1px dotted var(--muted);text-decoration:none}
+  #pipelineTable td .drill:hover{color:var(--accent);border-color:var(--accent)}
+  #pipelineTable td.muted{color:var(--faint);font-weight:500}
+
+  /* --- pills (engine: p-good/p-mid/p-bad; p-ok defensive) --- */
+  .pill{display:inline-block;min-width:42px;text-align:center;padding:2px 9px;border-radius:7px;font-size:11.5px;
+    font-weight:700;font-variant-numeric:tabular-nums;line-height:1.55;border:1px solid transparent;vertical-align:middle}
+  .p-good,.p-ok{background:rgba(74,222,128,.13);color:#86efac;border-color:rgba(74,222,128,.24)}
+  .p-mid{background:rgba(251,191,36,.14);color:#fcd34d;border-color:rgba(251,191,36,.26)}
+  .p-bad{background:rgba(248,113,113,.13);color:#fca5a5;border-color:rgba(248,113,113,.26)}
+
+  /* --- drill links --- */
+  .drill{cursor:pointer;font-variant-numeric:tabular-nums;text-decoration:underline dotted;text-underline-offset:3px;
+    text-decoration-color:#39424f;transition:color .14s,text-decoration-color .14s}
+  .drill:hover{color:var(--accent);text-decoration-color:var(--accent)}
+  .drill:focus-visible{outline:none;color:var(--accent);box-shadow:var(--ring);border-radius:4px}
+  .clickable{cursor:pointer;transition:color .14s}
+  .clickable:hover{color:var(--accent)}
+
+  /* --- charts --- */
+  .chart{width:100%;height:330px}
+  .chart.sm{height:300px}
+
+  /* --- tabbed analytics --- */
+  .tabbar{display:flex;gap:2px;margin:var(--s5) 0 var(--s4);border-bottom:1px solid var(--line);padding-bottom:0;flex-wrap:wrap}
+  .tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);
+    font:inherit;font-size:var(--t-body);font-weight:650;letter-spacing:-.05px;padding:9px 14px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;margin-bottom:-1px;transition:color .14s,border-color .14s}
+  .tab:hover{color:var(--txt-dim)}
+  .tab.active{color:var(--txt);border-bottom-color:var(--accent)}
+  .tab:focus-visible{outline:none;color:var(--txt);box-shadow:var(--ring);border-radius:6px 6px 0 0}
+  .tab .cnt{font-size:var(--t-meta);color:var(--muted);background:var(--panel2);border:1px solid var(--line);
+    border-radius:20px;padding:1px 7px;font-variant-numeric:tabular-nums}
+  .tabpane{display:none}
+  .tabpane.active{display:block}
+  .tabpane>.card:first-child{margin-top:0!important}
+
+  /* --- drawer --- */
+  .spacer{flex:1}
+  .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(2px);display:none;z-index:50}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(560px,94vw);background:var(--panel);
+    border-left:1px solid var(--line2);box-shadow:-18px 0 52px -16px rgba(0,0,0,.8);transform:translateX(100%);
+    transition:transform .24s cubic-bezier(.22,.61,.36,1);z-index:51;display:flex;flex-direction:column}
+  .drawer.open{transform:translateX(0)}
+  .drawer header{position:static;background:none;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:10px;padding:14px 18px}
+  .drawer header strong{font-size:var(--t-base);font-weight:700;letter-spacing:-.1px}
+  .drawer .body{padding:16px 18px;overflow:auto}
+  .x{cursor:pointer;color:var(--muted);font-size:22px;border:none;background:none;line-height:1;transition:color .14s}
+  .x:hover{color:var(--txt)}
+  .ev{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1);padding:10px 12px;margin:8px 0}
+  .ev .s{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:var(--t-body);gap:10px}
+  .ev .q{color:var(--txt-dim);margin-top:5px;font-size:var(--t-body);line-height:1.5}
+  .transcript{white-space:pre-wrap;background:#070a0f;border:1px solid var(--line);border-radius:var(--r1);
+    padding:12px;max-height:42vh;overflow:auto;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c8d2de}
+  .stageitem{display:block;padding:10px 12px;margin:7px 0;background:var(--panel2);border:1px solid var(--line);
+    border-radius:var(--r1);color:var(--txt);font-size:var(--t-body);text-decoration:none;transition:border-color .14s,background .14s}
+  .stageitem:hover{border-color:var(--accent);background:var(--panel3)}
+  .stagetoggle{margin:0 0 12px;padding:9px 11px;background:var(--chip);border:1px solid var(--line);
+    border-radius:var(--r1);font-size:var(--t-body);line-height:1.5}
+  .muted{color:var(--muted)}
+  .who{font-size:var(--t-cap);color:var(--muted);white-space:nowrap}
+
+  /* --- polished first-paint: subtle skeleton on empty hero containers (CSS-only) --- */
+  #kpis:empty,#funnelChart:empty,#trendCard .chart:empty{position:relative;border-radius:var(--r3);
+    background:linear-gradient(100deg,var(--panel) 30%,var(--panel3) 50%,var(--panel) 70%);
+    background-size:220% 100%;animation:ai-shimmer 1.4s ease-in-out infinite}
+  #kpis:empty{min-height:88px}
+  @keyframes ai-shimmer{0%{background-position:140% 0}100%{background-position:-40% 0}}
+  @media (prefers-reduced-motion:reduce){
+    #kpis:empty,#funnelChart:empty,#trendCard .chart:empty{animation:none}
+    .card.kpi,.leadchip,nav.appnav a,.tab,tbody tr,.drill{transition:none}
+  }
+
+  /* ---- TV / kiosk overrides — MUST keep verbatim (wall mode unchanged) ---- */
+  html.tv .tabbar,html.tv .pagehead{display:none}
+  html.tv .tabpanes,html.tv .tabpane{display:contents!important}
+  /* keep the TV header minimal: brand + product title + AI-LIVE badge only */
+  html.tv .appbar nav.appnav,html.tv .appbar .ctlgroup,html.tv .appbar .vdiv,html.tv .appbar .iconbtn{display:none}
 </style>
 </head>
 <body>
-<header>
-  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <h1>3CX Sales-Funnel <small>per BDE &amp; overall</small></h1>
-  <!-- Primary nav (left of the spacer so it's ALWAYS visible, never pushed off-screen) -->
-  <a class="badge clickable" id="calBtn" href="/calendar" title="Open the calendar">📅 Calendar</a>
-  <a class="badge clickable" id="p2Btn" href="/pipeline2" title="Pipeline 2 — call list / assignments">🔁 Pipeline 2</a>
-  <a class="badge clickable" id="coachBtn" href="/coaching" title="Coaching & development — per-BDE call intelligence">🎓 Coaching</a>
-  <a class="badge clickable" id="dbBtn" href="/database" title="Master prospect database" style="display:none">🗄️ Database</a>
-  <a class="badge clickable" id="adminBtn" href="/admin" title="User management" style="display:none">⚙️ Admin</a>
-  <a class="badge clickable" id="tvBtn" href="/?tv=1" target="_blank" title="Open this dashboard full-screen for an office TV">📺 TV mode</a>
-  <div class="spacer"></div>
-  <span class="badge" id="workdayBadge" title="Calling time completed today — 9am start, 8 calling hours (1h lunch)">🕐 <b id="workdayElapsed">—</b></span>
-  <label class="muted" for="bde">BDE</label>
-  <select id="bde"></select>
-  <label class="muted" for="period">Period</label>
-  <select id="period">
-    <option value="today">Today</option>
-    <option value="week">This week</option>
-    <option value="month">This month</option>
-    <option value="7">Last 7 days</option>
-    <option value="30">Last 30 days</option>
-    <option value="custom">Custom…</option>
-  </select>
-  <input id="startDate" type="date" style="display:none" />
-  <input id="endDate" type="date" style="display:none" />
-  <span class="badge clickable" id="reviewBadge" onclick="scrollToReview()">Review queue: <b id="reviewN">0</b></span>
-  <div class="livebadge connecting" id="liveBadge" title="Powered by an AI agent — this dashboard analyses calls and updates in real time">
-    <span class="lb-dot"></span>
-    <span class="lb-spark">✦</span>
-    <span class="lb-text" id="lbText">AI LIVE</span>
-    <span class="lb-sub" id="lbSub">connecting…</span>
-  </div>
-  <span class="who" id="whoami"></span>
-  <a class="badge clickable" id="logoutBtn" href="/logout" title="Sign out">Logout</a>
-</header>
+<header class="appbar" id="appbar"><!-- redesigned top bar rendered by React (htm) below --></header>
 
 <div id="clsBar" class="clsbar">
   <div class="clshead">
@@ -241,10 +550,11 @@
 </div>
 
 <main>
+  <div class="pagehead"><h1>Sales Analytics</h1><span class="sub" id="pageScope"></span></div>
   <div class="grid cols-kpi" id="kpis"></div>
 
   <div class="grid cols-2" style="margin-top:16px">
-    <div class="card">
+    <div class="card" id="funnelCard">
       <h2>Funnel — <span id="funnelScope">ALL</span></h2>
       <div id="funnelChart" class="chart"></div>
     </div>
@@ -254,6 +564,10 @@
     </div>
   </div>
 
+  <div class="tabbar" id="tabbar"></div>
+  <div class="tabpanes">
+
+  <div class="tabpane" data-tab="pipeline">
   <div class="card" id="leadCard" style="margin-top:16px">
     <h2>Lead quality &amp; pipeline — <span id="leadScope">ALL</span></h2>
     <div id="leadBody" class="leadchips"></div>
@@ -265,6 +579,9 @@
     <div style="overflow:auto"><table id="pipelineTable"><thead></thead><tbody></tbody></table></div>
   </div>
 
+  </div><!--/pipeline pane-->
+
+  <div class="tabpane active" data-tab="performance">
   <div class="card" id="leaderboardCard" style="margin-top:16px">
     <h2>Leaderboard — per-BDE conversion</h2>
     <div style="overflow:auto"><table id="leaderboard"><thead></thead><tbody></tbody></table></div>
@@ -290,10 +607,16 @@
     <div id="trendChart" class="chart sm"></div>
   </div>
 
+  </div><!--/performance pane-->
+
+  <div class="tabpane" data-tab="coaching">
   <div class="card" style="margin-top:16px" id="reviewCard">
     <h2>Human-review queue — low-confidence / guardrail-flagged calls</h2>
     <div style="overflow:auto"><table id="reviewTable"><thead></thead><tbody></tbody></table></div>
   </div>
+  </div><!--/coaching pane-->
+
+  </div><!--/tabpanes-->
 </main>
 
 <button id="tvFs" onclick="tvFullscreen()">⛶ Fullscreen</button>
@@ -302,6 +625,100 @@
   <header><strong id="dTitle">Call</strong><div class="spacer"></div><button class="x" onclick="closeDrawer()">&times;</button></header>
   <div class="body" id="dBody"></div>
 </aside>
+
+<!-- =========================================================================
+     React (htm, no build) renders the redesigned CHROME only: the top app bar and
+     the analytics tab bar. It renders ONCE (flushSync → DOM committed before the
+     data engine below runs) and produces the SAME element IDs the engine expects,
+     so all data/SSE/drawer/TV logic stays unchanged. Tab switching toggles plain-
+     DOM classes (never a React re-render) so it never wipes engine-populated panes.
+     ========================================================================== -->
+<script>
+(function(){
+  const h = htm.bind(React.createElement);
+  const nav = (id,href,label,o={}) => h`<a id=${id} href=${href} target=${o.target||null}
+      title=${o.title||''} style=${o.hidden?{display:'none'}:null}>${label}</a>`;
+  function TopBar(){
+    return h`
+      <div className="brandblock">
+        <a className="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius"/></a>
+        <div className="appttl"><span className="t">Traffic Radius</span><span className="s">Sales Funnel Intelligence</span></div>
+      </div>
+      <div className="vdiv"></div>
+      <nav className="appnav">
+        ${nav('calBtn','/calendar','📅 Calendar',{title:'Open the calendar'})}
+        ${nav('p2Btn','/pipeline2','🔁 Pipeline',{title:'Pipeline 2 — call list / assignments'})}
+        ${nav('coachBtn','/coaching','🎓 Coaching',{title:'Coaching & development — per-BDE call intelligence'})}
+        ${nav('dbBtn','/database','🗄️ Database',{hidden:true,title:'Master prospect database'})}
+        ${nav('adminBtn','/admin','⚙️ Admin',{hidden:true,title:'User management'})}
+        ${nav('tvBtn','/?tv=1','📺 TV',{target:'_blank',title:'Open full-screen for an office TV'})}
+      </nav>
+      <div className="right">
+        <div className="ctlgroup">
+          <label htmlFor="bde">BDE</label>
+          <select id="bde"></select>
+          <label htmlFor="period">Period</label>
+          <select id="period">
+            <option value="today">Today</option>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <input id="startDate" type="date" style=${{display:'none'}}/>
+          <input id="endDate" type="date" style=${{display:'none'}}/>
+        </div>
+        <span className="badge" id="workdayBadge" title="Calling time completed today — 9am start, 8 calling hours (1h lunch)">🕐 <b id="workdayElapsed">—</b></span>
+        <span className="badge clickable" id="reviewBadge" onClick=${()=>window.scrollToReview&&window.scrollToReview()} title="Calls awaiting human review">Review <b id="reviewN">0</b></span>
+        <div className="livebadge connecting" id="liveBadge" title="Powered by an AI agent — this dashboard analyses calls and updates in real time">
+          <span className="lb-dot"></span>
+          <span className="lb-spark">✦</span>
+          <span className="lb-text" id="lbText">AI LIVE</span>
+          <span className="lb-sub" id="lbSub">connecting…</span>
+        </div>
+        <span className="who" id="whoami"></span>
+        <a className="iconbtn" id="logoutBtn" href="/logout" title="Sign out">⎋</a>
+      </div>`;
+  }
+
+  // Plain-DOM pane switching — independent of React so it can never clash with the
+  // engine, which fills the panes via innerHTML.
+  const TABS=[['performance','📊 Performance'],['pipeline','🧩 Pipeline'],['coaching','🎓 Review queue']];
+  function setTab(key){
+    document.querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active',p.dataset.tab===key));
+    document.querySelectorAll('#tabbar .tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===key));
+  }
+  window.setTab=setTab;
+
+  // Live page subtitle reflecting the current BDE + period — read straight off the
+  // filter controls (engine-independent), so it stays accurate without touching the engine.
+  function updateScope(){
+    const sc=document.getElementById('pageScope'); if(!sc) return;
+    const b=document.getElementById('bde'), p=document.getElementById('period');
+    const bde=(b&&b.value)?b.value:'ALL';
+    const per=(p&&p.selectedOptions[0])?p.selectedOptions[0].textContent:'';
+    sc.textContent=(bde==='ALL'?'All BDEs':bde)+(per?(' · '+per):'');
+  }
+  // bubbling 'change' on window fires even though boot() reassigns the selects' onchange.
+  window.addEventListener('change',e=>{ if(e.target&&['bde','period','startDate','endDate'].includes(e.target.id)) updateScope(); });
+  setInterval(updateScope,3000);  // also reflects async boot() population + TV programmatic changes
+  setTimeout(updateScope,800);
+
+  function TabBar(){
+    const [active,setActive]=React.useState('performance');
+    return TABS.map(([key,label])=>h`<button key=${key} className=${'tab'+(active===key?' active':'')}
+      data-tab=${key} onClick=${()=>{setActive(key);setTab(key);}}>${label}</button>`);
+  }
+
+  // flushSync → both trees are committed to the DOM synchronously, BEFORE the data
+  // engine's <script> runs, so $('#bde') et al. already exist for boot().
+  ReactDOM.flushSync(()=>{
+    ReactDOM.createRoot(document.getElementById('appbar')).render(h`<${TopBar}/>`);
+    ReactDOM.createRoot(document.getElementById('tabbar')).render(h`<${TabBar}/>`);
+  });
+})();
+</script>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -523,12 +940,80 @@ function renderFunnel(f){
   if(!f.found){funnelChart.clear();return;}
   const data = f.stages.map(s=>({name:s.stage,value:s.total}));
   funnelChart.setOption({
-    tooltip:{trigger:'item',formatter:p=>`${p.name}<br/><b>${p.value}</b>`},
-    color:['#60a5fa','#38bdf8','#34d399','#a3e635','#fbbf24','#fb923c','#f472b6'],
-    series:[{type:'funnel',sort:'none',gap:2,left:'6%',right:'6%',top:6,bottom:6,
-      minSize:'14%',label:{position:'inside',formatter:'{b}: {c}',color:'#0b0f15',fontWeight:600,fontSize:TV?20:12},
-      data}]
-  },true);
+  backgroundColor:'transparent',
+  textStyle:{fontFamily:'ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial'},
+  tooltip:{
+    trigger:'item',
+    backgroundColor:'#141a23',
+    borderColor:'#2c3645',
+    borderWidth:1,
+    padding:[9,12],
+    textStyle:{color:'#e8edf5',fontSize:12.5},
+    extraCssText:'border-radius:10px;box-shadow:0 12px 30px -12px rgba(0,0,0,.8)',
+    formatter:function(p){
+      var top=(data[0]&&data[0].value)||0;
+      var i=p.dataIndex==null?0:p.dataIndex;
+      var prev=i>0?(data[i-1]&&data[i-1].value):null;
+      var ofTop=top>0?Math.round(p.value/top*100):0;
+      var ofPrev=(prev!=null&&prev>0)?Math.round(p.value/prev*100):null;
+      return '<div style="font-weight:600;color:#8b96a6;font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">'+p.name+'</div>'+
+        '<div style="font-size:18px;font-weight:800;color:#e8edf5;font-variant-numeric:tabular-nums;letter-spacing:-.4px">'+p.value+'</div>'+
+        '<div style="color:#697384;margin-top:4px;font-size:11.5px;font-variant-numeric:tabular-nums">'+ofTop+'% of top'+
+        (ofPrev!=null?(' &middot; '+ofPrev+'% of prev'):'')+'</div>';
+    }
+  },
+  series:[{
+    type:'funnel',
+    sort:'none',
+    funnelAlign:'center',
+    gap:3,
+    left:'7%',
+    right:'7%',
+    top:8,
+    bottom:8,
+    minSize:'18%',
+    maxSize:'100%',
+    label:{
+      position:'inside',
+      color:'#f4f7ff',
+      fontWeight:700,
+      fontSize:TV?20:12,
+      formatter:'{b}\n{c}',
+      lineHeight:TV?24:16,
+      textShadowColor:'rgba(7,10,16,.62)',
+      textShadowBlur:3
+    },
+    labelLine:{show:false},
+    itemStyle:{
+      borderColor:'#0a0d13',
+      borderWidth:2,
+      opacity:1
+    },
+    emphasis:{
+      label:{fontWeight:800},
+      itemStyle:{borderColor:'#5b8cff',borderWidth:2,shadowBlur:14,shadowColor:'rgba(91,140,255,.4)'}
+    },
+    data:data.map(function(d,i){
+      var n=(data.length>1)?(data.length-1):1;
+      var stops=[
+        ['#cdd9f3','#a7bef0'],
+        ['#9fbbf2','#7aa1ee'],
+        ['#7aa0f0','#5b8cff'],
+        ['#5b8cff','#4574e6'],
+        ['#4574e6','#345dc4'],
+        ['#345dc4','#2a4ba3'],
+        ['#2a4ba3','#213d86']
+      ];
+      var idx=Math.round(i/n*(stops.length-1));
+      var c=stops[idx];
+      return {
+        name:d.name,
+        value:d.value,
+        itemStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:c[0]},{offset:1,color:c[1]}]}}
+      };
+    })
+  }]
+},true);
 }
 
 // Benchmark badge for the Total column (#4): green ✓ when the stage meets its
@@ -688,16 +1173,61 @@ function renderLeaderboard(d){
 }
 
 function renderTrend(t){
-  const mk=(name,key,color)=>({name,type:'line',smooth:true,symbol:'none',data:t.series[key],lineStyle:{width:2},itemStyle:{color}});
   trendChart.setOption({
-    tooltip:{trigger:'axis'},legend:{top:0,textStyle:{color:'#8b949e'}},
-    grid:{left:38,right:14,top:34,bottom:26},
-    xAxis:{type:'category',data:t.dates,axisLabel:{color:'#8b949e'}},
-    yAxis:{type:'value',axisLabel:{color:'#8b949e'},splitLine:{lineStyle:{color:'#222b38'}}},
-    series:[mk('Calls','calls_made','#60a5fa'),mk('Right Party Contact','rpc_connect','#34d399'),
-      mk('Full Pitch','full_pitch','#fbbf24'),mk('Lead','leads','#fb923c'),
-      mk('Qualified','qualified','#f472b6')]
-  },true);
+  backgroundColor:'transparent',
+  textStyle:{fontFamily:'ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial'},
+  color:['#5b8cff','#4ade80','#fbbf24','#fb923c','#f472b6'],
+  tooltip:{
+    trigger:'axis',
+    backgroundColor:'#141a23',
+    borderColor:'#2c3645',
+    borderWidth:1,
+    padding:[10,13],
+    textStyle:{color:'#e8edf5',fontSize:12.5},
+    extraCssText:'border-radius:10px;box-shadow:0 12px 30px -12px rgba(0,0,0,.8)',
+    axisPointer:{type:'line',lineStyle:{color:'rgba(91,140,255,.4)',width:1,type:'dashed'}}
+  },
+  legend:{
+    top:2,
+    icon:'roundRect',
+    itemWidth:11,
+    itemHeight:5,
+    itemGap:16,
+    textStyle:{color:'#b8c2d0',fontSize:12},
+    inactiveColor:'#4a5364'
+  },
+  grid:{left:42,right:18,top:40,bottom:26,containLabel:false},
+  xAxis:{
+    type:'category',
+    boundaryGap:false,
+    data:t.dates,
+    axisLine:{lineStyle:{color:'#222b39'}},
+    axisTick:{show:false},
+    axisLabel:{color:'#7f8b9b',fontSize:11,hideOverlap:true,margin:12}
+  },
+  yAxis:{
+    type:'value',
+    minInterval:1,
+    axisLine:{show:false},
+    axisTick:{show:false},
+    axisLabel:{color:'#7f8b9b',fontSize:11,margin:10},
+    splitLine:{lineStyle:{color:'#1c2430',type:'dashed'}}
+  },
+  series:[
+    {name:'Calls',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.calls_made,z:5,
+      lineStyle:{width:2.4,color:'#5b8cff'},itemStyle:{color:'#5b8cff'},emphasis:{focus:'series'},
+      areaStyle:{opacity:1,color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[
+        {offset:0,color:'rgba(91,140,255,.22)'},{offset:1,color:'rgba(91,140,255,0)'}]}}},
+    {name:'Right Party Contact',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.rpc_connect,
+      lineStyle:{width:1.8,color:'#4ade80'},itemStyle:{color:'#4ade80'},emphasis:{focus:'series'}},
+    {name:'Full Pitch',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.full_pitch,
+      lineStyle:{width:1.8,color:'#fbbf24'},itemStyle:{color:'#fbbf24'},emphasis:{focus:'series'}},
+    {name:'Lead',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.leads,
+      lineStyle:{width:1.8,color:'#fb923c'},itemStyle:{color:'#fb923c'},emphasis:{focus:'series'}},
+    {name:'Qualified',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.qualified,
+      lineStyle:{width:1.8,color:'#f472b6'},itemStyle:{color:'#f472b6'},emphasis:{focus:'series'}}
+  ]
+},true);
 }
 
 async function loadReview(){
