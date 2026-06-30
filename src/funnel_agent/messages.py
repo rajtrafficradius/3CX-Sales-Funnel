@@ -9,6 +9,7 @@ counts in the funnel (attributed to the BDE who called them, deduped by the funn
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 from psycopg_pool import ConnectionPool
@@ -68,6 +69,12 @@ def ingest_messages(client, pool: ConnectionPool, settings: Settings, *, overlap
         if not mid or not body:
             continue
         phone = (m.get("SenderParticipantPhone") or m.get("SenderParticipantNo") or "").strip()
+        # INBOUND-ONLY: keep only messages a PROSPECT sent us. 3CX's IsExternal flag covers both
+        # directions of an external (SMS) thread, so the BDE's own outbound replies are also
+        # returned — their sender is a short internal EXTENSION (e.g. 302), whereas a prospect's
+        # sender is a real phone number. Skip anything whose sender isn't a full phone number.
+        if len(re.sub(r"\D", "", phone)) < 8:
+            continue
         d9 = dest9(phone)
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute(
