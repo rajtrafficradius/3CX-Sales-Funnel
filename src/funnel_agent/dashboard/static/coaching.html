@@ -50,7 +50,7 @@ function barRow(label,v){v=v==null?0:Number(v);
   return `<div class="bar"><span class="bl">${label}</span><span class="bt"><i style="width:${v/5*100}%;background:${col(v)}"></i></span><span class="bn">${v?v.toFixed(2):'—'}/5</span></div>`;}
 
 async function loadBdes(){
-  try{ const m=await fetch('/api/meta').then(r=>r.json()); const sel=$('#bde');
+  try{ const m=await fetch('/api/summary').then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status))); const sel=$('#bde');
     const list=(m.bdes||[]).filter(b=>b!=='ALL');
     sel.innerHTML=list.map(b=>`<option>${esc(b)}</option>`).join('');
     if(m.user&&m.user.role==='bde'&&m.user.bde_name){ sel.value=m.user.bde_name; sel.disabled=true; }
