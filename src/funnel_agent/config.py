@@ -96,12 +96,16 @@ class Settings(BaseSettings):
 
     # --- Aircall (some BDEs / the BDM dial via Aircall instead of 3CX) ---
     # Basic-auth REST API: API ID (AIRCALL_APP_ID) + API token (AIRCALL_API_KEY).
-    # Auto-enabled when both are set; only in-scope agents' calls (matched by name against
-    # ROSTER_INSCOPE_NAMES) are ingested, so non-BDE Aircall users are ignored.
+    # Auto-enabled when both are set; only in-scope agents' calls are ingested, matched by name
+    # against AIRCALL_AGENT_NAMES (preferred) or, if unset, ROSTER_INSCOPE_NAMES. A dedicated
+    # list keeps Aircall scoping independent of the 3CX roster rule: a deployment that scopes
+    # 3CX by GROUPS (so ROSTER_INSCOPE_NAMES is empty) must still name its Aircall agents here,
+    # otherwise no Aircall calls are ever ingested.
     aircall_app_id: str = ""
     aircall_api_key: str = ""
     aircall_base: str = "https://api.aircall.io/v1"
     aircall_page_size: int = 50  # Aircall's max per_page
+    aircall_agent_names: str = ""  # CSV of BDE/BDM names who dial via Aircall (Alfred, Ben, …)
 
     # --- DataForSEO (SEO metrics + Google Ads Transparency Center; PAID, pay-per-request) ---
     # Auto-enriched for Raghav $1-10M paid-ads-gated prospects; on-demand for everyone else.
@@ -225,6 +229,14 @@ class Settings(BaseSettings):
     @property
     def inscope_names(self) -> list[str]:
         return _csv(self.roster_inscope_names)
+
+    @property
+    def aircall_agents(self) -> list[str]:
+        """Names matched against Aircall users to decide in-scope agents. Dedicated list so
+        Aircall works even when 3CX is scoped by GROUPS (inscope_names empty); falls back to
+        inscope_names when AIRCALL_AGENT_NAMES isn't set (preserves single-config deployments)."""
+        names = _csv(self.aircall_agent_names)
+        return names if names else self.inscope_names
 
     @property
     def inscope_groups(self) -> list[str]:

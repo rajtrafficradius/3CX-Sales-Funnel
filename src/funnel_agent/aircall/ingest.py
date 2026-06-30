@@ -24,8 +24,10 @@ _AIRCALL_EXT_PREFIX = "aircall:"
 
 
 def _inscope_agents(client: AircallClient, settings: Settings) -> dict[int, dict]:
-    """Aircall user_id -> {name, email} for users whose name matches an in-scope BDE."""
-    names = settings.inscope_names
+    """Aircall user_id -> {name, email} for users whose name matches an in-scope BDE.
+    Uses settings.aircall_agents (AIRCALL_AGENT_NAMES, falling back to ROSTER_INSCOPE_NAMES)
+    so Aircall works even when 3CX is scoped by groups."""
+    names = settings.aircall_agents
     if not names:
         return {}
     agents: dict[int, dict] = {}
