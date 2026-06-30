@@ -131,6 +131,20 @@ class ThreeCXClient:
                 continue
             break
 
+    def iter_chat_messages(self, since_iso: str | None = None) -> Iterator[dict]:
+        """Yield INBOUND (external) chat/SMS messages from ChatMessagesHistoryView, oldest-first.
+        These are messages a prospect sent TO a 3CX number (SMS arrives as a chat message in 3CX).
+        Fields incl SenderParticipantPhone/No/Name/Email, Message, TimeSent, Recipients,
+        ConversationId, MessageId. `since_iso` (UTC ISO) limits to messages after a watermark."""
+        flt = "IsExternal eq true"
+        if since_iso:
+            flt += f" and TimeSent gt {since_iso}"
+        yield from self.iter_query(
+            "/xapi/v1/ChatMessagesHistoryView",
+            {"$filter": flt, "$orderby": "TimeSent asc"},
+            page_size=200,
+        )
+
     def iter_users(self) -> Iterator[dict]:
         """Yield every user from `/xapi/v1/Users`, paging through with $top/$skip."""
         skip = 0

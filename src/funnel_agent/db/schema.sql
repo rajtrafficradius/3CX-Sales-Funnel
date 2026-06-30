@@ -377,3 +377,32 @@ CREATE TABLE IF NOT EXISTS prospect_assignments (
   created_at   timestamptz DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_prospect_assign ON prospect_assignments (dest9, created_at);
+
+-- Inbound SMS / chat messages from 3CX (ChatMessagesHistoryView). A prospect can confirm /
+-- reschedule / cancel a meeting (or opt out) by texting a 3CX number — captured here, classified,
+-- and (for a booking confirmation) used to FIRM UP that prospect's prior tentative call booking.
+CREATE TABLE IF NOT EXISTS messages (
+  message_id        text PRIMARY KEY,                 -- 3CX MessageId (stringified)
+  conversation_id   text,
+  provider          text NOT NULL DEFAULT '3cx',
+  direction         text NOT NULL DEFAULT 'inbound',  -- inbound = IsExternal (from the prospect)
+  sender_phone      text,
+  sender_no         text,
+  sender_name       text,
+  sender_email      text,
+  recipient         text,                             -- the 3CX agent/number it was sent to
+  dest9             text,                             -- normalized sender phone (last 9 digits)
+  bde_name          text,                             -- BDE resolved from the prospect's call history
+  body              text,
+  time_sent         timestamptz,
+  intent            text,        -- booking_confirmation | reschedule | cancel | optout | reply | other
+  is_booking_confirmation boolean,
+  meeting_datetime  text,
+  classified        boolean NOT NULL DEFAULT false,
+  applied_call_id   text,        -- the call whose booking this confirmation firmed up (if any)
+  model             text,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_messages_dest9 ON messages (dest9);
+CREATE INDEX IF NOT EXISTS idx_messages_time ON messages (time_sent);
+CREATE INDEX IF NOT EXISTS idx_messages_unclassified ON messages (classified) WHERE NOT classified;

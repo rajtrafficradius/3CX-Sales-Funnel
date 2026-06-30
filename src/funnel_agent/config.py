@@ -106,6 +106,8 @@ class Settings(BaseSettings):
     aircall_base: str = "https://api.aircall.io/v1"
     aircall_page_size: int = 50  # Aircall's max per_page
     aircall_agent_names: str = ""  # CSV of BDE/BDM names who dial via Aircall (Alfred, Ben, …)
+    message_classify_days: int = 21  # only classify inbound SMS/chat within this recency window
+    messages_enabled: bool = False   # gate the refresh loop's SMS capture+auto-booking (off until validated)
 
     # --- DataForSEO (SEO metrics + Google Ads Transparency Center; PAID, pay-per-request) ---
     # Auto-enriched for Raghav $1-10M paid-ads-gated prospects; on-demand for everyone else.

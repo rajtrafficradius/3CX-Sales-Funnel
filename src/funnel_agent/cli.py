@@ -257,6 +257,19 @@ def enrich_deep_cmd(
     typer.echo(f"enrich-deep: {stats}")
 
 
+@app.command(name="messages")
+def messages_cmd() -> None:
+    """Ingest inbound 3CX SMS/chat, classify intent, and firm up bookings confirmed by text.
+    Same step the refresh loop runs each cycle — run manually to backfill / test."""
+    settings = _settings()
+    from .threecx.api import ThreeCXClient
+    from .messages import process_messages
+
+    with _analytics_pool(settings) as pool, ThreeCXClient(settings) as tcx:
+        stats = process_messages(tcx, pool, settings)
+    typer.echo(f"messages: {stats}")
+
+
 @app.command(name="enrich-calls")
 def enrich_calls_cmd(
     limit: int = typer.Option(100000, help="max call-prospect domains to backfill"),
@@ -606,12 +619,25 @@ def refresh(
                 wh = enrich_whois_trickle(ana, settings, limit=settings.whois_trickle_per_cycle)
             except Exception as exc:
                 log.warning("whois_trickle_failed", error=str(exc)[:160])
+        # Inbound SMS/chat: capture meeting confirmations a prospect TEXTS to a 3CX number and
+        # firm up their prior tentative booking (an SMS-only confirmation the calls pipeline misses).
+        # Gated off by default until validated end-to-end (set MESSAGES_ENABLED=true to activate).
+        msg = {"skipped": True}
+        if settings.messages_enabled:
+            msg = {"new": 0, "classified": 0, "bookings": 0}
+            try:
+                from .threecx.api import ThreeCXClient
+                from .messages import process_messages
+                with ThreeCXClient(settings) as _tcx:
+                    msg = process_messages(_tcx, ana, settings)
+            except Exception as exc:
+                log.warning("messages_failed", error=str(exc)[:160])
         # WhatsApp nurturing: schedule sequences for new bookings + send due messages
         # (dry-run until WHATSAPP_ENABLED + credentials are configured).
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whois: {wh} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whois: {wh} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()
