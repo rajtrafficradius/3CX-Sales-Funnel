@@ -288,6 +288,44 @@ function ciCard(ev){
     </div></div>`;
 }
 
+// Per-call feedback intelligence — synthesises THIS call's AI analysis into what went well,
+// what to improve, and the next action (the call-level twin of the coaching page's panel).
+function feedbackCard(ev, cl){
+  const sc=ev.scorecard||{};
+  const DIMS=[['opening','Opening'],['discovery','Discovery'],['pitch','Pitch'],['objection_handling','Objection handling'],['close','Close']];
+  const scored=DIMS.filter(([k])=>sc[k]!=null).map(([k,l])=>({l,v:Number(sc[k])}));
+  const tips=ev.coaching_tips||[];
+  const objs=ev.objections||[];
+  const unhandled=objs.filter(o=>!o.handled);
+  if(!scored.some(s=>s.v>0) && !tips.length && !objs.length) return '';   // no coaching signal on this call
+  const strong=scored.filter(s=>s.v>=3.5).sort((a,b)=>b.v-a.v);
+  const weak=scored.filter(s=>s.v>0&&s.v<2.5).sort((a,b)=>a.v-b.v);
+  const wins=[
+    ...strong.map(s=>`${s.l} was strong (${s.v.toFixed(1)}/5)`),
+    ...(ev.buying_signals||[]).slice(0,2).map(s=>`Buying signal: ${s}`),
+    ...objs.filter(o=>o.handled).slice(0,1).map(o=>`Handled the "${o.objection}" objection`),
+  ];
+  const improves=[
+    ...weak.map(s=>`${s.l} needs work (${s.v.toFixed(1)}/5)`),
+    ...unhandled.slice(0,2).map(o=>`Unhandled objection: "${o.objection}"`),
+    ...tips.slice(0,3),
+  ];
+  const booked=ev.meeting_booked&&ev.meeting_booked.value;
+  const next = ev.next_step || (cl.callback_when?('Call back '+cl.callback_when):'')
+    || (booked?'Send the calendar invite + overview/testimonials pack and confirm the time.'
+             :'Follow up to secure a firm strategy-session date/time.');
+  const li=(arr,icon,color)=>arr.length?`<ul class="ci" style="list-style:none;padding-left:0;margin:0">${arr.map(x=>`<li style="margin:6px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">${icon}</span><span style="color:${color}">${esc(x)}</span></li>`).join('')}</ul>`:'<div class="muted">—</div>';
+  return `<div class="card full" style="border-color:#3b82f6;background:linear-gradient(180deg,#13203a,#161b22)">
+    <h2 style="color:#93c5fd">🧠 Feedback intelligence — this call</h2>
+    <div class="bizgrid">
+      <div><div class="subh">✅ What went well</div>${li(wins,'✅','#86efac')}</div>
+      <div><div class="subh">⚠️ What to improve</div>${li(improves,'⚠️','#fcd34d')}</div>
+    </div>
+    <div class="subh" style="margin-top:12px">🎯 What to do next</div>
+    <div style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);border-radius:8px;padding:10px 14px;color:#bfdbfe">${esc(next)}</div>
+  </div>`;
+}
+
 async function load(){
   let d;
   try{ const r=await fetch('/api/call/'+encodeURIComponent(id)); if(!r.ok)throw new Error(r.status); d=await r.json(); }
@@ -349,7 +387,7 @@ async function load(){
     : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
 
   const tabs=[
-    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + meta + verdicts + extractedCard(cl,ev)],
+    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + feedbackCard(ev,cl) + meta + verdicts + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],
