@@ -480,6 +480,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return int(round(CALLS_PER_30MIN * half_hours / n)), half_hours, round(CALLS_PER_30MIN / n, 1)
         return int(round(CALLS_PER_30MIN * half_hours)), half_hours, float(CALLS_PER_30MIN)
 
+    def _calls_made_full_target(bde: str, start: str, end: str) -> int:
+        """FIXED full-day Calls-Made target used as the FUNNEL CASCADE BASE — CALLS_PER_30MIN x a
+        whole workday (16 half-hours) x the number of working days in the window, independent of how
+        much of the day has elapsed. This keeps the downstream funnel targets STABLE and based on the
+        fixed daily goal (1200/day -> 40% = 480 connected -> 40% = 192 RPC -> 30% = 58 pitch ->
+        25% = 14 booked), rather than shrinking with time-of-day like the live calls-made pace."""
+        rows = q("SELECT count(DISTINCT (started_at AT TIME ZONE %s)::date) AS d FROM calls "
+                 "WHERE in_scope AND started_at >= %s::date AND started_at < (%s::date + 1)",
+                 (settings.tz, start, end))
+        days = int(rows[0]["d"]) if rows and rows[0].get("d") else 0
+        base = CALLS_PER_30MIN * (CALLING_HOURS * 2) * days     # 75 x 16 x working days = 1200/day
+        if bde and bde != "ALL":
+            rc = q("SELECT count(DISTINCT COALESCE(bde_name, extension)) AS n "
+                   "FROM bde_agents WHERE in_scope AND active")
+            n = max(1, int(rc[0]["n"]) if rc and rc[0]["n"] else 1)
+            return int(round(base / n))
+        return int(base)
+
     def _workday_progress() -> dict:
         """TODAY's calling-time progress vs the 8-hour calling target (9am Melbourne start,
         wall-clock elapsed capped at 8h — no fixed lunch window). For the header timer."""
@@ -545,12 +563,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "rate": rate, "target_rate": cm_rate_target,
                 "basis": f"{scope} target: {cm_rate_target} dials/30min from 9am, 8 calling hrs/day — {cm_target} expected so far",
             }
-        # Cascade each stage's target from the Calls-Made TARGET down the funnel using the
-        # standard conversion ratios (e.g. 1200 → 40% = 480 connected → 40% = 192 RPC →
-        # 30% = 58 pitch → 25% = 14 booked). The target is what the stage SHOULD be if the
-        # calls target were hit — NOT a ratio of the (possibly short) actual prior stage,
-        # which would silently shrink every downstream target when dialling falls behind.
-        target_chain = {"calls_made": cm_target or 0}
+        # Cascade each stage's target from the FIXED full-day Calls-Made target down the funnel
+        # using the standard conversion ratios (1200/day → 40% = 480 connected → 40% = 192 RPC →
+        # 30% = 58 pitch → 25% = 14 booked). The base is the FIXED daily goal (not the live,
+        # time-elapsed calls pace and not the actual short prior stage), so the funnel targets are
+        # stable and anchored to 1200/day regardless of time-of-day or how dialling is tracking.
+        target_chain = {"calls_made": _calls_made_full_target(bde, start, end)}
         for key, (ratio, prior) in BENCHMARK_RATIOS.items():
             target_chain[key] = int(round(ratio * target_chain.get(prior, 0)))
         for key, (ratio, prior) in BENCHMARK_RATIOS.items():
