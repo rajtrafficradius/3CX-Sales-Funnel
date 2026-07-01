@@ -1836,7 +1836,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "100up": "ge.total_revenue >= 100"}  # avoid '+' (URL-decodes to space)
 
     def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = "",
-                tracking: str = "", transparency: str = "", industry: str = "", state: str = ""):
+                tracking: str = "", transparency: str = "", industry: str = "", state: str = "",
+                website: str = ""):
         """Shared companies+enrichment CTE for the Database browser. Returns
         (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
         into the CTE; the rest come back as `ge` conditions. Coverage filters are added by
@@ -1896,6 +1897,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             params["st"] = f"%{state.strip()}%"
         if revenue in _REV:
             conds.append(_REV[revenue])
+        # Has-a-website filter: kind='domain' means the company has a domain on file.
+        if website == "yes":
+            conds.append("ge.kind = 'domain'")
+        elif website == "no":
+            conds.append("ge.kind = 'nodomain'")
         cte = f"""
         WITH g AS (
           SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,
@@ -1954,7 +1960,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            enriched: str = "", pipeline: str = "", paid_ads: str = "",
                            source: str = "", coverage: str = "", revenue: str = "",
                            tracking: str = "", transparency: str = "", industry: str = "",
-                           state: str = "", sort: str = "revenue", dir: str = "desc") -> JSONResponse:
+                           state: str = "", website: str = "", sort: str = "revenue", dir: str = "desc") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         All filters combine with AND; `coverage`/`tracking` may carry several comma-separated
@@ -1962,7 +1968,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_db_access(request)
         limit = max(1, min(limit, 200))
         cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
-                                     tracking, transparency, industry, state)
+                                     tracking, transparency, industry, state, website=website)
         params["lim"] = limit
         params["off"] = offset
         conds += _coverage_conds(coverage)
@@ -1984,7 +1990,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def database_stats(request: Request, search: str = "", enriched: str = "",
                        paid_ads: str = "", source: str = "", coverage: str = "",
                        revenue: str = "", tracking: str = "", transparency: str = "",
-                       industry: str = "", state: str = "") -> JSONResponse:
+                       industry: str = "", state: str = "", website: str = "") -> JSONResponse:
         _require_db_access(request)
         r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
               "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
@@ -1997,7 +2003,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # "Transparency checked" (all swept) stays >> "Running Google Ads" instead of
         # collapsing to the active filter. The result-bar total (/prospects.total) reflects
         # the FULL filter; these cards are reference + one-click shortcuts.
-        cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state)
+        cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state, website=website)
         base = ("WHERE " + " AND ".join(conds)) if conds else ""
         cov = q(cte + f"""SELECT
             count(*) FILTER (WHERE ge.scanned) AS scanned,
