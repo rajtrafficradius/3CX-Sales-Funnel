@@ -278,10 +278,11 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
         seen.add(c["company_key"])
         deduped.append(c)
 
-    # --- UPSERT ---
+    # --- UPSERT (one connection for the whole batch — no per-row round-trips) ---
     analyzed = 0
-    for c in deduped:
-        with pool.connection() as conn, conn.cursor() as cur:
+    if deduped:
+      with pool.connection() as conn, conn.cursor() as cur:
+        for c in deduped:
             cur.execute(
                 """
                 INSERT INTO rpc_actions (
@@ -321,8 +322,8 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
                 """,
                 c,
             )
-            conn.commit()
-        analyzed += 1
+            analyzed += 1
+        conn.commit()
 
     resolved = _resolve_open(pool, settings)
     scheduled = _schedule_retries(pool, settings)
@@ -344,57 +345,52 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
 def _resolve_open(pool: ConnectionPool, settings: Settings) -> int:
     """Close any open action whose number later connected with the decision-maker, or
     whose prospect has since gone DND. Cancels the scheduled retry event if present."""
+    event_ids: list[int] = []
     with pool.connection() as conn, conn.cursor() as cur:
+        # (1) Any open number that later CONNECTED (or went DND on a later call) — one set-based
+        # UPDATE instead of a per-row scan of `calls` (was the N+1 that made the loop too slow).
         cur.execute(
-            "SELECT dest9, dest_number, last_attempt_at, event_id FROM rpc_actions WHERE status = 'open'"
-        )
-        openrows = cur.fetchall()
-        cur.execute("SELECT dest9 FROM prospect_pipeline WHERE dnd")
-        dnd_numbers = {r["dest9"] for r in cur.fetchall()}
-
-    resolved = 0
-    for r in openrows:
-        d9 = r["dest9"]
-        resolved_call_id = None
-        is_resolved = False
-        with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT c.call_id, COALESCE(cl.rpc_connect, false) AS rpc_connect,
-                       COALESCE(cl.do_not_contact, false) AS do_not_contact
-                FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id
-                WHERE c.in_scope AND c.direction = %(outbound)s
-                  AND right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9) = %(dest9)s
-                  AND c.started_at > %(last)s
+            """
+            WITH later AS (
+                SELECT ra.dest9,
+                       (array_agg(c.call_id ORDER BY c.started_at)
+                          FILTER (WHERE COALESCE(cl.rpc_connect, false)))[1] AS cid
+                FROM rpc_actions ra
+                JOIN calls c
+                  ON right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9) = ra.dest9
+                LEFT JOIN classifications cl ON cl.call_id = c.call_id
+                WHERE ra.status = 'open' AND c.in_scope AND c.direction = %(outbound)s
+                  AND c.started_at > ra.last_attempt_at
                   AND (COALESCE(cl.rpc_connect, false) OR COALESCE(cl.do_not_contact, false))
-                ORDER BY c.started_at
-                LIMIT 1
-                """,
-                {"outbound": settings.cdr.outbound_value, "dest9": d9, "last": r["last_attempt_at"]},
+                GROUP BY ra.dest9
             )
-            hit = cur.fetchone()
-        if hit:
-            is_resolved = True
-            resolved_call_id = hit["call_id"]
-        elif d9 in dnd_numbers:
-            is_resolved = True
-
-        if not is_resolved:
-            continue
-
-        with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                "UPDATE rpc_actions SET status='resolved', resolved_at=now(), "
-                "resolved_call_id=%(cid)s, updated_at=now() WHERE dest9=%(dest9)s",
-                {"cid": resolved_call_id, "dest9": d9},
-            )
-            conn.commit()
-        if r["event_id"]:
-            try:
-                update_event(pool, r["event_id"], {"status": "cancelled"})
-            except Exception as exc:
-                log.warning("rpc_cancel_event_failed", dest9=d9, error=str(exc)[:160])
-        resolved += 1
+            UPDATE rpc_actions ra SET status='resolved', resolved_at=now(),
+                   resolved_call_id=later.cid, updated_at=now()
+            FROM later WHERE ra.dest9 = later.dest9 AND ra.status='open'
+            RETURNING ra.event_id
+            """,
+            {"outbound": settings.cdr.outbound_value},
+        )
+        rows1 = cur.fetchall()
+        # (2) Any remaining open number whose prospect is now DND.
+        cur.execute(
+            "UPDATE rpc_actions SET status='resolved', resolved_at=now(), updated_at=now() "
+            "WHERE status='open' AND dest9 IN (SELECT dest9 FROM prospect_pipeline WHERE dnd) "
+            "RETURNING event_id"
+        )
+        rows2 = cur.fetchall()
+        conn.commit()
+    resolved = len(rows1) + len(rows2)
+    event_ids = [r["event_id"] for r in (rows1 + rows2) if r["event_id"]]
+    # Cancel the linked retry events in ONE statement.
+    if event_ids:
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE calendar_events SET status='cancelled' "
+                            "WHERE type='rpc_retry' AND id = ANY(%s)", (event_ids,))
+                conn.commit()
+        except Exception as exc:
+            log.warning("rpc_cancel_events_failed", n=len(event_ids), error=str(exc)[:160])
     return resolved
 
 
