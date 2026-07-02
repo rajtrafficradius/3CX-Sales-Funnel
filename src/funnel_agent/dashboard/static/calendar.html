@@ -44,6 +44,16 @@
   .addform{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
   .muted{color:var(--muted)}
   .pill{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+  .legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:0 0 14px;font-size:12px;color:var(--muted)}
+  .legend .lgh{text-transform:uppercase;letter-spacing:.5px;font-size:10px;font-weight:700;opacity:.75}
+  .legend .lg{display:inline-flex;align-items:center;gap:6px}
+  .legend .lg i{width:12px;height:12px;border-radius:3px;display:inline-block;flex:0 0 auto}
+  .legend .lg i.type.meeting{background:rgba(34,197,94,.55)}
+  .legend .lg i.type.callback{background:rgba(59,130,246,.55)}
+  .legend .lg i.type.note{background:rgba(148,163,184,.55)}
+  .legend .lg i.type.done{background:#475569}
+  .ev{border-left:3px solid transparent}
+  .erow{border-left:3px solid transparent;padding-left:9px}
 </style>
 </head>
 <body>
@@ -64,8 +74,8 @@
     <button onclick="move(1)">›</button>
     <button onclick="goToday()">Today</button>
     <div class="spacer"></div>
-    <span class="muted">📞 callback · 🤝 meeting · 📝 note</span>
   </div>
+  <div class="legend" id="legend"></div>
   <div class="grid" id="dow"></div>
   <div class="grid" id="cal"></div>
   <div class="panel" id="dayPanel"><h2 id="dayTitle">Select a day</h2><div id="dayBody" class="muted">Click a day to see and add events.</div></div>
@@ -76,6 +86,14 @@ const pad=n=>String(n).padStart(2,'0');
 const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝'};
+// Deterministic per-BDE colour: same name -> same hue every load, well spread on the wheel.
+function bdeColor(name){
+  const s=(name||'').trim().toLowerCase();
+  if(!s) return {accent:'#6b7280'};            // unassigned -> neutral grey
+  let h=0; for(let i=0;i<s.length;i++){ h=(Math.imul(h,31)+s.charCodeAt(i))>>>0; }
+  const hue=(h*47)%360;                          // *47 spreads short names apart
+  return {accent:`hsl(${hue},68%,62%)`};
+}
 let view=new Date(), selected=null, ME={}, EVENTS=[], FILTER='';
 
 async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
@@ -107,8 +125,22 @@ async function load(){
   let url=`/api/calendar?start=${iso(gridStart)}&end=${iso(gridEnd)}`;
   if(FILTER) url+=`&bde=${encodeURIComponent(FILTER)}`;
   EVENTS=(await jget(url)).events||[];
+  renderLegend();
   renderGrid(gridStart);
   if(selected) renderDay(selected);
+}
+
+function renderLegend(){
+  const status=`<span class="lgh">Type / status</span>`+
+    `<span class="lg"><i class="type meeting"></i>🤝 meeting</span>`+
+    `<span class="lg"><i class="type callback"></i>📞 callback</span>`+
+    `<span class="lg"><i class="type note"></i>📝 note</span>`+
+    `<span class="lg"><i class="type done"></i>done</span>`;
+  const names=[...new Set(EVENTS.map(e=>e.bde_name||'').filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const bde = names.length
+    ? `<span class="lgh">BDE</span>`+names.map(n=>`<span class="lg"><i style="background:${bdeColor(n).accent}"></i>${esc(n)}</span>`).join('')
+    : '';
+  $('#legend').innerHTML = status + bde;
 }
 
 function evForDay(dstr){ return EVENTS.filter(e=>(e.start_at||'').slice(0,10)===dstr).sort((a,b)=>(a.start_at||'').localeCompare(b.start_at||'')); }
@@ -119,7 +151,7 @@ function renderGrid(gridStart){
     const d=new Date(gridStart); d.setDate(d.getDate()+i); const ds=iso(d);
     const other=d.getMonth()!==view.getMonth();
     const evs=evForDay(ds);
-    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} ${e.status==='done'?'done':''}">${TYPE_ICON[e.type]||''} ${(e.start_at||'').slice(11,16)} ${esc(e.title||'')}</div>`).join('');
+    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} ${e.status==='done'?'done':''}" style="border-left-color:${bdeColor(e.bde_name).accent}">${TYPE_ICON[e.type]||''} ${(e.start_at||'').slice(11,16)} ${esc(e.title||'')}</div>`).join('');
     const more=evs.length>3?`<div class="muted" style="font-size:11px">+${evs.length-3} more</div>`:'';
     cells.push(`<div class="cell ${other?'other':''} ${ds===todayStr?'today':''} ${ds===selected?'sel':''}" onclick="selectDay('${ds}')"><div class="d">${d.getDate()}</div>${chips}${more}</div>`);
   }
@@ -134,7 +166,7 @@ function renderDay(ds){
   $('#dayTitle').textContent='Events — '+ds;
   const canWrite = ME.role!=='kiosk';
   const rows = evs.length ? evs.map(e=>`
-    <div class="erow ${e.status==='done'?'done':''}">
+    <div class="erow ${e.status==='done'?'done':''}" style="border-left-color:${bdeColor(e.bde_name).accent}">
       <span class="t">${(e.start_at||'').slice(11,16)||'—'}</span>
       <span class="ti">${TYPE_ICON[e.type]||''} ${esc(e.title||'')} ${ME.role!=='bde'&&e.bde_name?`<span class="muted">· ${esc(e.bde_name)}</span>`:''} ${e.dest_number?`<a href="tel:${esc(e.dest_number)}" class="muted">${esc(e.dest_number)}</a>`:''}</span>
       ${canWrite?`<button onclick="toggleDone(${e.id},'${e.status}')">${e.status==='done'?'↺':'✓'}</button><button onclick="editTime(${e.id})">🕑</button><button onclick="del(${e.id})">🗑</button>`:''}
