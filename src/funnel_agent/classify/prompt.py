@@ -124,6 +124,12 @@ Stage definitions (in funnel order):
   CRITICAL — judge the END STATE of the call, not an early hopeful moment. Set `booking_status`:
     * "firm" — a specific day AND (ideally) time was agreed and STILL STANDS at the end of the call.
       Only then may meeting_booked be TRUE.
+      STRONG CONFIRMATION of a firm booking — if, at the end of the call, the BDE says a calendar
+      INVITE / invitation link will be sent (e.g. "I'll send you the calendar invite", "Emma Collins
+      will send the invite", "you'll get an invite for the session"), OR an invite was already sent
+      and acknowledged, treat the booking as FIRM (meeting_booked = TRUE), provided a day/time was
+      discussed and nothing was retracted. A promised/sent invite is a concrete commitment — do NOT
+      downgrade such a call to "tentative" merely because the exact minute wasn't restated.
     * "tentative" — only a vague/half-agreement ("maybe next week", "tell me a time later", a day
       floated but never pinned, or the call ended unresolved/confused about the time). meeting_booked
       = FALSE.
