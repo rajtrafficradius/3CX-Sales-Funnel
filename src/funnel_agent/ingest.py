@@ -55,13 +55,12 @@ def _register_unknown_extensions(pool: ConnectionPool, roster: dict, rows: list[
     if client is not None and settings is not None:
         try:
             from .roster import (_full_name, _group_name, _role_name,
-                                 canonical_bde_name, decide_in_scope)
+                                 resolve_bde_name, decide_in_scope)
             for user in client.iter_users():
                 ext = str(user.get("Number") or "").strip()
                 if ext in unknown:
                     fname = _full_name(user)
-                    canon = canonical_bde_name(fname, settings.inscope_names) if settings.inscope_names else None
-                    found[ext] = {"name": canon or fname, "group": _group_name(user),
+                    found[ext] = {"name": resolve_bde_name(fname, settings.inscope_names), "group": _group_name(user),
                                   "role": _role_name(user), "in_scope": bool(decide_in_scope(user, settings))}
         except Exception as exc:
             log.warning("roster_lookup_failed", error=str(exc)[:160])

@@ -44,6 +44,24 @@ def _role_name(user: dict) -> str:
     return user.get("Role") or ""
 
 
+def first_name_token(full_name: str | None) -> str:
+    """The FIRST-name token of a 3CX display name (after dropping a leading extension
+    number). This is the stable per-person key: BDEs get new numbers that keep the first
+    name and only vary the last name / line label ("Sunil LL", "Sunil Landline", "Sunil
+    Mobile", "184 Sunil" all -> "Sunil"), all under the Ben/Alfred department."""
+    import re
+    n = re.sub(r"^\d+[\s.\-]+", "", (full_name or "").strip())  # drop leading ext number
+    parts = n.split()
+    return parts[0] if parts else (full_name or "").strip()
+
+
+def resolve_bde_name(full_name: str | None, names: list[str]) -> str:
+    """Stable merge identity for a 3CX line. Prefer a configured name token when a list is
+    set (name-scoping); otherwise fall back to the FIRST name (works for cloud's group-
+    scoping, where the name list is empty) so a BDE's extra lines report under one name."""
+    return canonical_bde_name(full_name, names) or first_name_token(full_name)
+
+
 def canonical_bde_name(full_name: str | None, names: list[str]) -> str | None:
     """If the 3CX display name contains one of the configured BDE name tokens, return
     that token (as written in config) — the canonical identity. Whole-word match so
@@ -89,7 +107,6 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
                 # Canonical name: an in-scope BDE's lines all report under one name,
                 # so their multiple extensions merge automatically (no merge map needed).
                 _fname = _full_name(user)
-                _canon = canonical_bde_name(_fname, settings.inscope_names) if settings.inscope_names else None
                 cur.execute(
                     """
                     INSERT INTO bde_agents
@@ -108,7 +125,7 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
                     """,
                     {
                         "ext": ext,
-                        "name": _canon or _fname,
+                        "name": resolve_bde_name(_fname, settings.inscope_names),
                         "email": user.get("EmailAddress"),
                         "group": _group_name(user),
                         "role": _role_name(user),
