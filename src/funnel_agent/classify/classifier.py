@@ -209,33 +209,33 @@ def enforce_booking_firmness(v: CallClassification) -> None:
 
 
 def enforce_decision_maker_gate(v: CallClassification) -> None:
-    """Qualification rules (#7a). Mutates v.
+    """Qualification rule (#7a) — DEFINITIVE, BANT-based. Mutates v.
 
-    (1) NECESSARY: a non-decision-maker is NEVER 'qualified' — qualification requires buying
-        authority. A friendly gatekeeper with budget + a real problem is NOT qualified.
-    (2) NOT-SUFFICIENT: authority ALONE does not qualify. If the decision-maker revealed no
-        budget (incl. auto-validated), no problem, no urgency and no aspiration, demote to
-        not-qualified — being senior is not the same as being a qualified opportunity.
+    A lead / booking is QUALIFIED iff BOTH hold (CLASSIC BANT):
+      (1) NECESSARY — Authority: the person has buying authority (is the decision-maker). A
+          non-decision-maker is NEVER qualified, no matter how strong the other signals.
+      (2) PLUS at least TWO of the three: Budget, Problem (Need), Urgency (Timeline).
+          i.e. all of B/N/T present, OR one missing and the other two there.
+    (Aspiration / Open-to-listening are NOT counted toward this bar — they're softer signals.)
+    Applied deterministically — it OVERRIDES the model's own guess (up OR down) so Qualified /
+    Qualified Booked is a transparent, auditable count. The BDM keeps overriding authority on top.
     Run AFTER apply_auto_validation so a prospect already spending on ads/agency keeps budget.
     """
-    if v.qualified.value and not v.authority.value:
-        v.qualified = StageVerdict(
-            value=False,
-            confidence=max(v.qualified.confidence, 0.8),
-            evidence=(
-                "Not qualified — the person on the call is not the decision-maker (no buying "
-                "authority); qualification cannot be established regardless of budget or need."
-            ),
-        )
-    elif v.qualified.value and not (v.budget.value or v.problem.value or v.urgency.value or v.aspiration.value):
-        v.qualified = StageVerdict(
-            value=False,
-            confidence=max(v.qualified.confidence, 0.8),
-            evidence=(
-                "Not qualified — authority alone is not enough: no budget signal, marketing "
-                "problem, urgency or growth aspiration was established on the call."
-            ),
-        )
+    others = [v.budget.value, v.problem.value, v.urgency.value]
+    n = sum(1 for x in others if x)
+    q = bool(v.authority.value) and n >= 2
+    if q == v.qualified.value:
+        return
+    if q:
+        ev = (f"Qualified — decision-maker with {n} of 3 BANT signals (Budget / Need / Timeline): "
+              "meets the bar (authority + ≥2 of Budget/Need/Timeline).")
+    elif not v.authority.value:
+        ev = ("Not qualified — the person on the call is not the decision-maker (no buying "
+              "authority); qualification cannot be established regardless of budget or need.")
+    else:
+        ev = (f"Not qualified — decision-maker but only {n} of 3 BANT signals; the bar needs "
+              "authority + at least 2 of Budget / Need / Timeline.")
+    v.qualified = StageVerdict(value=q, confidence=max(v.qualified.confidence, 0.8), evidence=ev)
 
 
 def _all_false_verdict(outcome: str, note: str) -> CallClassification:
