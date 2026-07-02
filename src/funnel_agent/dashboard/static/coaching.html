@@ -48,6 +48,11 @@ const LBL={opening:'Opening',discovery:'Discovery',pitch:'Pitch',objection_handl
 function col(v){v=Number(v||0);return v>=3.5?'#4ade80':v>=2.5?'#fbbf24':'#f87171';}
 function barRow(label,v){v=v==null?0:Number(v);
   return `<div class="bar"><span class="bl">${label}</span><span class="bt"><i style="width:${v/5*100}%;background:${col(v)}"></i></span><span class="bn">${v?v.toFixed(2):'—'}/5</span></div>`;}
+function col100(v){v=Number(v||0);return v>=50?'#4ade80':v>=30?'#fbbf24':'#f87171';}
+function callLink(x){const t=esc(x.company||x.dest_number||x.call_id);
+  return `<li><a href="/call/${encodeURIComponent(x.call_id)}" style="color:#93c5fd;text-decoration:none">${t}</a>`
+    +(x.who_answered?` <span class="muted" style="font-size:11.5px">— ${esc(x.who_answered)}</span>`:'')
+    +(x.gatekeeper_notes?`<div class="muted" style="font-size:11.5px">${esc(x.gatekeeper_notes)}</div>`:'')+`</li>`;}
 
 async function loadBdes(){
   try{ const m=await fetch('/api/summary').then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status))); const sel=$('#bde');
@@ -63,6 +68,8 @@ async function load(){
   let d; try{ d=await fetch('/api/coaching?bde='+encodeURIComponent(bde)).then(r=>r.json()); }
   catch(e){ $('#main').innerHTML='<div class="card full">Error</div>'; return; }
   if(d.error){ $('#main').innerHTML='<div class="card full">'+esc(d.error)+'</div>'; return; }
+  // RPC-connect feedback (read-only) — fetched alongside the coaching analysis.
+  let rf={}; try{ rf=await fetch('/api/rpc-feedback?bde='+encodeURIComponent(bde)).then(r=>r.ok?r.json():{}); }catch(e){ rf={}; }
   const ov=d.overall||{}, won=d.booked||{}, lost=d.not_booked||{}, tr=d.trend||{};
   const score=`<div class="card"><h2>Scorecard (avg over decision-maker calls)</h2>
     <div style="display:flex;gap:24px;margin-bottom:10px"><div><div class="big">${ov.pitched||0}</div><div class="muted" style="font-size:11px">PITCHED</div></div>
@@ -106,7 +113,32 @@ async function load(){
       ${ins.map(i=>`<li style="margin:8px 0;padding-left:26px;position:relative"><span style="position:absolute;left:0">${KICON[i.kind]||'•'}</span><span style="color:${KIND[i.kind]||'#e6edf3'}">${esc(i.text)}</span></li>`).join('')}</ul>`
       :'<div class="muted">Not enough activity in this period to compute changes yet.</div>'}
     <div class="muted" style="font-size:11.5px;margin-top:6px">Compares the selected window against the previous equal-length working period. Green = improving, amber = a fix to apply, red = a drop to address.</div></div>`;
-  $('#main').innerHTML = fb + score + winning + trend + dev;
+  // RPC-connect feedback — reaching the decision-maker vs stopping at the gatekeeper.
+  const team=rf.team||{}, rrows=rf.rows||[], rtips=rf.tips||[], rex=rf.examples||{};
+  const rd=rex.reached_dm||[], sg=rex.stopped_at_gatekeeper||[];
+  const bdeBars=rrows.length?rrows.map(r=>{const hl=r.bde===bde;
+      return `<div class="bar"><span class="bl"${hl?' style="font-weight:700;color:#fff"':''}>${esc(r.bde)}</span>
+        <span class="bt"><i style="width:${Math.min(Number(r.rpc_rate||0),100)}%;background:${col100(r.rpc_rate)}"></i></span>
+        <span class="bn">${r.rpc_rate!=null?r.rpc_rate+'%':'—'}</span>
+        <span class="muted" style="width:96px;text-align:right;font-size:11.5px">GK ${r.gk_handled_rate!=null?r.gk_handled_rate+'%':'—'}</span></div>`;}).join('')
+    :'<div class="muted">No connected calls in this window.</div>';
+  const rpcCard=`<div class="card full" style="border-color:#22c55e;background:linear-gradient(180deg,#0f2417,#161b22)">
+    <h2 style="color:#86efac">📞 RPC-connect feedback — reaching the decision-maker</h2>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:12px">
+      <div><div class="big">${team.rpc_rate!=null?team.rpc_rate+'%':'—'}</div><div class="muted" style="font-size:11px">TEAM RPC-CONNECT RATE</div></div>
+      <div><div class="big">${team.gk_handled_rate!=null?team.gk_handled_rate+'%':'—'}</div><div class="muted" style="font-size:11px">GATEKEEPER HANDLED WELL</div></div>
+      <div><div class="big" style="color:#4ade80">${team.reached_dm||0}</div><div class="muted" style="font-size:11px">REACHED DECISION-MAKER</div></div>
+      <div><div class="big" style="color:#f87171">${team.stopped_at_gatekeeper||0}</div><div class="muted" style="font-size:11px">STOPPED AT GATEKEEPER</div></div>
+    </div>
+    ${rtips.length?`<ul class="ci" style="list-style:none;padding-left:0">${rtips.map(t=>`<li style="margin:7px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">💡</span><span style="color:#fbbf24">${esc(t)}</span></li>`).join('')}</ul>`:''}
+    <h2 style="margin-top:14px">RPC-connect rate by BDE <span class="muted" style="text-transform:none;letter-spacing:0">(reached decision-maker ÷ connected)</span></h2>
+    ${bdeBars}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px">
+      <div><h2>✅ Reached the decision-maker</h2>${rd.length?`<ul class="ci">${rd.map(callLink).join('')}</ul>`:'<div class="muted">No examples in this window.</div>'}</div>
+      <div><h2>🚧 Stopped at the gatekeeper (handled poorly)</h2>${sg.length?`<ul class="ci">${sg.map(callLink).join('')}</ul>`:'<div class="muted">No examples in this window.</div>'}</div>
+    </div>
+    <div class="muted" style="font-size:11.5px;margin-top:8px">Read-only. RPC-connect = the BDE reached the Right Party / decision-maker. Click a business to open the call.</div></div>`;
+  $('#main').innerHTML = fb + rpcCard + score + winning + trend + dev;
 }
 loadBdes();
 </script>
