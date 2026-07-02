@@ -108,9 +108,11 @@ function bookingBanner(ev, counts, dt, o){
   if(conf) return banner(AMBER,'📞 Meeting Confirmation Call — re-confirms a meeting booked on an earlier call. NOT counted again.');
   if(resched) return banner(AMBER,'🔁 Rescheduled booking — re-books an earlier meeting to a new date. NOT counted again (the original was already counted).');
   if(counts===false) return banner(AMBER,'🏢 Company already booked on an earlier call — NOT counted again (one booking per company).');
-  if(bs==='tentative') return banner(BLUE,'🕓 Tentative booking — counts as Meeting Booked, but NOT Qualified Booked until a BDM confirms it (use the override below).');
-  if(qual) return banner(GREEN,'✅ Qualified booked meeting — counts as Meeting Booked AND Qualified Booked.');
-  return banner(BLUE,'📅 Meeting Booked (counted) — booked by the BDE but not yet qualified (BANT), so excluded from Qualified Booked Meetings.');
+  // The AI self-qualifies EVERY booked meeting (firm or tentative) by its own BANT judgment.
+  // A tentative booking is still qualified/not on the AI's verdict; the BDM can override either way.
+  const tent = bs==='tentative' ? ' <span style="font-weight:400;opacity:.85">(tentative time — not firmly locked yet)</span>' : '';
+  if(qual) return banner(GREEN,'✅ Qualified booked meeting'+tent+' — counts as Meeting Booked AND Qualified Booked (the AI qualified the lead; a BDM can override).');
+  return banner(BLUE,'📅 Meeting Booked (counted)'+tent+' — the AI did not qualify the lead (BANT not met), so it is excluded from Qualified Booked. A BDM can override to qualify it.');
 }
 
 function stageRow(name, v){
