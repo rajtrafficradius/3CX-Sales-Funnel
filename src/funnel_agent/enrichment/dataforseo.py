@@ -133,6 +133,38 @@ class DataForSEOClient:
             "cost": d.get("cost"),
         }
 
+    def ranked_keywords(self, domain: str, limit: int = 200) -> dict:
+        """The ACTUAL organic keywords a domain ranks for (keyword + position + search volume +
+        CPC + ranking URL) — the raw data for a keyword/gap audit. We take keyword DATA only and
+        ESTIMATE traffic ourselves (position x volume) rather than buying DataForSEO's traffic
+        metrics. Ordered by search volume so the highest-opportunity terms come first."""
+        body = [{
+            "target": domain, "location_code": self.loc, "language_code": self.lang,
+            "limit": min(max(limit, 10), 1000),
+            "order_by": ["keyword_data.keyword_info.search_volume,desc"],
+            # organic SERP positions only (exclude paid/other item types)
+            "filters": [["ranked_serp_element.serp_item.type", "=", "organic"]],
+        }]
+        d = self._post("/v3/dataforseo_labs/google/ranked_keywords/live", body)
+        res = self._first_result(d)
+        out = []
+        for it in (res.get("items") or []):
+            kd = it.get("keyword_data") or {}
+            ki = kd.get("keyword_info") or {}
+            se = (it.get("ranked_serp_element") or {}).get("serp_item") or {}
+            pos = se.get("rank_absolute") or se.get("rank_group")
+            if pos is None:
+                continue
+            out.append({
+                "keyword": kd.get("keyword"),
+                "position": pos,
+                "search_volume": ki.get("search_volume") or 0,
+                "cpc": round(ki.get("cpc") or 0, 2),
+                "competition": ki.get("competition"),
+                "url": se.get("url"),
+            })
+        return {"keywords": out, "count": res.get("total_count") or len(out), "cost": d.get("cost")}
+
     def backlinks_summary(self, domain: str) -> dict:
         """Domain authority + backlink profile (rank, referring domains, backlinks count)."""
         body = [{"target": domain, "internal_list_limit": 1, "backlinks_status_type": "live"}]
@@ -167,6 +199,74 @@ class DataForSEOClient:
         ads = out.get("ads") or {}
         out["running_google_ads"] = bool(ads.get("running_ads"))
         return out
+
+
+# CTR by organic position — INDUSTRY-AVERAGE ASSUMPTION (surfaced/labeled in the UI). Used to
+# ESTIMATE organic traffic (search_volume x CTR) instead of buying DataForSEO's traffic metric.
+_ORGANIC_CTR = {1: 0.28, 2: 0.15, 3: 0.10, 4: 0.07, 5: 0.05,
+                6: 0.04, 7: 0.03, 8: 0.025, 9: 0.02, 10: 0.018}
+
+
+def _ctr(pos: float) -> float:
+    p = int(pos)
+    if p <= 10:
+        return _ORGANIC_CTR.get(p, 0.02)
+    if p <= 20:
+        return 0.010
+    if p <= 30:
+        return 0.006
+    if p <= 50:
+        return 0.003
+    return 0.001
+
+
+def build_seo_audit(keywords: list[dict]) -> dict:
+    """Turn a domain's ranked keywords into a quick-wins -> growth SEO audit.
+
+    Traffic is ESTIMATED (search_volume x an assumed position-CTR curve) — NOT a measured metric;
+    the caller/UI labels it as an assumption. Buckets each keyword:
+      * winning   — position 1-3 (already on page-1 top)
+      * quick_win — position 4-15 with real volume: one page-1 push = a big, near-term traffic gain
+      * growth    — position 16-50: longer-term opportunities
+    Also estimates total monthly organic traffic, its $ value (traffic x CPC), and the EXTRA
+    traffic available if the quick-wins reached position 3 (the actionable upside)."""
+    winning, quick, growth = [], [], []
+    est_traffic = est_value = quickwin_upside = 0.0
+    for k in keywords or []:
+        vol = k.get("search_volume") or 0
+        pos = k.get("position") or 999
+        cpc = k.get("cpc") or 0
+        et = vol * _ctr(pos)
+        est_traffic += et
+        est_value += et * cpc
+        row = {**k, "est_traffic": round(et)}
+        if pos <= 3:
+            winning.append(row)
+        elif pos <= 15:
+            up = max(vol * _ctr(3) - et, 0)          # traffic if it reached position 3
+            row["upside_traffic"] = round(up)
+            row["upside_value"] = round(up * cpc)
+            quickwin_upside += up
+            quick.append(row)
+        elif pos <= 50:
+            growth.append(row)
+    quick.sort(key=lambda r: r.get("upside_traffic", 0), reverse=True)
+    growth.sort(key=lambda r: r.get("search_volume", 0), reverse=True)
+    winning.sort(key=lambda r: r.get("est_traffic", 0), reverse=True)
+    return {
+        "assumption": ("Traffic is ESTIMATED from search volume x an industry-average "
+                       "click-through-rate by position — an assumption, not a measured metric."),
+        "totals": {
+            "keywords": len(keywords or []),
+            "est_organic_traffic": round(est_traffic),
+            "est_traffic_value": round(est_value),
+            "winning": len(winning), "quick_wins": len(quick), "growth": len(growth),
+            "quickwin_upside_traffic": round(quickwin_upside),
+        },
+        "winning": winning[:15],
+        "quick_wins": quick[:20],
+        "growth": growth[:20],
+    }
 
 
 def _parse_dt(v) -> datetime | None:

@@ -342,6 +342,45 @@ function digitalMarketingCard(d){
   </div>`;
 }
 
+// ---- SEO keyword/gap audit: quick-wins → growth. Traffic is ESTIMATED (position × volume),
+//      not a measured metric — surfaced with an explicit assumption label. ----
+function seoAuditCard(d){
+  const df=((d.enrichment||{}).dataforseo)||{};
+  const a=df.audit, can=d.can_download;
+  const btn=can?`<button class="btn" id="seoAuditBtn" style="margin-left:8px">${a?'Refresh':'Run'} SEO keyword audit (paid)</button>`:'';
+  if(!a){
+    return `<div class="card full"><h2>🔍 SEO keyword audit — quick wins → growth</h2>
+      <div class="muted small">Not run yet. Pulls the domain's ranked keywords and finds <b>quick wins</b> (page-1 pushes) and <b>growth</b> opportunities; traffic is <b>estimated</b> from position × search volume (an assumption).${btn}</div></div>`;
+  }
+  const t=a.totals||{};
+  const kwrow=(k,cell)=>`<tr><td>${esc(k.keyword)||'—'}</td><td style="text-align:center">#${k.position}</td><td style="text-align:right">${fmtN(k.search_volume)}</td>${cell}</tr>`;
+  const tbl=(rows,head,mapper)=>rows&&rows.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
+    <thead><tr style="color:var(--muted);text-align:left"><th>Keyword</th><th style="text-align:center">Pos</th><th style="text-align:right">Vol/mo</th><th style="text-align:right">${head}</th></tr></thead>
+    <tbody>${rows.map(mapper).join('')}</tbody></table>`:'<div class="muted small mt6">None.</div>';
+  const quick=tbl(a.quick_wins,'+traffic if →#3',k=>kwrow(k,`<td style="text-align:right;color:#3fb950">+${fmtN(k.upside_traffic)}</td>`));
+  const growth=tbl(a.growth,'est traffic /mo',k=>kwrow(k,`<td style="text-align:right">${fmtN(k.est_traffic)}</td>`));
+  const winning=tbl(a.winning,'est traffic /mo',k=>kwrow(k,`<td style="text-align:right">${fmtN(k.est_traffic)}</td>`));
+  return `<div class="card full"><h2>🔍 SEO keyword audit — quick wins → growth</h2>
+    <div class="metrics">
+      ${metric(fmtN(t.est_organic_traffic),'Est. organic traffic /mo','ASSUMPTION')}
+      ${metric('$'+fmtN(t.est_traffic_value),'Est. traffic value /mo','ASSUMPTION')}
+      ${metric(fmtN(t.keywords),'Ranked keywords','DataForSEO')}
+      ${metric('+'+fmtN(t.quickwin_upside_traffic),'Quick-win upside /mo','ASSUMPTION')}
+    </div>
+    <div class="muted small mt6">⚠ ${esc(a.assumption)}</div>
+    <div class="subh" style="margin-top:14px">⚡ Quick wins (${t.quick_wins}) — a page-1 push (currently position 4–15)</div>${quick}
+    <div class="subh" style="margin-top:14px">📈 Growth opportunities (${t.growth}) — position 16–50</div>${growth}
+    <div class="subh" style="margin-top:14px">🏆 Already winning (${t.winning}) — position 1–3</div>${winning}
+    <div class="muted small" style="margin-top:8px">Fetched ${fmtDate(df.fetched_at)}.${btn}</div>
+  </div>`;
+}
+async function runSeoAudit(){
+  const b=document.getElementById('seoAuditBtn'); if(b){b.disabled=true;b.textContent='Running…';}
+  try{ const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)+'/seo-audit',{method:'POST'});
+    if(r.ok){ load(); } else { const j=await r.json().catch(()=>({})); alert(j.error||('Error '+r.status)); if(b){b.disabled=false;b.textContent='Run SEO keyword audit (paid)';} }
+  }catch(e){ alert('Error: '+e.message); if(b){b.disabled=false;b.textContent='Run SEO keyword audit (paid)';} }
+}
+
 // ---- Paid-ads activity: a reasoned verdict combining website tracking codes +
 //      transcript analysis, with the supporting reasons shown (not just a flag). ----
 function paidAdsVerdict(p){
@@ -614,7 +653,7 @@ async function load(){
     ['business','Website business intel', businessIntelCard(d)],
     ['whois','Domain / WHOIS', whoisCard(d)],
     ['website','Website information', websiteInfoCard(d)],
-    ['digital','Digital marketing insights', digitalMarketingCard(d)],
+    ['digital','Digital marketing insights', digitalMarketingCard(d)+seoAuditCard(d)],
     ['calls','Call intelligence ('+((d.calls||[]).length)+')', timelineCard(d)],
     ['messages','SMS / chat ('+((d.messages||[]).length)+')', messagesCard(d)],
     ['tracking','Tracking codes available', trackingCodesCard(d)],
@@ -635,6 +674,7 @@ async function load(){
   const wb=document.getElementById('awBtn'); if(wb) wb.onclick=addWebsite;
   const eb=document.getElementById('ewBtn'); if(eb) eb.onclick=enrichWebsite;
   const db=document.getElementById('dfsBtn'); if(db) db.onclick=enrichDataforseo;
+  const sb=document.getElementById('seoAuditBtn'); if(sb) sb.onclick=runSeoAudit;
 }
 load();
 </script>

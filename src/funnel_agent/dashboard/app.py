@@ -1763,6 +1763,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = await run_in_threadpool(_do)
         return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "dataforseo": data}))
 
+    @app.post("/api/prospect/{key}/seo-audit")
+    async def prospect_seo_audit(request: Request, key: str) -> JSONResponse:
+        """PAID on-demand: fetch the domain's ranked KEYWORDS (DataForSEO) and build a
+        quick-wins -> growth SEO audit. Traffic is ESTIMATED from position x search volume (a
+        labelled assumption), not bought. BDM/admin only (each run costs a few cents)."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "SEO audit is paid — restricted to BDM / admin")
+        if not settings.dataforseo_enabled:
+            raise HTTPException(503, "DataForSEO not configured")
+        _master, domain, _norm = _resolve_prospect(key)
+        if not domain:
+            return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
+
+        def _do() -> dict:
+            from ..enrichment.dataforseo import DataForSEOClient, build_seo_audit
+            c = DataForSEOClient(settings)
+            try:
+                rk = c.ranked_keywords(domain, limit=200)
+            finally:
+                c.close()
+            kws = (rk.get("keywords") or [])[:200]
+            audit = build_seo_audit(kws)
+            audit["keyword_count_total"] = rk.get("count")
+            # Merge into enrichment.dataforseo (jsonb ||) so ads/rank/running_google_ads are kept.
+            patch = {"keywords": kws, "audit": audit}
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                    "ON CONFLICT (domain) DO UPDATE SET "
+                    "dataforseo = COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
+                    (domain, Json(patch), Json(patch)))
+                conn.commit()
+            return audit
+        audit = await run_in_threadpool(_do)
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "audit": audit}))
+
     @app.post("/api/prospect/{key}/set-website")
     async def prospect_set_website(request: Request, key: str) -> JSONResponse:
         """Set a prospect's website (any signed-in user) → immediately enrich it.
