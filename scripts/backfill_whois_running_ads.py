@@ -24,21 +24,34 @@ with conn.cursor() as cur:
     domains = [r["domain"] for r in cur.fetchall()]
 print(f"running-ads domains missing WHOIS: {len(domains):,}", flush=True)
 
-found = tried = err = 0; t0 = time.monotonic()
+# Transient statuses (rate-limit / network) must NOT be persisted — leave whois NULL so the
+# domain is retried later. Only persist a definitive result (found, or a genuine not-found).
+TRANSIENT = {"http_429", "error", "timeout"}
+def _transient(w):
+    st = str(w.get("status") or "").lower()
+    return (not w.get("found")) and ("429" in st or "timeout" in st or "timed out" in st or st in TRANSIENT)
+
+found = tried = err = skip = throttle = 0; t0 = time.monotonic()
 for i, dom in enumerate(domains, 1):
     try:
         w = lookup_whois(dom)
     except Exception as exc:
-        w = {"found": False, "status": "error", "error": str(exc)[:100]}; err += 1
+        w = {"found": False, "status": "error", "error": str(exc)[:100]}
     tried += 1
+    if _transient(w):
+        throttle += 1
+        # back off harder when auDA starts throttling, and skip persisting
+        if throttle % 5 == 0: time.sleep(30)
+        time.sleep(SLEEP); continue
     if w.get("found"): found += 1
     with conn.cursor() as cur:
         cur.execute("INSERT INTO enrichment (domain, whois, fetched_at) VALUES (%s,%s,now()) "
                     "ON CONFLICT (domain) DO UPDATE SET whois=EXCLUDED.whois, fetched_at=now()",
                     (dom, Json(w)))
         conn.commit()
-    if i % 100 == 0:
-        print(f"  {i:,}/{len(domains):,} | found={found:,} err={err} | {i/(time.monotonic()-t0):.2f}/s", flush=True)
+    if i % 50 == 0:
+        print(f"  {i:,}/{len(domains):,} | found={found:,} throttled(skipped)={throttle:,} | {i/(time.monotonic()-t0):.2f}/s", flush=True)
     time.sleep(SLEEP)
+err = throttle
 conn.close()
 print(f"DONE whois backfill: tried {tried:,}, found {found:,}, errors {err}, in {time.monotonic()-t0:.0f}s", flush=True)

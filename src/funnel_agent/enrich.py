@@ -675,13 +675,11 @@ def enrich_whois_trickle(pool: ConnectionPool, settings: Settings, limit: int = 
     from .enrichment.whois_lookup import lookup_whois
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
+            # ALL running-ads-confirmed domains (any revenue band) missing WHOIS — not just the
+            # $1-10M band. auDA rate-limits bulk .au WHOIS per IP, so the loop fills these a few
+            # per cycle (oldest-attempt-first); over time the whole set fills without throttling.
             """
-            WITH d AS (
-              SELECT DISTINCT lower(domain) AS dom FROM companies
-              WHERE source='raghav' AND revenue_musd BETWEEN 1 AND 10
-                AND domain IS NOT NULL AND domain <> ''
-            )
-            SELECT e.domain FROM enrichment e JOIN d ON d.dom = e.domain
+            SELECT e.domain FROM enrichment e
             WHERE (e.dataforseo->>'running_google_ads')='true'
               AND (e.whois->>'found') IS DISTINCT FROM 'true'
             ORDER BY e.fetched_at ASC NULLS FIRST
