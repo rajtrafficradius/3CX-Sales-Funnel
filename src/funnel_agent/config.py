@@ -157,6 +157,11 @@ class Settings(BaseSettings):
     # without tripping the registry limit. 0 disables the in-loop trickle.
     whois_trickle_per_cycle: int = 12
 
+    # Paced Apollo decision-maker (people) fill for running-ads prospects with missing/stale DMs.
+    # Apollo rate-limits bursts, so a few per cycle (sequential, oldest-attempt first) fills the
+    # gap over time from the always-on loop (fresh budget vs a one-off bulk run). 0 disables it.
+    apollo_people_trickle_per_cycle: int = 6
+
     # --- Roster in-scope rule ---
     # PRIMARY rule (preferred): BDE names. BDEs keep one stable name but rotate across
     # many extensions (mobile, landline, new numbers). Any 3CX line whose name matches

@@ -619,6 +619,15 @@ def refresh(
                 wh = enrich_whois_trickle(ana, settings, limit=settings.whois_trickle_per_cycle)
             except Exception as exc:
                 log.warning("whois_trickle_failed", error=str(exc)[:160])
+        # Paced Apollo decision-maker fill for running-ads prospects missing/stale DMs (Apollo
+        # rate-limits bursts, so a few/cycle from the always-on loop).
+        ap = {"checked": 0, "updated": 0}
+        if settings.apollo_people_trickle_per_cycle > 0:
+            from .enrich import enrich_apollo_people_trickle
+            try:
+                ap = enrich_apollo_people_trickle(ana, settings, limit=settings.apollo_people_trickle_per_cycle)
+            except Exception as exc:
+                log.warning("apollo_people_trickle_failed", error=str(exc)[:160])
         # Inbound SMS/chat: capture meeting confirmations a prospect TEXTS to a 3CX number and
         # firm up their prior tentative booking (an SMS-only confirmation the calls pipeline misses).
         # Gated off by default until validated end-to-end (set MESSAGES_ENABLED=true to activate).
@@ -637,7 +646,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whois: {wh} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()

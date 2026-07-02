@@ -708,6 +708,54 @@ def enrich_whois_trickle(pool: ConnectionPool, settings: Settings, limit: int = 
     return {"checked": len(domains), "found": found}
 
 
+def enrich_apollo_people_trickle(pool: ConnectionPool, settings: Settings, limit: int = 6) -> dict:
+    """Paced Apollo decision-maker (people) fill for running-ads prospects whose stored people are
+    MISSING or STALE (fetched with the old per_page=10/no-rank code). Apollo rate-limits bursts, so
+    this is SEQUENTIAL + small-batch + oldest-attempt-first: a few per cycle, refetched with the
+    current code (per_page=25 + founder-first ranking). NEVER overwrites good data with empty (a
+    rate-limited / no-DM result is skipped, and its fetched_at is bumped so it rotates to the back).
+    Idempotent; safe to run every cycle. Returns {checked, updated, empty}."""
+    if limit <= 0 or not (settings.apollo_enabled and settings.apollo_api_key):
+        return {"checked": 0, "updated": 0, "empty": 0}
+    from .enrichment.apollo import ApolloClient
+    with pool.connection() as conn, conn.cursor() as cur:
+        # Missing people, OR people present but never ranked (old code) → refetch. Oldest first.
+        cur.execute(
+            """
+            SELECT e.domain, e.apollo->>'id' AS org_id FROM enrichment e
+            WHERE (e.dataforseo->>'running_google_ads')='true' AND e.apollo IS NOT NULL
+              AND (jsonb_array_length(COALESCE(e.apollo->'people','[]'::jsonb)) = 0
+                   OR (e.apollo->'people'->0->>'rank') IS NULL)
+            ORDER BY e.fetched_at ASC NULLS FIRST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        domains = [(r["domain"], r["org_id"]) for r in cur.fetchall()]
+    if not domains:
+        return {"checked": 0, "updated": 0, "empty": 0}
+    apollo = ApolloClient(settings)
+    updated = empty = 0
+    for dom, org_id in domains:               # sequential — Apollo rate-limits bursts
+        try:
+            people = apollo.search_decision_makers(dom, org_id=org_id or None)
+        except Exception as exc:
+            people = []
+            log.warning("apollo_people_trickle_failed", domain=dom, error=str(exc)[:120])
+        with pool.connection() as conn, conn.cursor() as cur:
+            if people:                        # only write real results — never wipe with []
+                cur.execute("UPDATE enrichment SET apollo = jsonb_set(apollo, '{people}', %s::jsonb), "
+                            "fetched_at = now() WHERE domain = %s", (Json(people), dom))
+                updated += 1
+            else:                             # bump fetched_at so it rotates to the back of the queue
+                cur.execute("UPDATE enrichment SET fetched_at = now() WHERE domain = %s", (dom,))
+                empty += 1
+            conn.commit()
+    apollo.close()
+    log.info("enrich_apollo_people_trickle", checked=len(domains), updated=updated, empty=empty)
+    return {"checked": len(domains), "updated": updated, "empty": empty}
+
+
 def _all_call_prospect_domains(pool: ConnectionPool, require: tuple[str, ...]) -> list[str]:
     """Every identified domain across ALL in-scope call prospects (AI website OR phone->master
     match) that is missing any required enrichment column — for the one-time backfill."""
