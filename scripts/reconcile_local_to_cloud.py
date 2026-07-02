@@ -17,10 +17,13 @@ s = get_settings()
 CLOUD = os.environ["DATABASE_PUBLIC_URL"]
 LOCAL = "postgresql://vysakhvijayan@localhost:5432/funnel"
 
-# aggregate-affecting columns — if any of these differ, the day's numbers differ
+# aggregate-affecting columns — if any of these differ, the day's numbers differ.
+# Includes the BANT signal flags (they drive the Need-rule qualification), so a call that
+# differs ONLY in e.g. `problem` is still synced.
 KEYCOLS = ["rpc_connect","full_pitch","is_lead","qualified","meeting_booked","call_outcome",
            "meeting_confirmation","lead_temperature","pipeline","meeting_rescheduled",
-           "booking_status","meeting_datetime","booking_already_exists","company_key"]
+           "booking_status","meeting_datetime","booking_already_exists","company_key",
+           "budget","authority","problem","urgency","aspiration","open_to_listening"]
 
 def cols(dsn):
     with psycopg.connect(dsn) as c, c.cursor() as cur:

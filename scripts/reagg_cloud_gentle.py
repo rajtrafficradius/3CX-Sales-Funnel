@@ -11,7 +11,7 @@ from funnel_agent.aggregate import aggregate_day
 
 s = get_settings()
 CLOUD = os.environ["DATABASE_PUBLIC_URL"]
-PAUSE = 3.0  # seconds between days — keeps the app responsive
+PAUSE = float(os.environ.get("REAGG_PAUSE", "3.0"))  # seconds between days — keeps the app responsive
 
 def newpool(): return ConnectionPool(CLOUD, min_size=1, max_size=2, kwargs={"row_factory": dict_row}, open=True)
 pool = newpool()

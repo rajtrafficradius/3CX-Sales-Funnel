@@ -103,6 +103,11 @@ def classify_window(
             sync_callbacks_for_day(analytics_pool, day)
         except Exception as exc:
             log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
+        try:  # RPC "Next Move": action + schedule retries for un-connected dials
+            from .rpc import analyze_rpc_actions
+            analyze_rpc_actions(analytics_pool, settings, day)
+        except Exception as exc:
+            log.warning("rpc_actions_failed", error=str(exc)[:160])
         aggregate_day(analytics_pool, settings, day)
         set_state(analytics_pool, day)
 

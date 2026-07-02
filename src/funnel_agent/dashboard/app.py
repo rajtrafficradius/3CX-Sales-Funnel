@@ -1139,6 +1139,122 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
         return JSONResponse({"stage": stage, "count": int(total), "shown": len(rows), "rows": rows})
 
+    @app.get("/api/rpc-actions")
+    def rpc_actions_report(request: Request, bde: str = "ALL", date: str | None = None,
+                           start: str | None = None, end: str | None = None) -> JSONResponse:
+        """RPC Connect — Next Move accountability. Per BDE, over the window: how many
+        dialled numbers still haven't reached the decision-maker, how many REQUIRED
+        follow-up actions were skipped (did_required_action=false), the open next-moves,
+        overdue retries, and a compliance %. Mirrors the RPC worklist scoping — a BDE
+        sees only their own rows; a BDM/admin sees the team. Reads the persisted
+        rpc_actions rows (status='open') the classifier/pipeline maintains."""
+        scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
+        start, end = _resolve_window(date, start, end)
+        team0 = {"unconnected": 0, "missed_double_tap": 0, "missed_sms_vm": 0, "sms_nv": 0,
+                 "gatekeeper_unhandled": 0, "open_actions": 0, "overdue": 0, "compliance_pct": None}
+        empty = {"window": {"start": start, "end": end}, "scope": scope, "team": team0, "rows": []}
+        if not start:
+            return JSONResponse(empty)
+        params: dict = {"s": start, "e": end}
+        bde_filter = ""
+        if scope and scope != "ALL":
+            bde_filter = "AND ra.last_bde = %(bde)s"
+            params["bde"] = scope
+        # A linked rpc_retry calendar event whose start time has passed (and is still
+        # pending) means the scheduled retry is overdue.
+        overdue_expr = ("ce.id IS NOT NULL AND ce.start_at < now() "
+                        "AND COALESCE(ce.status,'pending') = 'pending'")
+        # An action bucket is "verifiable" unless it's an SMS/VM whose sms_sent is NULL
+        # (we genuinely can't tell) — those are shown as n/v, never a compliance breach.
+        req = ("ra.action_code IN ('double_tap','sms_vm','gatekeeper_getdm','retry_vary_time') "
+               "AND NOT (ra.action_code='sms_vm' AND ra.sms_sent IS NULL)")
+        undone = "COALESCE(ra.did_required_action,false)=false"
+        try:
+            rows = q(
+                f"SELECT COALESCE(ra.last_bde,'—') AS bde, "
+                f"count(*) AS unconnected, "
+                f"count(*) FILTER (WHERE ra.action_code='double_tap' AND {undone}) AS missed_double_tap, "
+                f"count(*) FILTER (WHERE ra.action_code='sms_vm' AND {undone} AND ra.sms_sent IS NOT NULL) AS missed_sms_vm, "
+                f"count(*) FILTER (WHERE ra.action_code='sms_vm' AND ra.sms_sent IS NULL) AS sms_nv, "
+                f"count(*) FILTER (WHERE ra.action_code='gatekeeper_getdm' AND {undone}) AS gatekeeper_unhandled, "
+                f"count(*) FILTER (WHERE {undone} AND ra.action_code IS NOT NULL AND ra.action_code <> 'none') AS open_actions, "
+                f"count(*) FILTER (WHERE ra.action_code='double_tap') AS b_double_tap, "
+                f"count(*) FILTER (WHERE ra.action_code='sms_vm') AS b_sms_vm, "
+                f"count(*) FILTER (WHERE ra.action_code='gatekeeper_getdm') AS b_gatekeeper_getdm, "
+                f"count(*) FILTER (WHERE ra.action_code='retry_vary_time') AS b_retry_vary_time, "
+                f"count(*) FILTER (WHERE {overdue_expr}) AS overdue, "
+                f"count(*) FILTER (WHERE {req}) AS req_total, "
+                f"count(*) FILTER (WHERE {req} AND COALESCE(ra.did_required_action,false)=true) AS req_done, "
+                f"(array_remove(array_agg(NULLIF(ra.next_move,'') ORDER BY ra.last_attempt_at DESC), NULL))[1] AS next_move, "
+                f"(array_remove(array_agg(ra.last_call_id ORDER BY ra.last_attempt_at DESC), NULL))[1] AS top_call_id "
+                f"FROM rpc_actions ra LEFT JOIN calendar_events ce ON ce.id = ra.event_id "
+                f"WHERE ra.status='open' "
+                f"AND ra.last_attempt_at >= %(s)s::date AND ra.last_attempt_at < (%(e)s::date + 1) {bde_filter} "
+                f"GROUP BY COALESCE(ra.last_bde,'—') "
+                f"ORDER BY open_actions DESC, unconnected DESC",
+                params,
+            )
+        except Exception:
+            return JSONResponse(empty)
+        out, team_req_total, team_req_done = [], 0, 0
+        team = dict(team0)
+        for r in rows:
+            req_total = int(r.get("req_total") or 0)
+            req_done = int(r.get("req_done") or 0)
+            team_req_total += req_total
+            team_req_done += req_done
+            row = {
+                "bde": r["bde"],
+                "unconnected": int(r.get("unconnected") or 0),
+                "missed_double_tap": int(r.get("missed_double_tap") or 0),
+                "missed_sms_vm": int(r.get("missed_sms_vm") or 0),
+                "sms_nv": int(r.get("sms_nv") or 0),
+                "gatekeeper_unhandled": int(r.get("gatekeeper_unhandled") or 0),
+                "open_actions": int(r.get("open_actions") or 0),
+                "overdue": int(r.get("overdue") or 0),
+                "compliance_pct": (round(100 * req_done / req_total) if req_total else None),
+                "next_move": r.get("next_move"),
+                "top_call_id": r.get("top_call_id"),
+                "buckets": {
+                    "double_tap": int(r.get("b_double_tap") or 0),
+                    "sms_vm": int(r.get("b_sms_vm") or 0),
+                    "gatekeeper_getdm": int(r.get("b_gatekeeper_getdm") or 0),
+                    "retry_vary_time": int(r.get("b_retry_vary_time") or 0),
+                },
+            }
+            for k in ("unconnected", "missed_double_tap", "missed_sms_vm", "sms_nv",
+                      "gatekeeper_unhandled", "open_actions", "overdue"):
+                team[k] += row[k]
+            out.append(row)
+        team["compliance_pct"] = (round(100 * team_req_done / team_req_total)
+                                  if team_req_total else None)
+        return JSONResponse(jsonable_encoder(
+            {"window": {"start": start, "end": end}, "scope": scope, "team": team, "rows": out}))
+
+    @app.get("/api/rpc-undone")
+    def rpc_undone(request: Request) -> JSONResponse:
+        """BDM/admin real-time alert feed: open RPC next-moves the BDE has NOT done in
+        the last 6 hours (did_required_action=false), so a manager can be pushed a
+        notification the moment an action is skipped."""
+        u = getattr(request.state, "user", None) or {}
+        if not (is_admin(u) or u.get("role") == "bdm"):
+            raise HTTPException(403, "BDM / admin access required")
+        try:
+            rows = q(
+                "SELECT last_call_id AS call_id, last_bde AS bde, "
+                "COALESCE(NULLIF(business_name,''), dest_number) AS company, dest_number, "
+                "reason, required_action, action_code "
+                "FROM rpc_actions WHERE status='open' "
+                "AND COALESCE(did_required_action,false)=false "
+                "AND action_code IS NOT NULL AND action_code <> 'none' "
+                "AND last_attempt_at >= now() - interval '6 hours' "
+                "ORDER BY last_attempt_at DESC",
+                None,
+            )
+        except Exception:
+            rows = []
+        return JSONResponse(jsonable_encoder(rows))
+
     @app.get("/api/rpc-feedback")
     def rpc_feedback(request: Request, start: str | None = None, end: str | None = None,
                      bde: str = "ALL") -> JSONResponse:
@@ -1336,6 +1452,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             m["time_sent"] = str(m["time_sent"]) if m.get("time_sent") else None
         sms_confirmed = any(m.get("applied_call_id") == call_id and m.get("is_booking_confirmation") for m in messages)
 
+        # RPC Connect — Next Move: the deterministic ledger row for this number (reuse _d9), with
+        # the AI-only next-move fields (evidence->'rpc_next_move') merged in where the row is null.
+        # Defensive: rpc_actions may not exist yet on a deployment that hasn't run the migration.
+        rpc_action = None
+        if _d9:
+            try:
+                _ra = q("SELECT * FROM rpc_actions WHERE dest9=%s", (_d9,))
+                rpc_action = _ra[0] if _ra else None
+            except Exception:
+                rpc_action = None
+        _ev = (cl[0].get("evidence") if cl else None) or {}
+        _ai_nm = _ev.get("rpc_next_move") if isinstance(_ev, dict) else None
+        if isinstance(_ai_nm, dict) and _ai_nm:
+            if rpc_action is None:
+                rpc_action = dict(_ai_nm)
+            else:
+                for _k, _v in _ai_nm.items():
+                    if rpc_action.get(_k) is None:
+                        rpc_action[_k] = _v
+
         u = getattr(request.state, "user", None) or {}
         # jsonable_encoder converts numeric->float and datetime->iso so confidences serialize.
         return JSONResponse(jsonable_encoder({
@@ -1350,6 +1486,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "can_override": can_manage_pipeline(u),  # BDM/admin only
             "messages": messages,
             "sms_confirmed": sms_confirmed,  # booking firmed by a prospect SMS
+            "rpc_action": rpc_action,  # RPC Connect — Next Move (ledger + AI next-move)
         }))
 
     # One cached 3CX client (reuses its OAuth token) for streaming recordings on demand.

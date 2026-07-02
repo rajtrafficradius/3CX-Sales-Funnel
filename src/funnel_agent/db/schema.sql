@@ -413,3 +413,53 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_dest9 ON messages (dest9);
 CREATE INDEX IF NOT EXISTS idx_messages_time ON messages (time_sent);
 CREATE INDEX IF NOT EXISTS idx_messages_unclassified ON messages (classified) WHERE NOT classified;
+-- ============================ RPC Connect "Next Move" ============================
+-- One row per dialled number (dest9 = trailing 9 significant digits) where the most
+-- recent attempt did NOT reach the decision-maker (rpc_connect false). Computed by
+-- rpc.analyze_rpc_actions from the day's outbound dials + their classifications: it
+-- records the scenario, the deterministic compliance checks (double-tap / voicemail
+-- left / gatekeeper handling), the prescribed next move, and whether the BDE did the
+-- required action. Auto-resolves when a later call to the same number connects (or the
+-- prospect goes DND). A retry is auto-scheduled on the BDE's calendar (type rpc_retry).
+CREATE TABLE IF NOT EXISTS rpc_actions (
+  dest9              text PRIMARY KEY,
+  dest_number        text,
+  channel            text,               -- 'mobile' | 'landline' | 'tollfree'
+  company_key        text,
+  business_name      text,
+  last_call_id       text,
+  last_attempt_at    timestamptz,
+  last_bde           text,
+  attempts           int,                -- in-scope outbound dials to this dest9 in window
+  answered_attempts  int,
+  scenario           text,               -- human label for what happened
+  reason             text,               -- human explanation
+  action_code        text,               -- double_tap|sms_vm|gatekeeper_getdm|ask_for_dm|retry_vary_time|mark_dnd|none
+  required_action    text,               -- what the BDE should have done / should do
+  next_move          text,               -- prescribed next action (prefers the AI's next_move)
+  next_move_channel  text,               -- retry_call|sms|voicemail|call_then_sms_vm|email|none
+  dm_name            text,
+  dm_available_when  text,
+  reason_unavailable text,
+  double_tap_done    boolean,            -- >=2 mobile dials by same BDE within the window
+  voicemail_left     boolean,            -- heuristic: voicemail miss with enough talk time
+  sms_sent           boolean,            -- NULL: messages table is inbound-only (unverifiable)
+  asked_for_dm       boolean,
+  asked_callback_time boolean,
+  gatekeeper_handled boolean,
+  did_required_action boolean,           -- did the BDE do the scenario's required action?
+  event_id           int,                -- the auto-scheduled calendar rpc_retry event
+  notified_bdm       boolean DEFAULT false,
+  notified_bdm_at    timestamptz,
+  status             text NOT NULL DEFAULT 'open',   -- 'open' | 'resolved'
+  resolved_at        timestamptz,
+  resolved_call_id   text,
+  updated_at         timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_rpc_actions_bde ON rpc_actions (last_bde, status);
+CREATE INDEX IF NOT EXISTS idx_rpc_actions_status ON rpc_actions (status);
+CREATE INDEX IF NOT EXISTS idx_rpc_actions_company ON rpc_actions (company_key);
+
+-- One auto-scheduled RPC retry per number (idempotent for the scheduler in rpc.py).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_rpc_retry
+  ON calendar_events (dest_number) WHERE type = 'rpc_retry';

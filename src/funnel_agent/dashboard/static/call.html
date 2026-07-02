@@ -115,6 +115,85 @@ function bookingBanner(ev, counts, dt, o){
   return banner(BLUE,'📅 Meeting Booked (counted)'+tent+' — the AI did not qualify the lead (BANT not met), so it is excluded from Qualified Booked. A BDM can override to qualify it.');
 }
 
+function rpcNextMoveCard(d){
+  const c=d.call||{}, cl=d.classification||{}, ev=cl.evidence||{};
+  const ra=d.rpc_action||{}, nm=ev.rpc_next_move||{};
+  const rpc=ev.rpc_connect;
+  // Only relevant when the DM was NOT reached. If reached, a tiny reassurance; if the
+  // AI never assessed RPC (no evidence), render nothing.
+  if(!(rpc && rpc.value===false)){
+    if(rpc && rpc.value===true)
+      return `<div class="card full" style="border-left:3px solid var(--accent)"><h2>RPC Connect — Next Move</h2>
+        <span class="pill yes">✓ Reached the decision-maker — no action owed</span></div>`;
+    return '';
+  }
+  const val=(a,b)=> (a!=null?a:(b!=null?b:null));
+  // (1) WHY not reached
+  const reasonCode=ra.reason||nm.rpc_unreached_reason||'';
+  const reasonLbl=RPC_REASON[reasonCode]||(reasonCode?String(reasonCode).replace(/_/g,' '):'Decision-maker not reached');
+  const dmName=val(ra.dm_name,nm.dm_name), dmRole=nm.dm_role, dmWhen=val(ra.dm_available_when,nm.dm_available_when);
+  const gkNotes=cl.gatekeeper_notes||ev.gatekeeper_notes, unavail=val(ra.reason_unavailable,nm.reason_unavailable);
+  const whyLines=[
+    gkNotes?'Gatekeeper: '+esc(gkNotes):null,
+    unavail?'Unavailable: '+esc(unavail):null,
+    (dmName||dmRole)?'Decision-maker: '+esc([dmName,dmRole].filter(Boolean).join(' · ')):null,
+    dmWhen?'Available: '+esc(dmWhen):null,
+  ].filter(Boolean);
+  const why=`<div class="subh">Why not reached</div>
+    <div style="margin-bottom:8px"><span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">${esc(reasonLbl)}</span></div>
+    ${whyLines.length?`<div class="muted" style="font-size:12.5px;line-height:1.7">${whyLines.join('<br>')}</div>`:'<div class="muted">No further detail captured.</div>'}`;
+  // (2) DID THE BDE DO IT — tri-state (✓ / ✗ / ? unknown) reusing the .pill styles.
+  const row=(label,inner)=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(label)}</span>${inner}</div>`;
+  const tri=(label,v)=>{
+    if(v===true) return row(label,`<span class="pill yes">✓</span>`);
+    if(v===false) return row(label,`<span class="pill no">✗</span>`);
+    return row(label,`<span class="pill" style="background:rgba(139,148,158,.14);color:#9aa4af">?</span>`);
+  };
+  const ch=ra.channel||'';
+  const isMobile = ch==='mobile' || ra.action_code==='double_tap' || ra.action_code==='sms_vm'
+    || ra.double_tap_done!=null || ra.voicemail_left!=null || ra.sms_sent!=null;
+  const isGk = ra.action_code==='gatekeeper_getdm' || ra.action_code==='ask_for_dm'
+    || ra.gatekeeper_handled!=null || ra.asked_for_dm!=null || ra.asked_callback_time!=null
+    || nm.asked_for_dm!=null || !!gkNotes;
+  let checklist='';
+  if(isMobile){
+    checklist += tri('Double-tap (2nd dial)', ra.double_tap_done);
+    checklist += tri('Voicemail likely left', ra.voicemail_left);
+    checklist += (ra.sms_sent==null)
+      ? row('SMS follow-up', `<span class="pill" style="background:rgba(139,148,158,.14);color:#9aa4af">can't verify</span>`)
+      : tri('SMS follow-up', ra.sms_sent);
+  }
+  if(isGk){
+    checklist += tri('Asked for the decision-maker', val(ra.asked_for_dm,nm.asked_for_dm));
+    checklist += tri('Asked best callback time', val(ra.asked_callback_time,nm.asked_callback_time));
+    checklist += tri('Got a direct contact', val(ra.got_direct_contact,nm.got_direct_contact));
+    checklist += tri('Gatekeeper handled well', ra.gatekeeper_handled);
+  }
+  if(!checklist) checklist='<div class="muted">No follow-up checklist for this scenario.</div>';
+  const breach = ra.did_required_action===false
+    ? `<div class="pill no" style="display:inline-block;margin-bottom:10px">⚠ Required follow-up not done</div>` : '';
+  const did=`<div class="subh">Did the BDE do it</div>${breach}${checklist}`;
+  // (3) NEXT MOVE — highlighted "what to do next" box.
+  const nextTxt = ra.next_move || nm.next_move || ra.required_action || 'Keep working this number until you reach the decision-maker.';
+  const chVal = val(ra.next_move_channel, nm.next_move_channel);
+  const chBadge = chVal?` <span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">${esc(chVal)}</span>`:'';
+  const availTxt = dmWhen?`<div class="muted" style="font-size:12.5px;margin-top:8px">🕑 Decision-maker available: ${esc(dmWhen)}</div>`:'';
+  const bdeName = ra.last_bde || c.bde_name || 'the BDE';
+  const retryHtml = ra.event_id
+    ? `<a class="lnk" href="/calendar">🔁 Retry scheduled${dmWhen?' for '+esc(dmWhen):''} on ${esc(bdeName)}'s calendar ↗</a>`
+    : `<span class="muted">No retry scheduled yet</span>`;
+  const overdueChip = ra.overdue?` <span class="pill no">Overdue</span>`:'';
+  const next=`<div class="subh">Next move</div>
+    <div style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.4);border-radius:8px;padding:11px 13px;font-weight:600;line-height:1.5">${esc(nextTxt)}${chBadge}</div>
+    ${availTxt}
+    <div style="margin-top:10px">${retryHtml}${overdueChip}</div>`;
+  return `<div class="card full" style="border-left:3px solid var(--accent)">
+    <h2>RPC Connect — Next Move</h2>
+    <div class="bizgrid"><div>${why}</div><div>${did}</div></div>
+    <div style="margin-top:16px">${next}</div>
+  </div>`;
+}
+
 function stageRow(name, v){
   if(!v) return '';
   const conf=v.confidence!=null?` · ${Math.round(v.confidence*100)}% conf`:'';
@@ -418,7 +497,7 @@ async function load(){
     : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
 
   const tabs=[
-    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + feedbackCard(ev,cl) + meta + verdicts + extractedCard(cl,ev)],
+    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + feedbackCard(ev,cl) + rpcNextMoveCard(d) + meta + verdicts + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],

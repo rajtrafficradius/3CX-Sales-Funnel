@@ -19,6 +19,30 @@ class Objection(BaseModel):
     handled: bool           # did the BDE address it convincingly?
 
 
+class RpcNextMove(BaseModel):
+    """The prescribed next action when the decision-maker was NOT reached (rpc_connect
+    false) but a human (gatekeeper / receptionist / non-DM) WAS on the line. Filled by
+    the model only in that case; otherwise the defaults stand (and for RPC success the
+    prompt sets rpc_unreached_reason="reached_rpc")."""
+
+    rpc_unreached_reason: Literal[
+        "reached_rpc", "gatekeeper_block", "dm_unavailable", "voicemail",
+        "no_answer", "wrong_number", "not_decision_maker", "other",
+    ] = "other"
+    dm_name: str = ""                 # the decision-maker's name if the human named them
+    dm_role: str = ""                 # the decision-maker's role/title if stated
+    dm_available_when: str = ""       # when the DM is reachable, in the human's words
+    reason_unavailable: str = ""      # why the DM couldn't be reached this call
+    asked_for_dm: bool = False        # did the BDE ask for the decision-maker?
+    asked_dm_name: bool = False       # did the BDE ask the decision-maker's name?
+    asked_callback_time: bool = False  # did the BDE ask when to call back?
+    got_direct_contact: bool = False  # did the BDE secure a direct line / mobile / email?
+    next_move: str = ""               # the concrete recommended next action (human string)
+    next_move_channel: Literal[
+        "retry_call", "sms", "voicemail", "call_then_sms_vm", "email", "none",
+    ] = "none"
+
+
 class Scorecard(BaseModel):
     # 0 (poor / absent) .. 5 (excellent). A coaching aid for managers.
     opening: int = Field(ge=0, le=5)
@@ -94,6 +118,9 @@ class CallClassification(BaseModel):
     # call was handled so the AI can coach the BDE toward reaching the decision-maker.
     gatekeeper_handled_well: bool   # did the BDE handle the gatekeeper well (ask for the DM by name, get a callback time, stay professional)?
     gatekeeper_notes: str           # what the gatekeeper asked / info they requested / helped vs blocked + what the BDE could do better; "" if not a gatekeeper call
+    # RPC "Next Move": prescribed follow-up when the decision-maker was NOT reached but a
+    # human was on the line. Auto-persists via evidence=v.model_dump().
+    rpc_next_move: RpcNextMove = Field(default_factory=RpcNextMove)
     # The SPECIFIC digital-marketing problem in the prospect's OWN words ("" if none stated
     # by the prospect). Do NOT fill this from the BDE's pitch claims — only the prospect's.
     problem_summary: str

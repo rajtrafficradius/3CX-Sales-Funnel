@@ -141,6 +141,14 @@ class Settings(BaseSettings):
     backfill_start: str = ""  # 'YYYY-MM-DD' or blank => auto-detect
     daily_lookback_days: int = 3
     rpc_min_talk_seconds: int = 25
+    # --- RPC Connect "Next Move" feedback (rpc.py) ---
+    # Two missed MOBILE dials to the same number by the same BDE within this many
+    # minutes counts as a completed "double tap" (the right-party-connect drill).
+    rpc_double_tap_window_min: int = 120
+    # A voicemail miss with at least this much talk time is treated as "voicemail left".
+    rpc_voicemail_left_seconds: int = 10
+    # How long an open, un-actioned RPC retry can sit before we flag the BDM.
+    rpc_retry_notify_hours: int = 6
     tz: str = "Australia/Melbourne"
     # Pipeline 2 (already-with-agency): default WEEKLY BDE rotation cadence. A
     # contract-end signal from the AI still overrides this per-prospect (don't pester

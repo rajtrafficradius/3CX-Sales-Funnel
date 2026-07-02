@@ -236,6 +236,32 @@ receptionist / someone who is NOT the decision-maker:
   whether they helped or blocked, and ONE thing the BDE could do better to reach the decision-maker.
   "" when this was not a gatekeeper call.
 
+RPC NEXT MOVE (`rpc_next_move`) — the prescribed follow-up when we did NOT reach the decision-maker.
+Fill the sub-fields ONLY when rpc_connect is FALSE **and a human** (gatekeeper / receptionist /
+employee / a non-decision-maker) was actually reached on this call. (For a pure voicemail, no-answer,
+IVR, or wrong number, leave the extraction fields blank and just set rpc_unreached_reason +
+next_move + next_move_channel below.) When rpc_connect is TRUE, set rpc_unreached_reason="reached_rpc"
+and leave the rest at defaults.
+- rpc_unreached_reason: why the decision-maker was not reached — one of "reached_rpc" (RPC success),
+  "gatekeeper_block" (a gatekeeper screened/deflected us), "dm_unavailable" (right business, DM just
+  not available now), "voicemail", "no_answer", "wrong_number", "not_decision_maker" (spoke to a human
+  who simply isn't the DM), or "other".
+- dm_name / dm_role: the decision-maker's name and role/title IF the human stated them ("you'll want
+  to speak to the owner, Maria" -> dm_name="Maria", dm_role="owner"). "" otherwise. STRICTLY from the
+  transcript — never guess.
+- dm_available_when: when the DM is reachable, in the human's own words ("after 2pm", "try Monday",
+  "he's in mornings"). "" if not stated.
+- reason_unavailable: why the DM couldn't be reached this call ("in a meeting", "on site", "at lunch",
+  "asked to send an email first"). "" if not stated.
+- asked_for_dm / asked_dm_name / asked_callback_time / got_direct_contact: judge each ONLY from what
+  the BDE actually said/did on THIS call — did they ask for the decision-maker, ask the DM's name, ask
+  a specific callback time, and did they secure a direct line / mobile / email? true/false accordingly.
+- next_move: ALWAYS fill this — the single best concrete next action given what happened (e.g. "Call
+  back after 2pm and ask for Maria by name", "Leave a voicemail, then send an SMS intro", "Re-dial
+  immediately (double-tap) then try the mobile", "Mark wrong number and remove"). One short sentence.
+- next_move_channel: ALWAYS set the channel for that move — one of "retry_call", "sms", "voicemail",
+  "call_then_sms_vm", "email", or "none" (only if truly nothing more should be done, e.g. wrong number).
+
 PIPELINE (set `pipeline`):
 - "pipeline1_interested": the prospect is INTERESTED — engaged positively, agreed to a callback,
   a next step, or a meeting. This is our active pipeline.

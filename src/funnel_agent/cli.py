@@ -476,6 +476,25 @@ def sync_callbacks_cmd(
             typer.echo(f"sync-callbacks {d}: {sync_callbacks_for_day(ana, d)}")
 
 
+@app.command(name="rpc-actions")
+def rpc_actions_cmd(
+    date_: str = typer.Option(None, "--date", help="single day YYYY-MM-DD (default: yesterday)"),
+    start: str = typer.Option(None, help="range start YYYY-MM-DD"),
+    end: str = typer.Option(None, help="range end YYYY-MM-DD"),
+) -> None:
+    """RPC 'Next Move': action un-connected outbound dials + schedule retries for a day/range."""
+    settings = _settings()
+    from .rpc import analyze_rpc_actions
+
+    if date_ or (start and end):
+        days = _resolve_days(date_, start, end)
+    else:
+        days = [_yesterday(settings)]
+    with _analytics_pool(settings) as ana:
+        for d in days:
+            typer.echo(f"rpc-actions {d}: {analyze_rpc_actions(ana, settings, d)}")
+
+
 @app.command(name="users-sync")
 def users_sync(
     manager: str = typer.Option(None, help="manager email(s) CSV; default from MANAGER_EMAILS"),

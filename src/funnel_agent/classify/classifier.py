@@ -17,7 +17,7 @@ from psycopg_pool import ConnectionPool
 from ..config import Settings
 from ..logging import get_logger
 from .prompt import SYSTEM_PROMPT, build_user_message
-from .schema import CallClassification, Scorecard, StageVerdict
+from .schema import CallClassification, RpcNextMove, Scorecard, StageVerdict
 
 log = get_logger(__name__)
 
@@ -244,6 +244,15 @@ def enforce_decision_maker_gate(v: CallClassification) -> None:
 
 def _all_false_verdict(outcome: str, note: str) -> CallClassification:
     sv = lambda: StageVerdict(value=False, confidence=1.0, evidence=note)  # noqa: E731
+    # No live conversation reached. `outcome` carries the only signal we have here
+    # ("voicemail" when the CDR pre-filter saw a voicemail); everything else is a
+    # non-answered dial -> "no_answer". Either way the move is to retry the call.
+    is_voicemail = outcome == "voicemail"
+    rpc_next_move = RpcNextMove(
+        rpc_unreached_reason="voicemail" if is_voicemail else "no_answer",
+        next_move=note,
+        next_move_channel="retry_call",
+    )
     return CallClassification(
         analysis=note,
         who_answered="n/a",
@@ -270,6 +279,7 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
         do_not_contact=False,
         gatekeeper_handled_well=False,
         gatekeeper_notes="",
+        rpc_next_move=rpc_next_move,
         problem_summary="",
         pipeline="none",
         prospect_company="",
