@@ -152,6 +152,13 @@ CREATE TABLE IF NOT EXISTS qualification_overrides (
   override_by text,
   created_at  timestamptz DEFAULT now()
 );
+-- BDM/admin override of the BOOKING OUTCOME (the AI can misread tentative vs firm vs
+-- reschedule vs confirmation from a transcript). Honoured by aggregate.py over the AI verdict:
+--   'counts'      -> genuine new firm booking (count it, even if the AI said tentative)
+--   'tentative'   -> not firm (don't count) ; 'not_booking' -> not a booking (don't count)
+--   'rescheduled' -> reschedule of an existing meeting (Resched bucket, not a new booking)
+--   'confirmation'-> confirms an earlier booking (not a new booking) ; NULL -> no booking override
+ALTER TABLE qualification_overrides ADD COLUMN IF NOT EXISTS booking_outcome text;
 
 -- Raw uploaded business records (e.g. D&B export). UNLIKE `prospects` (one row per
 -- domain), this keeps EVERY given business as its own row — many businesses can share

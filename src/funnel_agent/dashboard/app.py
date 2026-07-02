@@ -574,12 +574,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "rate": rate, "target_rate": cm_rate_target,
                 "basis": f"{scope} target: {cm_rate_target} dials/30min from 9am, 8 calling hrs/day — {cm_target} expected so far",
             }
-        # Cascade each stage's target from the FIXED full-day Calls-Made target down the funnel
-        # using the standard conversion ratios (1200/day → 40% = 480 connected → 40% = 192 RPC →
-        # 30% = 58 pitch → 25% = 14 booked). The base is the FIXED daily goal (not the live,
-        # time-elapsed calls pace and not the actual short prior stage), so the funnel targets are
-        # stable and anchored to 1200/day regardless of time-of-day or how dialling is tracking.
-        target_chain = {"calls_made": _calls_made_full_target(bde, start, end)}
+        # Cascade each stage's target from the TIME-PRORATED Calls-Made target down the funnel using
+        # the standard conversion ratios (40% connected → 40% RPC → 30% pitch → 25% booked). The base
+        # is the calls ACHIEVABLE by the calling-time elapsed so far (75/30min from 9am), so the stage
+        # targets grow through the day: at 4h the connected target is ~240, reaching the full 480 only
+        # once all 8 calling hours are done — showing a fair "how far short right now" at any hour.
+        target_chain = {"calls_made": cm_target}
         for key, (ratio, prior) in BENCHMARK_RATIOS.items():
             target_chain[key] = int(round(ratio * target_chain.get(prior, 0)))
         for key, (ratio, prior) in BENCHMARK_RATIOS.items():
@@ -1175,7 +1175,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rows = q("SELECT domain, semrush, apollo, website, business_intel, whois, dataforseo, status, fetched_at FROM enrichment WHERE domain=%s",
                      (domain,))
             enr = rows[0] if rows else None
-        ovr = q("SELECT qualified, reason, override_by, created_at FROM qualification_overrides WHERE call_id=%s",
+        ovr = q("SELECT qualified, reason, override_by, created_at, booking_outcome FROM qualification_overrides WHERE call_id=%s",
                 (call_id,))
         # Does THIS booking actually count, or is the company already booked earlier? Mirrors
         # the funnel dedup (first genuine booking per number OR company counts; later ones don't).
@@ -1318,8 +1318,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(403, "BDM / admin access required")
         d = await _form(request)
         reason = (d.get("reason") or "").strip()
+        # Optional booking-outcome override (#4c): the BDM sets what the call actually is when
+        # the AI misreads tentative/firm/reschedule/confirmation. NULL = qualified-flag only.
+        booking_outcome = (d.get("booking_outcome") or "").strip().lower() or None
+        _ALLOWED_OUTCOMES = {"counts", "tentative", "not_booking", "rescheduled", "confirmation"}
+        if booking_outcome and booking_outcome not in _ALLOWED_OUTCOMES:
+            return JSONResponse({"error": "invalid booking_outcome"}, status_code=400)
         qualified = d.get("qualified")
         qualified = qualified in (True, "true", "True", "1", 1, "yes")
+        if booking_outcome == "counts":
+            qualified = True  # "counts as a qualified booking" implies qualified
         if not reason:
             return JSONResponse({"error": "a reason is required"}, status_code=400)
         if not q("SELECT 1 FROM calls WHERE call_id=%s", (call_id,)):
@@ -1328,14 +1336,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def _do():
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO qualification_overrides (call_id, qualified, reason, override_by, created_at) "
-                    "VALUES (%s,%s,%s,%s, now()) ON CONFLICT (call_id) DO UPDATE SET "
-                    "qualified=EXCLUDED.qualified, reason=EXCLUDED.reason, override_by=EXCLUDED.override_by, created_at=now()",
-                    (call_id, qualified, reason, u.get("email") or u.get("name")))
+                    "INSERT INTO qualification_overrides (call_id, qualified, reason, override_by, booking_outcome, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s, now()) ON CONFLICT (call_id) DO UPDATE SET "
+                    "qualified=EXCLUDED.qualified, reason=EXCLUDED.reason, override_by=EXCLUDED.override_by, "
+                    "booking_outcome=EXCLUDED.booking_outcome, created_at=now()",
+                    (call_id, qualified, reason, u.get("email") or u.get("name"), booking_outcome))
                 conn.commit()
             _reaggregate_for_call(call_id)
         await run_in_threadpool(_do)
-        return JSONResponse({"ok": True, "qualified": qualified})
+        return JSONResponse({"ok": True, "qualified": qualified, "booking_outcome": booking_outcome})
 
     @app.post("/api/call/{call_id}/qualify-override/clear")
     async def call_qualify_override_clear(request: Request, call_id: str) -> JSONResponse:

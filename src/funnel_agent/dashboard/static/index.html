@@ -1150,9 +1150,13 @@ function renderChannel(d){
   const cell=ch=>{const c=ch||{};const b=c.booked||0,ca=c.calls||0;
     return `<td style="text-align:right">${b>0?'<b>'+b+'</b>':'<span class="muted">0</span>'} <span class="muted" style="font-size:11px">/${ca}</span></td>`;};
   tb.querySelector('thead').innerHTML='<tr><th style="text-align:left">BDE</th><th>📱 Mobile booked/calls</th><th>☎️ Landline</th><th>📞 Tollfree</th></tr>';
-  tb.querySelector('tbody').innerHTML = rows.length
-    ? rows.map(r=>`<tr><td style="text-align:left;font-weight:600">${r.bde}</td>${cell(r.mobile)}${cell(r.landline)}${cell(r.tollfree)}</tr>`).join('')
-    : '<tr><td colspan="4" class="muted">No data for this period.</td></tr>';
+  if(!rows.length){ tb.querySelector('tbody').innerHTML='<tr><td colspan="4" class="muted">No data for this period.</td></tr>'; return; }
+  // Column totals across all BDEs (booked + calls per dialled-number type).
+  const tot={mobile:{booked:0,calls:0},landline:{booked:0,calls:0},tollfree:{booked:0,calls:0}};
+  rows.forEach(r=>['mobile','landline','tollfree'].forEach(k=>{const c=r[k]||{};tot[k].booked+=c.booked||0;tot[k].calls+=c.calls||0;}));
+  const body=rows.map(r=>`<tr><td style="text-align:left;font-weight:600">${r.bde}</td>${cell(r.mobile)}${cell(r.landline)}${cell(r.tollfree)}</tr>`).join('');
+  const totRow=`<tr style="border-top:2px solid var(--line2);font-weight:700"><td style="text-align:left">Total</td>${cell(tot.mobile)}${cell(tot.landline)}${cell(tot.tollfree)}</tr>`;
+  tb.querySelector('tbody').innerHTML = body + totRow;
 }
 function renderLeaderboard(d){
   // [header, dataKey, drillStageKey|null]

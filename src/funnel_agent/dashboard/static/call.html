@@ -164,23 +164,41 @@ function qualOverrideCard(d){
   const reason = o ? `<div style="margin-top:8px;font-size:13px"><b>Reason:</b> ${esc(o.reason)}</div>` : '';
   let controls='';
   if(d.can_override){
+    // Booking-outcome override (#4c): the BDM sets what the call ACTUALLY is when the AI misreads
+    // tentative/firm/reschedule/confirmation. The funnel honours it over the AI verdict.
+    const OB=[['counts','✓ Counts as qualified booking','74,222,128'],
+              ['rescheduled','🔁 Rescheduled','147,197,253'],
+              ['confirmation','📞 Confirmation of earlier','251,191,36'],
+              ['tentative','🕓 Tentative — don\'t count','139,148,158'],
+              ['not_booking','✕ Not a booking','248,113,113']];
+    const obBtns=OB.map(([v,lbl,rgb])=>{
+      const qarg = v==='counts' ? 'true' : (v==='rescheduled'||v==='confirmation') ? String(!!aiQ) : 'false';
+      const sel = (o&&o.booking_outcome===v) ? ';outline:2px solid rgba('+rgb+',.9);outline-offset:1px' : '';
+      return `<button onclick="setQualOverride(${qarg},'${v}')" style="background:rgba(${rgb},.14);color:rgb(${rgb});border:1px solid rgba(${rgb},.45);border-radius:8px;padding:7px 11px;cursor:pointer;font-size:12.5px${sel}">${lbl}</button>`;
+    }).join('');
     controls = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
-      <div class="subh">BDM re-qualification</div>
+      <div class="subh">BDM override — what is this call?</div>
       <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${obBtns}</div>
+      <div class="subh" style="margin-top:12px;font-size:11px;color:var(--muted)">…or just the qualification flag (no booking change)</div>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
         <button id="qoYes" style="background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.4);border-radius:8px;padding:8px 13px;cursor:pointer">✓ Mark Qualified</button>
         <button id="qoNo" style="background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:8px 13px;cursor:pointer">✕ Mark Not Qualified</button>
         ${o?`<button id="qoClear" style="background:#0b0f15;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:8px 13px;cursor:pointer">Clear override (revert to AI)</button>`:''}
       </div></div>`;
   }
+  const OBL={counts:'✓ counts as qualified booking',rescheduled:'🔁 rescheduled',confirmation:'📞 confirmation',tentative:'🕓 tentative (not counted)',not_booking:'✕ not a booking'};
+  const obPill = (o&&o.booking_outcome)?`<span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd">BDM: ${OBL[o.booking_outcome]||o.booking_outcome}</span>`:'';
   const notBooked = !booked ? `<span class="muted" style="font-size:12px;font-weight:400"> · AI: not a booked meeting</span>` : '';
-  return `<div class="card full"><h2>Qualification review (BDM) ${effPill}${notBooked}</h2>
+  return `<div class="card full"><h2>Qualification review (BDM) ${effPill}${obPill}${notBooked}</h2>
     <div>${src}${o?` · AI said ${aiQ?'qualified':'not qualified'}`:''}</div>${reason}${controls}</div>`;
 }
-async function setQualOverride(qualified){
+async function setQualOverride(qualified, booking_outcome){
   const reason=(document.getElementById('qoReason')||{}).value||'';
   if(!reason.trim()){ alert('A reason is required.'); return; }
-  const r=await fetch(`/api/call/${encodeURIComponent(id)}/qualify-override`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qualified,reason})});
+  const body={reason, booking_outcome: booking_outcome||''};
+  if(qualified!==null && qualified!==undefined) body.qualified=qualified;
+  const r=await fetch(`/api/call/${encodeURIComponent(id)}/qualify-override`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.ok){ load(); } else { const j=await r.json().catch(()=>({})); alert(j.error||('Error '+r.status)); }
 }
 async function clearQualOverride(){

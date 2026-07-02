@@ -55,9 +55,16 @@ WITH base AS (
         -- per PROSPECT (dest_number): if the same prospect has an earlier booked call, this
         -- later one is a duplicate/re-touch and must NOT count again — one booking per lead.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   AND cl.meeting_booked
-                   AND NOT COALESCE(cl.meeting_confirmation, false)
-                   AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   -- Effective booking honours a BDM booking-outcome override (#4c) over the AI verdict.
+                   AND (CASE WHEN qo.booking_outcome='counts' THEN true
+                             WHEN qo.booking_outcome IN ('tentative','not_booking','confirmation') THEN false
+                             ELSE cl.meeting_booked END)
+                   AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
+                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','rescheduled') THEN false
+                                 ELSE COALESCE(cl.meeting_confirmation, false) END)
+                   AND NOT (CASE WHEN qo.booking_outcome='rescheduled' THEN true
+                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','confirmation') THEN false
+                                 ELSE COALESCE(cl.meeting_rescheduled, false) END)
                    AND NOT COALESCE(cl.booking_already_exists, false)  -- referral/hand-off to a 2nd contact of an already-booked company
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
@@ -76,8 +83,15 @@ WITH base AS (
         -- call is (effectively) qualified OR ANY other in-scope call to the same number is.
         -- Same exclusion: confirmation/reschedule of an existing booking is not re-counted.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   AND cl.meeting_booked AND NOT COALESCE(cl.meeting_confirmation, false)
-                   AND NOT COALESCE(cl.meeting_rescheduled, false)
+                   AND (CASE WHEN qo.booking_outcome='counts' THEN true
+                             WHEN qo.booking_outcome IN ('tentative','not_booking','confirmation') THEN false
+                             ELSE cl.meeting_booked END)
+                   AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
+                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','rescheduled') THEN false
+                                 ELSE COALESCE(cl.meeting_confirmation, false) END)
+                   AND NOT (CASE WHEN qo.booking_outcome='rescheduled' THEN true
+                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','confirmation') THEN false
+                                 ELSE COALESCE(cl.meeting_rescheduled, false) END)
                    AND NOT COALESCE(cl.booking_already_exists, false)
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
