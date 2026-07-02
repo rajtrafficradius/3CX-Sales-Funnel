@@ -1015,6 +1015,125 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
         return JSONResponse({"stage": stage, "count": int(total), "shown": len(rows), "rows": rows})
 
+    @app.get("/api/rpc-feedback")
+    def rpc_feedback(request: Request, start: str | None = None, end: str | None = None,
+                     bde: str = "ALL") -> JSONResponse:
+        """RPC-connect feedback intelligence: over the window, how often each BDE reaches
+        the decision-maker (Right-Party-Contact) vs stops at the gatekeeper, plus gatekeeper
+        handling quality and a few example calls to learn from. Read-only. Mirrors the
+        connected/rpc SQL conventions (see _CONN / _STAGE_COND / /api/rpc-monitor)."""
+        start, end = _resolve_window(None, start, end)
+        if not start:
+            return JSONResponse({"window": {"start": None, "end": None}, "scope": "ALL",
+                                 "team": {}, "rows": [], "tips": [],
+                                 "examples": {"reached_dm": [], "stopped_at_gatekeeper": []}})
+        # A BDE only ever sees themselves; a manager may focus on one BDE (or ALL).
+        focus_bde = _scoped_bde(request, bde)
+        conn = _CONN  # answered + real talk + not voicemail (same as the funnel)
+        # Gatekeeper reached: AI outcome or who_answered says gatekeeper (matches /api/rpc-monitor).
+        hit_gk = "(cl.call_outcome = 'gatekeeper' OR cl.evidence->>'who_answered' ILIKE '%%gatekeeper%%')"
+        gk_ok = "COALESCE(cl.gatekeeper_handled_well, false)"
+        no_rpc = "NOT COALESCE(cl.rpc_connect, false)"
+        agg = (
+            f"count(*) FILTER (WHERE {conn}) AS connected, "
+            f"count(*) FILTER (WHERE {conn} AND cl.rpc_connect) AS rpc, "
+            f"count(*) FILTER (WHERE {conn} AND {hit_gk}) AS gatekeeper_calls, "
+            f"count(*) FILTER (WHERE {conn} AND {hit_gk} AND {gk_ok}) AS gk_handled_well, "
+            f"count(*) FILTER (WHERE {conn} AND {hit_gk} AND {no_rpc}) AS stopped_at_gatekeeper, "
+            f"count(*) FILTER (WHERE {conn} AND {hit_gk} AND {no_rpc} AND NOT {gk_ok}) AS stopped_poorly"
+        )
+        where = ["c.in_scope", "c.started_at >= %(s)s::date", "c.started_at < (%(e)s::date + 1)"]
+        params: dict = {"s": start, "e": end, "thr": settings.rpc_min_talk_seconds}
+        # Per-BDE table: a BDE sees only their own row; a manager sees the whole team.
+        bde_filter = ""
+        if _is_bde(request):
+            bde_filter = "AND COALESCE(c.bde_name, c.bde_extension) = %(fb)s"
+            params["fb"] = focus_bde
+        rows_raw = q(
+            f"SELECT COALESCE(c.bde_name, c.bde_extension) AS bde, {agg} "
+            "FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id "
+            f"WHERE {' AND '.join(where)} {bde_filter} "
+            f"GROUP BY 1 HAVING count(*) FILTER (WHERE {conn}) > 0 "
+            "ORDER BY 1",
+            params,
+        )
+        # Team benchmark: the whole team over the window (never bde-scoped).
+        team_raw = q(
+            f"SELECT {agg} FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id "
+            f"WHERE {' AND '.join(where)}",
+            params,
+        )
+
+        def _rates(r: dict) -> dict:
+            connected = int(r.get("connected") or 0)
+            rpc = int(r.get("rpc") or 0)
+            gk = int(r.get("gatekeeper_calls") or 0)
+            gk_ok_n = int(r.get("gk_handled_well") or 0)
+            stopped = int(r.get("stopped_at_gatekeeper") or 0)
+            return {
+                "connected": connected, "rpc": rpc, "reached_dm": rpc,
+                "rpc_rate": _pct(rpc, connected),
+                "gatekeeper_calls": gk, "gk_handled_well": gk_ok_n,
+                "gk_handled_rate": _pct(gk_ok_n, gk),
+                "stopped_at_gatekeeper": stopped,
+                "stopped_poorly": int(r.get("stopped_poorly") or 0),
+                "stopped_pct": _pct(stopped, connected),
+            }
+
+        rows = [{"bde": r["bde"], **_rates(r)} for r in rows_raw]
+        team = _rates(team_raw[0] if team_raw else {})
+
+        # Example calls for the focused BDE (or the whole team when ALL).
+        ex_where = list(where)
+        ex_params = dict(params)
+        if focus_bde and focus_bde != "ALL":
+            ex_where.append("COALESCE(c.bde_name, c.bde_extension) = %(fb)s")
+            ex_params["fb"] = focus_bde
+        ex_base = "FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id WHERE "
+        reached = q(
+            "SELECT c.call_id, c.dest_number, c.started_at, "
+            "COALESCE(c.bde_name, c.bde_extension) AS bde, NULLIF(cl.prospect_company,'') AS company, "
+            "cl.evidence->>'who_answered' AS who_answered "
+            + ex_base + " AND ".join(ex_where) + f" AND {conn} AND cl.rpc_connect "
+            "ORDER BY c.started_at DESC LIMIT 5",
+            ex_params,
+        )
+        stopped = q(
+            "SELECT c.call_id, c.dest_number, c.started_at, "
+            "COALESCE(c.bde_name, c.bde_extension) AS bde, NULLIF(cl.prospect_company,'') AS company, "
+            "cl.evidence->>'who_answered' AS who_answered, NULLIF(cl.gatekeeper_notes,'') AS gatekeeper_notes "
+            + ex_base + " AND ".join(ex_where) + f" AND {conn} AND {hit_gk} AND {no_rpc} AND NOT {gk_ok} "
+            "ORDER BY c.started_at DESC LIMIT 5",
+            ex_params,
+        )
+        for r in (*reached, *stopped):
+            r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
+
+        # Actionable tips for the focused context (own row, else the team benchmark).
+        fs = next((r for r in rows if r["bde"] == focus_bde), None) if focus_bde != "ALL" else None
+        fs = fs or team
+        who = "your" if focus_bde != "ALL" else "the team's"
+        tips: list[str] = []
+        if fs.get("stopped_pct") is not None and fs["stopped_pct"] >= 15:
+            tips.append(f"{fs['stopped_pct']}% of {who} connected calls stopped at the gatekeeper — "
+                        "ask for the owner / decision-maker by name and lock in a direct callback time.")
+        if fs.get("gatekeeper_calls") and fs.get("gk_handled_rate") is not None and fs["gk_handled_rate"] < 60:
+            tips.append(f"Gatekeeper handled well only {fs['gk_handled_rate']}% of the time — stay confident, "
+                        "give a clear reason for the call, and request the decision-maker directly.")
+        if (focus_bde != "ALL" and fs.get("rpc_rate") is not None and team.get("rpc_rate") is not None
+                and fs["rpc_rate"] < team["rpc_rate"] - 5):
+            tips.append(f"Your Right-Party-Contact rate ({fs['rpc_rate']}%) is below the team ({team['rpc_rate']}%) — "
+                        "focus on getting past the gatekeeper to the decision-maker.")
+        if not tips and fs.get("rpc_rate") is not None:
+            tips.append(f"Right-Party-Contact rate {fs['rpc_rate']}% — keep asking for the decision-maker "
+                        "by name to push it higher.")
+
+        return JSONResponse(jsonable_encoder({
+            "window": {"start": start, "end": end}, "scope": focus_bde,
+            "team": team, "rows": rows, "tips": tips,
+            "examples": {"reached_dm": reached, "stopped_at_gatekeeper": stopped},
+        }))
+
     @app.get("/call/{call_id}", response_class=HTMLResponse)
     def call_page(call_id: str) -> str:
         return resources.files("funnel_agent.dashboard").joinpath(
