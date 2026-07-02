@@ -204,15 +204,26 @@ async function addWebsite(){
 // Merge master-DB SEO metrics with live enrichment (enrichment wins; master fills gaps).
 // ---- Apollo free data (company firmographics) ----
 function apolloCard(d){
-  const ap=((d.enrichment||{}).apollo)||{};
+  const apRaw=(d.enrichment||{}).apollo;   // null/undefined => never looked up
+  const ap=apRaw||{};
   const rev=ap.annual_revenue_printed||(ap.annual_revenue?'$'+fmtN(ap.annual_revenue):null);
+  // Master-DB revenue = the given business-data (companies) SUMMED revenue — shown alongside
+  // Apollo's estimate so the two can be compared, not conflated.
+  const mrev=fmtRevM((d.company_summary||{}).total_revenue_musd);
   const loc=[ap.city,ap.state,ap.country].filter(Boolean).join(', ');
-  const aRows=[['Company',esc(ap.name)],['Industry',esc(ap.industry)],['Est. revenue',rev?esc(rev):null],
+  const aRows=[['Company',esc(ap.name)],['Industry',esc(ap.industry)],
+    ['Revenue (Apollo)',rev?esc(rev):null],['Revenue (Master DB)',mrev?esc(mrev):null],
     ['Employees',ap.employees!=null?fmtN(ap.employees):null],['Founded',ap.founded_year],
     ['HQ',esc(loc)],['Phone',esc(ap.phone)],['LinkedIn',ap.linkedin_url?`<a class="lnk" href="${esc(ap.linkedin_url)}" target="_blank">profile ↗</a>`:null]]
     .filter(r=>r[1]!=null&&r[1]!=='');
-  const aHtml=aRows.length?`<div class="kv">${aRows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`
-    :'<div class="muted small">No Apollo company data fetched for this domain yet (free org-enrich).</div>';
+  // Did Apollo actually return a company (independent of the master-revenue comparison row)?
+  const hasApolloCo=apRaw!=null&&ap.found!==false&&!!(ap.name||ap.industry||rev||ap.employees!=null||ap.founded_year||loc||ap.phone||ap.linkedin_url);
+  // When Apollo has no company, say WHY explicitly (not a blank/misleading state).
+  const noCoReason=apRaw==null?'No Apollo lookup has been run for this domain yet (free company enrich).'
+    :ap.found===false?'Apollo has no company record for this domain (looked up, not found).'
+    :(!hasApolloCo?'Apollo returned no company firmographics for this domain.':null);
+  const aHtml=(aRows.length?`<div class="kv">${aRows.map(r=>`<div>${r[0]}</div><div>${r[1]}</div>`).join('')}</div>`:'')
+    +(noCoReason?`<div class="muted small${aRows.length?' mt6':''}">${noCoReason}</div>`:'');
   const tech=(ap.technologies||[]).slice(0,18);
   const techHtml=tech.length?`<div class="subh">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
   const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
@@ -242,10 +253,14 @@ function apolloCard(d){
     const u=`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(kw)}`;
     return `<a class="lnk" href="${u}" target="_blank" title="Search LinkedIn (Apollo's exact profile URL needs a credit)">find on LinkedIn ↗</a>`;
   };
+  // No decision-makers → say WHY (never looked up / no company / none listed) instead of a bare line.
+  const noDmReason=apRaw==null?'No Apollo lookup run yet — decision-makers appear after enrichment.'
+    :ap.found===false?'No decision-makers — Apollo has no record for this domain.'
+    :'No decision-makers listed by Apollo for this company.';
   const peopleHtml=people.length?`<div class="subh">Decision-makers (${people.length})</div>${reachedNote}
     <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'}${inRecords(p)?' <span class="pill yes" style="font-size:10px">✓ already contacted</span>':''} <span class="muted" style="font-size:11px">${liLink(p)}</span></div>
       <div>${esc(p.title)||'—'}${(p.has_email||p.has_phone)?` <span class="muted" style="font-size:11px">(${[p.has_email?'email':null,p.has_phone?'phone':null].filter(Boolean).join('/')} on file — credits to reveal)</span>`:''}</div>`).join('')}</div>`
-    :'<div class="muted small mt6">No decision-makers found (only for paid-ads prospects).</div>';
+    :`<div class="subh">Decision-makers</div><div class="muted small mt6">${noDmReason}</div>`;
   return `<div class="card full"><h2>🏢 Apollo data</h2>${aHtml}${descr}${techHtml}${peopleHtml}</div>`;
 }
 
@@ -255,7 +270,12 @@ function businessIntelCard(d){
   if(!b.found) return `<div class="card full"><h2>🧩 Website business intel</h2>
     <div class="muted small">Not extracted yet (runs for paid-ads prospects).</div></div>`;
   const list=(arr)=>(arr&&arr.length)?`<div class="chips">${arr.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'<span class="muted small">—</span>';
-  const rows=[['Industry',esc(b.industry)],['Target audience',esc(b.target_audience)],['Ideal customer (ICP)',esc(b.icp)]].filter(r=>r[1]);
+  // Business location / service-area, if website intel (or the free website scan) extracted one.
+  let loc=b.service_area||b.location||b.target_location||b.locations
+    ||(((d.enrichment||{}).website||{}).location)||(((d.enrichment||{}).website||{}).address);
+  if(Array.isArray(loc)) loc=loc.filter(Boolean).join(', ');
+  const rows=[['Industry',esc(b.industry)],['Target audience',esc(b.target_audience)],
+    ['Ideal customer (ICP)',esc(b.icp)],['Service area / location',loc?esc(loc):null]].filter(r=>r[1]);
   return `<div class="card full"><h2>🧩 Website business intel</h2>
     ${b.business_summary?`<div class="small" style="margin-bottom:10px">${esc(b.business_summary)}</div>`:''}
     <div class="subh">Products</div>${list(b.products)}
@@ -421,6 +441,7 @@ function whoisCard(d){
   const abuse=[w.registrar_abuse_email,w.registrar_abuse_phone].filter(Boolean).map(esc).join(' · ')||null;
   const rows=[
     ['Registrar',reg],
+    ['Registrar IANA ID',esc(w.registrar_iana_id)],
     ['Registrar abuse',abuse],
     ['Owner / registrant',w.registrant?esc(w.registrant):'<span class="muted">redacted (privacy/GDPR)</span>'],
     ['Registrant name',esc(w.registrant_name||w.owner_name)],
@@ -487,9 +508,13 @@ function businessDataCard(d){
   const cos=d.companies||[], sum=d.company_summary;
   if(!cos.length) return `<div class="card full"><h2>Business data (given)</h2>
     <div class="muted small">No record for this prospect in the uploaded business data${d.domain?' ('+esc(d.domain)+')':''}.</div></div>`;
+  // Apollo revenue shown alongside the master-DB revenue for a like-for-like comparison.
+  const ap=((d.enrichment||{}).apollo)||{};
+  const apRev=ap.annual_revenue_printed||(ap.annual_revenue?'$'+fmtN(ap.annual_revenue):null);
   const sm = sum?`<div class="metrics" style="margin-bottom:14px">
     ${metric(fmtN(sum.businesses),'Businesses')}
-    ${sum.total_revenue_musd!=null?metric(fmtRevM(sum.total_revenue_musd)||'—','Total revenue'):''}
+    ${sum.total_revenue_musd!=null?metric(fmtRevM(sum.total_revenue_musd)||'—','Revenue (Master DB)'):''}
+    ${apRev?metric(esc(apRev),'Revenue (Apollo)'):''}
     ${sum.employees?metric(fmtN(sum.employees),'Employees (max)'):''}
     ${sum.industry?metric(esc(sum.industry),'Industry'):''}
   </div>`:'';
