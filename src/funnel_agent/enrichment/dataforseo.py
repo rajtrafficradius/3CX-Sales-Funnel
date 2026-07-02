@@ -146,13 +146,22 @@ class DataForSEOClient:
             "filters": [["ranked_serp_element.serp_item.type", "=", "organic"]],
         }]
         d = self._post("/v3/dataforseo_labs/google/ranked_keywords/live", body)
+        # Surface a task-level error (HTTP 200 + status_code>=40000, e.g. bad target / no funds)
+        # instead of silently returning an empty (but paid-looking) audit.
+        task = (d.get("tasks") or [{}])[0]
+        sc = task.get("status_code")
+        if sc is not None and int(sc) >= 40000:
+            raise RuntimeError(f"DataForSEO task error {sc}: {task.get('status_message')}")
         res = self._first_result(d)
         out = []
         for it in (res.get("items") or []):
             kd = it.get("keyword_data") or {}
             ki = kd.get("keyword_info") or {}
             se = (it.get("ranked_serp_element") or {}).get("serp_item") or {}
-            pos = se.get("rank_absolute") or se.get("rank_group")
+            # CTR curve + audit buckets are keyed on ORGANIC position, so use rank_group
+            # (ordinal among organic results); rank_absolute counts non-organic SERP
+            # elements above (ads, featured snippet, PAA, local pack) and would inflate pos.
+            pos = se.get("rank_group") or se.get("rank_absolute")
             if pos is None:
                 continue
             out.append({

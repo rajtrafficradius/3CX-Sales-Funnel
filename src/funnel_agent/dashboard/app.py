@@ -1767,10 +1767,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def prospect_seo_audit(request: Request, key: str) -> JSONResponse:
         """PAID on-demand: fetch the domain's ranked KEYWORDS (DataForSEO) and build a
         quick-wins -> growth SEO audit. Traffic is ESTIMATED from position x search volume (a
-        labelled assumption), not bought. BDM/admin only (each run costs a few cents)."""
+        labelled assumption), not bought. BDM / admin / manager only (each run costs a few cents)."""
         u = getattr(request.state, "user", None) or {}
         if not can_manage_pipeline(u):
-            raise HTTPException(403, "SEO audit is paid — restricted to BDM / admin")
+            raise HTTPException(403, "SEO audit is paid — restricted to BDM / admin / manager")
         if not settings.dataforseo_enabled:
             raise HTTPException(503, "DataForSEO not configured")
         _master, domain, _norm = _resolve_prospect(key)
@@ -1787,8 +1787,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             kws = (rk.get("keywords") or [])[:200]
             audit = build_seo_audit(kws)
             audit["keyword_count_total"] = rk.get("count")
-            # Merge into enrichment.dataforseo (jsonb ||) so ads/rank/running_google_ads are kept.
-            patch = {"keywords": kws, "audit": audit}
+            audit["fetched_at"] = _dt.now().isoformat()  # audit's own run time
+            # Store ONLY the audit (it already carries the surfaced keyword subset); merge via
+            # jsonb || so ads/rank/running_google_ads are kept. Don't persist the raw 200-kw array.
+            patch = {"audit": audit}
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
@@ -1797,7 +1799,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (domain, Json(patch), Json(patch)))
                 conn.commit()
             return audit
-        audit = await run_in_threadpool(_do)
+        try:
+            audit = await run_in_threadpool(_do)
+        except Exception as exc:
+            raise HTTPException(502, f"SEO audit unavailable — DataForSEO error: {str(exc)[:120]}")
         return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "audit": audit}))
 
     @app.post("/api/prospect/{key}/set-website")

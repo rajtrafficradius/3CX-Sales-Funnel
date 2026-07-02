@@ -362,22 +362,23 @@ function seoAuditCard(d){
   const winning=tbl(a.winning,'est traffic /mo',k=>kwrow(k,`<td style="text-align:right">${fmtN(k.est_traffic)}</td>`));
   return `<div class="card full"><h2>🔍 SEO keyword audit — quick wins → growth</h2>
     <div class="metrics">
-      ${metric(fmtN(t.est_organic_traffic),'Est. organic traffic /mo','ASSUMPTION')}
-      ${metric('$'+fmtN(t.est_traffic_value),'Est. traffic value /mo','ASSUMPTION')}
-      ${metric(fmtN(t.keywords),'Ranked keywords','DataForSEO')}
+      ${metric(fmtN(t.est_organic_traffic),'Est. organic traffic /mo','ASSUMPTION · top 200 kw')}
+      ${metric('$'+fmtN(t.est_traffic_value),'Est. traffic value /mo','ASSUMPTION · top 200 kw')}
+      ${metric(fmtN(a.keyword_count_total!=null?a.keyword_count_total:t.keywords),'Ranked keywords','DataForSEO')}
       ${metric('+'+fmtN(t.quickwin_upside_traffic),'Quick-win upside /mo','ASSUMPTION')}
     </div>
-    <div class="muted small mt6">⚠ ${esc(a.assumption)}</div>
+    <div class="muted small mt6">⚠ ${esc(a.assumption)} Estimates cover the top ${fmtN(t.keywords)} keywords by search volume.</div>
     <div class="subh" style="margin-top:14px">⚡ Quick wins (${t.quick_wins}) — a page-1 push (currently position 4–15)</div>${quick}
     <div class="subh" style="margin-top:14px">📈 Growth opportunities (${t.growth}) — position 16–50</div>${growth}
     <div class="subh" style="margin-top:14px">🏆 Already winning (${t.winning}) — position 1–3</div>${winning}
-    <div class="muted small" style="margin-top:8px">Fetched ${fmtDate(df.fetched_at)}.${btn}</div>
+    <div class="muted small" style="margin-top:8px">Audited ${fmtDate(a.fetched_at||df.fetched_at)}.${btn}</div>
   </div>`;
 }
 async function runSeoAudit(){
+  if(!confirm('Run SEO keyword audit for this prospect? Paid DataForSEO lookup (a few cents).')) return;
   const b=document.getElementById('seoAuditBtn'); if(b){b.disabled=true;b.textContent='Running…';}
   try{ const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)+'/seo-audit',{method:'POST'});
-    if(r.ok){ load(); } else { const j=await r.json().catch(()=>({})); alert(j.error||('Error '+r.status)); if(b){b.disabled=false;b.textContent='Run SEO keyword audit (paid)';} }
+    if(r.ok){ load(); } else { const j=await r.json().catch(()=>({})); alert(j.detail||j.error||('Error '+r.status)); if(b){b.disabled=false;b.textContent='Run SEO keyword audit (paid)';} }
   }catch(e){ alert('Error: '+e.message); if(b){b.disabled=false;b.textContent='Run SEO keyword audit (paid)';} }
 }
 
