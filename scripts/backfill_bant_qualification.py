@@ -18,12 +18,15 @@ s = get_settings()
 CLOUD = os.environ["DATABASE_PUBLIC_URL"]
 LOCAL = "postgresql://vysakhvijayan@localhost:5432/funnel"
 
-# CLASSIC BANT: authority + >=2 of {budget, problem(need), urgency(timeline)}.
-N_SQL = ("(COALESCE(budget,false)::int + COALESCE(problem,false)::int + COALESCE(urgency,false)::int)")
-Q_SQL = f"(COALESCE(authority,false) AND {N_SQL} >= 2)"
+# Qualification: authority AND problem(need) AND >=1 more of {budget, urgency(timeline),
+# aspiration, open_to_listening}.  n = count of those "extra" supporting signals.
+N_SQL = ("(COALESCE(budget,false)::int + COALESCE(urgency,false)::int "
+         "+ COALESCE(aspiration,false)::int + COALESCE(open_to_listening,false)::int)")
+Q_SQL = f"(COALESCE(authority,false) AND COALESCE(problem,false) AND {N_SQL} >= 1)"
 BACKFILL = f"""
 WITH calc AS (
-  SELECT call_id, {Q_SQL} AS q, {N_SQL} AS n, COALESCE(authority,false) AS auth FROM classifications
+  SELECT call_id, {Q_SQL} AS q, {N_SQL} AS n, COALESCE(authority,false) AS auth,
+         COALESCE(problem,false) AS prob FROM classifications
 )
 UPDATE classifications c SET
   qualified = calc.q,
@@ -33,10 +36,11 @@ UPDATE classifications c SET
       '{{qualified,evidence}}',
       to_jsonb(CASE
         WHEN NOT calc.auth THEN 'Not qualified — not the decision-maker (no buying authority).'
-        WHEN calc.q THEN 'Qualified — decision-maker with ' || calc.n || ' of 3 BANT signals '
-                         '(Budget/Need/Timeline): meets the bar (authority + ≥2 of Budget/Need/Timeline).'
-        ELSE 'Not qualified — decision-maker but only ' || calc.n || ' of 3 BANT signals; the bar needs '
-             'authority + ≥2 of Budget/Need/Timeline.' END))
+        WHEN NOT calc.prob THEN 'Not qualified — decision-maker but no real marketing problem/need established.'
+        WHEN calc.q THEN 'Qualified — decision-maker with a real Need (Problem) plus ' || calc.n ||
+                         ' more supporting signal(s) (Budget/Timeline/Aspiration/Open-to-listening).'
+        ELSE 'Not qualified — decision-maker with a Need but no other supporting signal '
+             '(Budget/Timeline/Aspiration/Open-to-listening).' END))
     ELSE c.evidence END
 FROM calc WHERE calc.call_id = c.call_id
   AND (c.qualified IS DISTINCT FROM calc.q OR (c.evidence ? 'qualified' AND (c.evidence->'qualified'->>'value')::bool IS DISTINCT FROM calc.q));
@@ -72,14 +76,16 @@ backfill("CLOUD", CLOUD)
 backfill("LOCAL", LOCAL)
 
 # 3) re-aggregate all days on both
-def reagg(label, dsn):
+def reagg(label, dsn, pause=0.0):
     # Resilient to the cloud proxy dropping the connection mid-run: retry each day on a fresh pool.
+    # `pause` between days keeps a shared/live DB (cloud) responsive — set 0 for isolated local.
+    import time as _t
     def newpool(): return ConnectionPool(dsn, min_size=1, max_size=2, kwargs={"row_factory": dict_row}, open=True)
     pool = newpool()
     with pool.connection() as c, c.cursor() as cur:
-        cur.execute("select distinct (started_at at time zone %s)::date d from calls where in_scope and started_at is not null order by d",(s.tz,))
+        cur.execute("select distinct (started_at at time zone %s)::date d from calls where in_scope and started_at is not null order by d desc",(s.tz,))
         ds=[r["d"] for r in cur.fetchall()]
-    print(f"[{label}] re-aggregating {len(ds)} days",flush=True)
+    print(f"[{label}] re-aggregating {len(ds)} days (pause={pause}s)",flush=True)
     for d in ds:
         for attempt in (1, 2, 3):
             try:
@@ -90,8 +96,10 @@ def reagg(label, dsn):
                 except Exception: pass
                 pool = newpool()
                 if attempt == 3: raise
+        if pause: _t.sleep(pause)
     pool.close()
-reagg("CLOUD", CLOUD); reagg("LOCAL", LOCAL)
+reagg("LOCAL", LOCAL, pause=0.0)     # isolated dev DB — fast
+reagg("CLOUD", CLOUD, pause=2.5)     # live DB — paced so the dashboard stays responsive
 
 # 4) verify
 print("\n=== LOCAL vs CLOUD (booked, qbooked) last 14d ===", flush=True)

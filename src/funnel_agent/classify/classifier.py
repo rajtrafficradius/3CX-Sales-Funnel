@@ -211,30 +211,34 @@ def enforce_booking_firmness(v: CallClassification) -> None:
 def enforce_decision_maker_gate(v: CallClassification) -> None:
     """Qualification rule (#7a) — DEFINITIVE, BANT-based. Mutates v.
 
-    A lead / booking is QUALIFIED iff BOTH hold (CLASSIC BANT):
-      (1) NECESSARY — Authority: the person has buying authority (is the decision-maker). A
-          non-decision-maker is NEVER qualified, no matter how strong the other signals.
-      (2) PLUS at least TWO of the three: Budget, Problem (Need), Urgency (Timeline).
-          i.e. all of B/N/T present, OR one missing and the other two there.
-    (Aspiration / Open-to-listening are NOT counted toward this bar — they're softer signals.)
+    A lead / booking is QUALIFIED iff ALL THREE hold:
+      (1) Authority — the person has buying authority (is the decision-maker). A non-decision-
+          maker is NEVER qualified, no matter how strong the other signals.
+      (2) Problem (Need) — a real marketing problem/need was established on the call. No need,
+          not qualified — this is what separates a genuine opportunity from a friendly chat.
+      (3) PLUS at least ONE more supporting signal: Budget, Urgency (Timeline), Aspiration, or
+          Open-to-listening.
     Applied deterministically — it OVERRIDES the model's own guess (up OR down) so Qualified /
     Qualified Booked is a transparent, auditable count. The BDM keeps overriding authority on top.
     Run AFTER apply_auto_validation so a prospect already spending on ads/agency keeps budget.
     """
-    others = [v.budget.value, v.problem.value, v.urgency.value]
-    n = sum(1 for x in others if x)
-    q = bool(v.authority.value) and n >= 2
+    extra = [v.budget.value, v.urgency.value, v.aspiration.value, v.open_to_listening.value]
+    m = sum(1 for x in extra if x)
+    q = bool(v.authority.value) and bool(v.problem.value) and m >= 1
     if q == v.qualified.value:
         return
     if q:
-        ev = (f"Qualified — decision-maker with {n} of 3 BANT signals (Budget / Need / Timeline): "
-              "meets the bar (authority + ≥2 of Budget/Need/Timeline).")
+        ev = (f"Qualified — decision-maker with a real marketing Need (Problem) plus {m} more "
+              "supporting signal(s) (Budget / Timeline / Aspiration / Open-to-listening).")
     elif not v.authority.value:
         ev = ("Not qualified — the person on the call is not the decision-maker (no buying "
               "authority); qualification cannot be established regardless of budget or need.")
+    elif not v.problem.value:
+        ev = ("Not qualified — decision-maker but no real marketing problem/need was established "
+              "on the call (a genuine opportunity needs a Need).")
     else:
-        ev = (f"Not qualified — decision-maker but only {n} of 3 BANT signals; the bar needs "
-              "authority + at least 2 of Budget / Need / Timeline.")
+        ev = ("Not qualified — decision-maker with a Need but no other supporting signal "
+              "(Budget / Timeline / Aspiration / Open-to-listening).")
     v.qualified = StageVerdict(value=q, confidence=max(v.qualified.confidence, 0.8), evidence=ev)
 
 
