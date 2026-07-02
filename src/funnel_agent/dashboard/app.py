@@ -1288,7 +1288,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600",
         })
 
-    @app.post("/api/call/{call_id}/qualify-override")
     def _reaggregate_for_call(call_id: str) -> None:
         """Re-aggregate EVERY day that has an in-scope call to the same NUMBER or COMPANY as
         `call_id`. A qualification override is a prospect/company-level fact, and the company's
@@ -1310,6 +1309,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if r.get("d"):
                 aggregate_day(pool, settings, r["d"])
 
+    @app.post("/api/call/{call_id}/qualify-override")
     async def call_qualify_override(request: Request, call_id: str) -> JSONResponse:
         """#4b — BDM/admin re-qualifies a booked meeting with a MANDATORY reason. The
         funnel's Qualified Booked count then honours this over the AI verdict."""
