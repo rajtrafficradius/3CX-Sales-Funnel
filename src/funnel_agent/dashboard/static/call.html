@@ -80,14 +80,16 @@ const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
 // again (the booking was counted the day it was first made); tentative/cancelled
 // attempts never count.
 function banner(css,txt){return `<div style="padding:10px 12px;border-radius:8px;font-weight:700;margin:0 0 12px;line-height:1.4;${css}">${txt}</div>`;}
-function bookingBanner(ev, counts){
+function bookingBanner(ev, counts, dt){
   const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
         GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
   const bs=ev.booking_status;
-  // A booking = firm OR tentative (a tentative meeting still counts as Meeting Booked).
-  const isBooking = (ev.meeting_booked && ev.meeting_booked.value) || bs==='tentative';
+  // A booking = firm OR a TENTATIVE meeting WITH a proposed date/time. A "tentative" with no
+  // date/time is just a follow-up (prospect will get back / check internally) — not a booking.
+  const isBooking = (ev.meeting_booked && ev.meeting_booked.value) || (bs==='tentative' && !!dt);
   if(!isBooking){
     if(bs==='cancelled_or_declined') return banner(AMBER,'❌ Booking attempt — the prospect cancelled / declined. NOT counted as a booking.');
+    if(bs==='tentative') return banner(GREY,'🕓 Discussed but no date/time set — NOT counted as a booking (treat as a follow-up).');
     return '';
   }
   const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
@@ -371,7 +373,7 @@ async function load(){
 
   const verdicts=`<div class="card"><h2>Funnel verdicts (AI)</h2>
     ${d.sms_confirmed?`<div style="background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.45);color:#86efac;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:700">📱 Booking confirmed by the prospect via SMS — this firmed the meeting (see the SMS / chat tab).</div>`:''}
-    ${bookingBanner(ev, d.booking_counts)}
+    ${bookingBanner(ev, d.booking_counts, cl.meeting_datetime)}
     ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
     ${stageRow('Full Pitch', ev.full_pitch)}
     ${stageRow('Lead (interest)', ev.is_lead)}

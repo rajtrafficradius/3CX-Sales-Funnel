@@ -59,7 +59,7 @@ WITH base AS (
                    -- Booked — it's a booking), honouring a BDM booking-outcome override (#4c).
                    AND (CASE WHEN qo.booking_outcome='counts' THEN true
                              WHEN qo.booking_outcome='not_booking' THEN false
-                             ELSE (cl.meeting_booked OR cl.booking_status='tentative') END)
+                             ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime IS NOT NULL)) END)
                    AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
                                  WHEN qo.booking_outcome IN ('counts','not_booking','rescheduled') THEN false
                                  ELSE COALESCE(cl.meeting_confirmation, false) END)
@@ -75,7 +75,7 @@ WITH base AS (
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime IS NOT NULL)) AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
               THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
@@ -86,7 +86,7 @@ WITH base AS (
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND (CASE WHEN qo.booking_outcome='counts' THEN true
                              WHEN qo.booking_outcome='not_booking' THEN false
-                             ELSE (cl.meeting_booked OR cl.booking_status='tentative') END)
+                             ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime IS NOT NULL)) END)
                    AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
                                  WHEN qo.booking_outcome IN ('counts','not_booking','rescheduled') THEN false
                                  ELSE COALESCE(cl.meeting_confirmation, false) END)
@@ -101,7 +101,7 @@ WITH base AS (
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime IS NOT NULL)) AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
                    -- Effective qualification: a BDM/admin OVERRIDE always wins; otherwise the AI
                    -- verdict counts ONLY for FIRM bookings — a TENTATIVE booking is NOT qualified-
