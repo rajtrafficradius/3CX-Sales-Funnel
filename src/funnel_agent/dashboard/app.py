@@ -1846,7 +1846,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = "",
                 tracking: str = "", transparency: str = "", industry: str = "", state: str = "",
-                website: str = ""):
+                website: str = "", multilocation: str = "", agency: str = ""):
         """Shared companies+enrichment CTE for the Database browser. Returns
         (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
         into the CTE; the rest come back as `ge` conditions. Coverage filters are added by
@@ -1911,6 +1911,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conds.append("ge.kind = 'domain'")
         elif website == "no":
             conds.append("ge.kind = 'nodomain'")
+        # Multi-location: >1 business record under the domain, or a branches count on file.
+        if multilocation == "yes":
+            conds.append("ge.multiloc")
+        elif multilocation == "no":
+            conds.append("NOT ge.multiloc")
+        # Already working with an agency (from a BDE call classified pipeline2).
+        if agency == "yes":
+            conds.append("ge.has_agency")
+        elif agency == "no":
+            conds.append("NOT ge.has_agency")
         cte = f"""
         WITH g AS (
           SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,
@@ -1921,13 +1931,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  (array_agg(NULLIF(concat_ws(', ', co.suburb, co.state), '') ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS location,
                  (array_remove(array_agg(co.phone_norm ORDER BY co.revenue_musd DESC NULLS LAST), NULL))[1] AS phone,
                  sum(jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb))) AS contacts,
-                 array_to_string(array_agg(DISTINCT co.source), ',') AS sources
+                 array_to_string(array_agg(DISTINCT co.source), ',') AS sources,
+                 (count(*) > 1 OR COALESCE(bool_or(co.branches ~ '[1-9]'), false)) AS multiloc
           FROM companies co WHERE co.domain IS NOT NULL {sd}{src}
           GROUP BY co.domain
           UNION ALL
           SELECT NULL, 'nodomain', 1, co.revenue_musd, co.employees, co.company_name, co.industry, co.sub_industry,
                  NULLIF(concat_ws(', ', co.suburb, co.state), ''), co.phone_norm,
-                 jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb)), co.source
+                 jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb)), co.source,
+                 COALESCE(co.branches ~ '[1-9]', false)
           FROM companies co WHERE co.domain IS NULL {sn}{src}
         ), ge AS (
           SELECT g.*, (e.status IS NOT NULL) AS enriched,
@@ -1949,7 +1961,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  ((e.dataforseo->>'running_google_ads')='true') AS runs_google_ads,
                  (e.apollo IS NOT NULL AND (e.apollo->>'found')='true') AS has_apollo,
                  (e.business_intel IS NOT NULL AND (e.business_intel->>'found')='true') AS has_intel,
-                 (e.whois IS NOT NULL AND (e.whois->>'found')='true') AS has_whois
+                 (e.whois IS NOT NULL AND (e.whois->>'found')='true') AS has_whois,
+                 -- "already working with an agency" — a BDE call classified this prospect as
+                 -- pipeline2 (existing agency / in-house team), matched by the domain company_key.
+                 EXISTS (SELECT 1 FROM classifications cl WHERE cl.pipeline='pipeline2_existing_agency'
+                         AND g.domain IS NOT NULL AND cl.company_key = 'dom:' || g.domain) AS has_agency
           FROM g LEFT JOIN enrichment e ON e.domain = g.domain
         )
         """
@@ -1969,7 +1985,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            enriched: str = "", pipeline: str = "", paid_ads: str = "",
                            source: str = "", coverage: str = "", revenue: str = "",
                            tracking: str = "", transparency: str = "", industry: str = "",
-                           state: str = "", website: str = "", sort: str = "revenue", dir: str = "desc") -> JSONResponse:
+                           state: str = "", website: str = "", multilocation: str = "", agency: str = "",
+                           sort: str = "revenue", dir: str = "desc") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         All filters combine with AND; `coverage`/`tracking` may carry several comma-separated
@@ -1977,7 +1994,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_db_access(request)
         limit = max(1, min(limit, 200))
         cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
-                                     tracking, transparency, industry, state, website=website)
+                                     tracking, transparency, industry, state, website=website,
+                                     multilocation=multilocation, agency=agency)
         params["lim"] = limit
         params["off"] = offset
         conds += _coverage_conds(coverage)
@@ -1999,7 +2017,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def database_stats(request: Request, search: str = "", enriched: str = "",
                        paid_ads: str = "", source: str = "", coverage: str = "",
                        revenue: str = "", tracking: str = "", transparency: str = "",
-                       industry: str = "", state: str = "", website: str = "") -> JSONResponse:
+                       industry: str = "", state: str = "", website: str = "",
+                       multilocation: str = "", agency: str = "") -> JSONResponse:
         _require_db_access(request)
         r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
               "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
@@ -2012,7 +2031,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # "Transparency checked" (all swept) stays >> "Running Google Ads" instead of
         # collapsing to the active filter. The result-bar total (/prospects.total) reflects
         # the FULL filter; these cards are reference + one-click shortcuts.
-        cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state, website=website)
+        cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state, website=website,
+                                     multilocation=multilocation, agency=agency)
         base = ("WHERE " + " AND ".join(conds)) if conds else ""
         cov = q(cte + f"""SELECT
             count(*) FILTER (WHERE ge.scanned) AS scanned,

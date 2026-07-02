@@ -55,15 +55,16 @@ WITH base AS (
         -- per PROSPECT (dest_number): if the same prospect has an earlier booked call, this
         -- later one is a duplicate/re-touch and must NOT count again — one booking per lead.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   -- Effective booking honours a BDM booking-outcome override (#4c) over the AI verdict.
+                   -- A booking = firm OR TENTATIVE (a tentative meeting still counts as Meeting
+                   -- Booked — it's a booking), honouring a BDM booking-outcome override (#4c).
                    AND (CASE WHEN qo.booking_outcome='counts' THEN true
-                             WHEN qo.booking_outcome IN ('tentative','not_booking','confirmation') THEN false
-                             ELSE cl.meeting_booked END)
+                             WHEN qo.booking_outcome='not_booking' THEN false
+                             ELSE (cl.meeting_booked OR cl.booking_status='tentative') END)
                    AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
-                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','rescheduled') THEN false
+                                 WHEN qo.booking_outcome IN ('counts','not_booking','rescheduled') THEN false
                                  ELSE COALESCE(cl.meeting_confirmation, false) END)
                    AND NOT (CASE WHEN qo.booking_outcome='rescheduled' THEN true
-                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','confirmation') THEN false
+                                 WHEN qo.booking_outcome IN ('counts','not_booking','confirmation') THEN false
                                  ELSE COALESCE(cl.meeting_rescheduled, false) END)
                    AND NOT COALESCE(cl.booking_already_exists, false)  -- referral/hand-off to a 2nd contact of an already-booked company
                    AND NOT EXISTS (
@@ -84,13 +85,13 @@ WITH base AS (
         -- Same exclusion: confirmation/reschedule of an existing booking is not re-counted.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND (CASE WHEN qo.booking_outcome='counts' THEN true
-                             WHEN qo.booking_outcome IN ('tentative','not_booking','confirmation') THEN false
-                             ELSE cl.meeting_booked END)
+                             WHEN qo.booking_outcome='not_booking' THEN false
+                             ELSE (cl.meeting_booked OR cl.booking_status='tentative') END)
                    AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
-                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','rescheduled') THEN false
+                                 WHEN qo.booking_outcome IN ('counts','not_booking','rescheduled') THEN false
                                  ELSE COALESCE(cl.meeting_confirmation, false) END)
                    AND NOT (CASE WHEN qo.booking_outcome='rescheduled' THEN true
-                                 WHEN qo.booking_outcome IN ('counts','tentative','not_booking','confirmation') THEN false
+                                 WHEN qo.booking_outcome IN ('counts','not_booking','confirmation') THEN false
                                  ELSE COALESCE(cl.meeting_rescheduled, false) END)
                    AND NOT COALESCE(cl.booking_already_exists, false)
                    AND NOT EXISTS (
@@ -102,17 +103,18 @@ WITH base AS (
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
                            AND pcl.meeting_booked AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
-                   -- Effective qualification is a PROSPECT/COMPANY-level fact: this booking counts
-                   -- as qualified if THIS call is (effectively) qualified, OR ANY in-scope call to
-                   -- the same NUMBER **or the same COMPANY** is (so a BDM override on a referral /
-                   -- reschedule / different contact of the same company still qualifies the booking).
-                   AND (COALESCE(qo.qualified, cl.qualified) OR EXISTS (
+                   -- Effective qualification: a BDM/admin OVERRIDE always wins; otherwise the AI
+                   -- verdict counts ONLY for FIRM bookings — a TENTATIVE booking is NOT qualified-
+                   -- booked until a BDM confirms it (keeps tentative as Meeting Booked, out of
+                   -- Qualified Booked until override). Prospect/company-level: counts if THIS call or
+                   -- ANY in-scope call to the same NUMBER/COMPANY is (effectively) qualified.
+                   AND (COALESCE(qo.qualified, (cl.qualified AND cl.booking_status='firm')) OR EXISTS (
                          SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
                          LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id
                          WHERE c2.in_scope
                            AND (right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
                                 OR (cl.company_key IS NOT NULL AND cl2.company_key IS NOT NULL AND cl2.company_key = cl.company_key))
-                           AND COALESCE(qo2.qualified, cl2.qualified)))
+                           AND COALESCE(qo2.qualified, (cl2.qualified AND cl2.booking_status='firm'))))
               THEN 1 ELSE 0 END) AS qualified_booked,
         -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.
         (CASE WHEN EXISTS (SELECT 1 FROM meetings m

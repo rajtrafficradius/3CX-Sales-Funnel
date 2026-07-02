@@ -83,10 +83,11 @@ function banner(css,txt){return `<div style="padding:10px 12px;border-radius:8px
 function bookingBanner(ev, counts){
   const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
         GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
-  if(!(ev.meeting_booked && ev.meeting_booked.value)){
-    const bs=ev.booking_status;
+  const bs=ev.booking_status;
+  // A booking = firm OR tentative (a tentative meeting still counts as Meeting Booked).
+  const isBooking = (ev.meeting_booked && ev.meeting_booked.value) || bs==='tentative';
+  if(!isBooking){
     if(bs==='cancelled_or_declined') return banner(AMBER,'❌ Booking attempt — the prospect cancelled / declined. NOT counted as a booking.');
-    if(bs==='tentative') return banner(GREY,'🕓 Tentative only — no firm date/time was agreed. NOT counted as a booking.');
     return '';
   }
   const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
@@ -98,6 +99,7 @@ function bookingBanner(ev, counts){
   if(conf) return banner(AMBER,'📞 Meeting Confirmation Call — re-confirms a meeting booked on an earlier call. NOT counted again.');
   if(resched) return banner(AMBER,'🔁 Rescheduled booking — re-books an earlier meeting to a new date. NOT counted again (the original was already counted).');
   if(counts===false) return banner(AMBER,'🏢 Company already booked on an earlier call — NOT counted again (one booking per company).');
+  if(bs==='tentative') return banner(BLUE,'🕓 Tentative booking — counts as Meeting Booked, but NOT Qualified Booked until a BDM confirms it (use the override below).');
   if(qual) return banner(GREEN,'✅ Qualified booked meeting — counts as Meeting Booked AND Qualified Booked.');
   return banner(BLUE,'📅 Meeting Booked (counted) — booked by the BDE but not yet qualified (BANT), so excluded from Qualified Booked Meetings.');
 }

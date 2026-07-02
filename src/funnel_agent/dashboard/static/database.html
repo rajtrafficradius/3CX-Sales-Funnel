@@ -108,6 +108,16 @@
       <option value="yes">🌐 Has website</option>
       <option value="no">No website</option>
     </select>
+    <select id="multiloc">
+      <option value="">Locations: any</option>
+      <option value="yes">🏢 Multi-location</option>
+      <option value="no">Single location</option>
+    </select>
+    <select id="agency">
+      <option value="">Agency: any</option>
+      <option value="yes">🤝 Has an agency</option>
+      <option value="no">No agency (yet)</option>
+    </select>
   </div>
   <!-- Row 2: paid ads (Transparency = primary) -->
   <div class="bar covbar">
@@ -182,14 +192,15 @@ function curFilters(){
           paid_ads:$('#paidAds').value, revenue:$('#revenue').value, coverage:[...cov].join(','),
           tracking:[...trk].join(','), transparency:$('#transparency').value,
           industry:$('#industry').value.trim(), state:$('#state').value.trim(),
-          website:$('#website').value};
+          website:$('#website').value, multilocation:$('#multiloc').value, agency:$('#agency').value};
 }
 function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComponent(f.source)}`
   +`&enriched=${encodeURIComponent(f.enriched)}&paid_ads=${encodeURIComponent(f.paid_ads)}`
   +`&revenue=${encodeURIComponent(f.revenue)}&coverage=${encodeURIComponent(f.coverage)}`
   +`&tracking=${encodeURIComponent(f.tracking)}&transparency=${encodeURIComponent(f.transparency)}`
   +`&industry=${encodeURIComponent(f.industry)}&state=${encodeURIComponent(f.state)}`
-  +`&website=${encodeURIComponent(f.website)}`; }
+  +`&website=${encodeURIComponent(f.website)}`
+  +`&multilocation=${encodeURIComponent(f.multilocation)}&agency=${encodeURIComponent(f.agency)}`; }
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
 function covCard(key,l,n){
@@ -228,6 +239,8 @@ function renderResult(){
   if(f.source) _pills.push([(SRC_LABEL[f.source]||f.source), ()=>{$('#source').value='';}]);
   if(f.enriched) _pills.push([(f.enriched==='yes'?'Enriched':'Not enriched'), ()=>{$('#enriched').value='';}]);
   if(f.website) _pills.push([(f.website==='yes'?'Has website':'No website'), ()=>{$('#website').value='';}]);
+  if(f.multilocation) _pills.push([(f.multilocation==='yes'?'Multi-location':'Single location'), ()=>{$('#multiloc').value='';}]);
+  if(f.agency) _pills.push([(f.agency==='yes'?'Has an agency':'No agency'), ()=>{$('#agency').value='';}]);
   if(f.paid_ads) _pills.push([(PA_LBL[f.paid_ads]||f.paid_ads), ()=>{$('#paidAds').value='';}]);
   if(f.transparency) _pills.push([(TRANSP_LBL[f.transparency]||f.transparency), ()=>{$('#transparency').value='';}]);
   if(f.revenue) _pills.push([(REV_LBL[f.revenue]||f.revenue), ()=>{$('#revenue').value='';}]);
@@ -244,7 +257,7 @@ function renderResult(){
 }
 function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; syncTrkChips(); loadRows(); loadStats(); } }
 function clearAll(){ clearTimeout(searchTimer);
-  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website'].forEach(s=>$(s).value='');
+  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency'].forEach(s=>$(s).value='');
   cov.clear(); trk.clear(); syncTrkChips(); offset=0; loadRows(); loadStats(); }
 
 // Revenue stored in millions USD; show as $X.XM / $X.XB.
