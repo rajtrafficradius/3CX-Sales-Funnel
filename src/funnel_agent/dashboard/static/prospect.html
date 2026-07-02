@@ -216,8 +216,22 @@ function apolloCard(d){
   const tech=(ap.technologies||[]).slice(0,18);
   const techHtml=tech.length?`<div class="subh">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
   const descr=ap.description?`<div class="muted small mt6">${esc(ap.description)}</div>`:'';
-  // Decision-makers (FREE: name + title; email/phone require Apollo credits, shown as a flag)
-  const people=(ap.people||[]);
+  // Decision-makers (FREE: name + title; email/phone require Apollo credits, shown as a flag).
+  // Founder/Owner first (rank 0) → Director → CEO/CFO → Sales/Marketing heads → others.
+  const people=(ap.people||[]).slice().sort((a,b)=>((a.rank==null?4:a.rank)-(b.rank==null?4:b.rank)));
+  // Contacts WE'VE already spoken to (dedup vs Apollo): first names from our calls + master.
+  const _calls=d.calls||[], _m=d.master||{}, _ro=d.rollup||{};
+  const firstName=s=>String(s||'').trim().toLowerCase().split(/\s+/)[0];
+  const known=new Set(), knownFull=[];
+  _calls.forEach(c=>{ if(c.prospect_contact_name){ known.add(firstName(c.prospect_contact_name)); knownFull.push(c.prospect_contact_name); } });
+  if(_m.contact_name){ known.add(firstName(_m.contact_name)); knownFull.push(_m.contact_name); }
+  known.delete('');
+  const inRecords=p=>{ const fn=firstName(p.name); return fn && known.has(fn); };
+  const contactName=knownFull.length?knownFull[knownFull.length-1]:null;
+  // skip-if-DM-already-reached: if we've reached the decision-maker, the Apollo list is supplementary.
+  const reachedNote=(_ro.ever_rpc||known.size>0)
+    ? `<div class="muted small mt6" style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#93c5fd;padding:6px 10px;border-radius:8px">✓ Decision-maker already reached on a call${contactName?' — <b>'+esc(contactName)+'</b>':''}. The Apollo list below is supplementary (other contacts at the company).</div>`
+    : '';
   // LinkedIn per decision-maker: use Apollo's real profile URL if present (rare — it's
   // credit-gated like email/phone), else a FREE LinkedIn people-search deep-link built from
   // the free fields (first name + company) so the team can one-click find them.
@@ -228,8 +242,8 @@ function apolloCard(d){
     const u=`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(kw)}`;
     return `<a class="lnk" href="${u}" target="_blank" title="Search LinkedIn (Apollo's exact profile URL needs a credit)">find on LinkedIn ↗</a>`;
   };
-  const peopleHtml=people.length?`<div class="subh">Decision-makers (${people.length})</div>
-    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'} <span class="muted" style="font-size:11px">${liLink(p)}</span></div>
+  const peopleHtml=people.length?`<div class="subh">Decision-makers (${people.length})</div>${reachedNote}
+    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'}${inRecords(p)?' <span class="pill yes" style="font-size:10px">✓ already contacted</span>':''} <span class="muted" style="font-size:11px">${liLink(p)}</span></div>
       <div>${esc(p.title)||'—'}${(p.has_email||p.has_phone)?` <span class="muted" style="font-size:11px">(${[p.has_email?'email':null,p.has_phone?'phone':null].filter(Boolean).join('/')} on file — credits to reveal)</span>`:''}</div>`).join('')}</div>`
     :'<div class="muted small mt6">No decision-makers found (only for paid-ads prospects).</div>';
   return `<div class="card full"><h2>🏢 Apollo data</h2>${aHtml}${descr}${techHtml}${peopleHtml}</div>`;

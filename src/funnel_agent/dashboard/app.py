@@ -1393,6 +1393,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "cl.budget, cl.authority, cl.problem, cl.urgency, "
         "cl.lead_temperature, cl.pipeline, cl.callback_requested, cl.callback_when, "
         "cl.prospect_company, cl.prospect_website, cl.prospect_industry, "
+        "cl.prospect_contact_name, cl.prospect_mobile, cl.prospect_email, "
         "cl.runs_paid_ads, cl.has_marketing_agency, cl.problem_summary, "
         "cl.evidence, cl.model, "
         "tr.summary AS transcript_summary, tr.sentiment AS transcript_sentiment"
