@@ -33,6 +33,23 @@ _PEOPLE_PATH = "/api/v1/mixed_people/api_search"  # decision-maker names/titles 
 _SENIORITIES = ["owner", "founder", "c_suite", "partner", "vp", "head", "director", "manager"]
 
 
+def _dm_rank(title: str | None, seniority: str | None) -> int:
+    """Decision-maker priority (lower = higher): Founder/Owner → Directors → CEO/CFO/C-suite
+    → Marketing & Sales heads → everyone else. Used to surface the REAL decision-makers first
+    (not every Apollo contact is one)."""
+    t = (title or "").lower(); s = (seniority or "").lower()
+    if s in ("owner", "founder") or any(k in t for k in ("founder", "owner", "proprietor", "principal")):
+        return 0
+    if "director" in t:                       # incl. managing director — in AU SMBs usually the boss
+        return 1
+    if s == "c_suite" or any(k in t for k in ("chief", "ceo", "cfo", "coo", "cmo", "managing partner")):
+        return 2
+    if any(d in t for d in ("marketing", "sales", "growth", "commercial", "revenue", "business development")) \
+       and any(h in t for h in ("head", "director", "manager", "lead", "vp", "chief", "gm", "general manager")):
+        return 3
+    return 4
+
+
 class ApolloClient:
     def __init__(self, settings: Settings):
         self._key = settings.apollo_api_key
@@ -82,7 +99,9 @@ class ApolloClient:
 
         Returns name/title/seniority/department/linkedin only. Email & phone are
         intentionally NOT requested or read, so no Apollo credits are consumed."""
-        body = {"page": 1, "per_page": max(1, min(limit, 25)), "person_seniorities": _SENIORITIES}
+        # Fetch a WIDER candidate set (25) so the founder/director isn't missed when a company
+        # has many managers, then rank by decision-maker priority and return the top `limit`.
+        body = {"page": 1, "per_page": 25, "person_seniorities": _SENIORITIES}
         if org_id:
             body["organization_ids"] = [org_id]
         else:
@@ -93,16 +112,18 @@ class ApolloClient:
             log.warning("apollo_people_failed", domain=domain, error=str(exc)[:160])
             return []
         out = []
-        for p in (data.get("people") or [])[:limit]:
+        for p in (data.get("people") or []):
             org = p.get("organization") or {}
             first = p.get("first_name") or ""
             # api_search returns the last name OBFUSCATED for free (full name needs credits)
             last = p.get("last_name") or p.get("last_name_obfuscated") or ""
             name = (first + " " + last).strip()
+            title = p.get("title")
             out.append({
                 "name": name or None,
-                "title": p.get("title"),                       # the designation (free)
+                "title": title,                                # the designation (free)
                 "seniority": p.get("seniority"),
+                "rank": _dm_rank(title, p.get("seniority")),   # 0=Founder/Owner … 4=other
                 "departments": p.get("departments") or [],
                 "linkedin_url": p.get("linkedin_url"),
                 "company": org.get("name"),
@@ -111,7 +132,10 @@ class ApolloClient:
                 "has_phone": str(p.get("has_direct_phone", "")).lower() in ("yes", "true"),
                 # email/phone VALUES deliberately omitted — no reveal_* = no credits.
             })
-        return [p for p in out if p.get("name") or p.get("title")]
+        out = [p for p in out if p.get("name") or p.get("title")]
+        # Founder/Owner → Directors → CEO/CFO → Marketing & Sales heads → others.
+        out.sort(key=lambda p: p.get("rank", 4))
+        return out[:limit]
 
     def enrich_organization(self, domain: str) -> dict:
         """Free company firmographics for a domain. No credits consumed."""
