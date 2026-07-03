@@ -1164,17 +1164,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # pending) means the scheduled retry is overdue.
         overdue_expr = ("ce.id IS NOT NULL AND ce.start_at < now() "
                         "AND COALESCE(ce.status,'pending') = 'pending'")
-        # An action bucket is "verifiable" unless it's an SMS/VM whose sms_sent is NULL
-        # (we genuinely can't tell) — those are shown as n/v, never a compliance breach.
-        req = ("ra.action_code IN ('double_tap','sms_vm','gatekeeper_getdm','retry_vary_time') "
-               "AND NOT (ra.action_code='sms_vm' AND ra.sms_sent IS NULL)")
+        # did_required_action already reflects only VERIFIABLE signals (for sms_vm it is the
+        # voicemail-left check; SMS itself is never counted as a breach). So all action codes
+        # count toward compliance; sms_nv is an informational "SMS unverifiable" tally only.
+        req = "ra.action_code IN ('double_tap','sms_vm','gatekeeper_getdm','retry_vary_time')"
         undone = "COALESCE(ra.did_required_action,false)=false"
         try:
             rows = q(
                 f"SELECT COALESCE(ra.last_bde,'—') AS bde, "
                 f"count(*) AS unconnected, "
                 f"count(*) FILTER (WHERE ra.action_code='double_tap' AND {undone}) AS missed_double_tap, "
-                f"count(*) FILTER (WHERE ra.action_code='sms_vm' AND {undone} AND ra.sms_sent IS NOT NULL) AS missed_sms_vm, "
+                f"count(*) FILTER (WHERE ra.action_code='sms_vm' AND {undone}) AS missed_sms_vm, "
                 f"count(*) FILTER (WHERE ra.action_code='sms_vm' AND ra.sms_sent IS NULL) AS sms_nv, "
                 f"count(*) FILTER (WHERE ra.action_code='gatekeeper_getdm' AND {undone}) AS gatekeeper_unhandled, "
                 f"count(*) FILTER (WHERE {undone} AND ra.action_code IS NOT NULL AND ra.action_code <> 'none') AS open_actions, "
@@ -1458,7 +1458,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rpc_action = None
         if _d9:
             try:
-                _ra = q("SELECT * FROM rpc_actions WHERE dest9=%s", (_d9,))
+                _ra = q("SELECT ra.*, (ce.id IS NOT NULL AND ce.start_at < now() "
+                        "AND COALESCE(ce.status,'pending')='pending') AS overdue "
+                        "FROM rpc_actions ra LEFT JOIN calendar_events ce ON ce.id = ra.event_id "
+                        "WHERE ra.dest9=%s", (_d9,))
                 rpc_action = _ra[0] if _ra else None
             except Exception:
                 rpc_action = None

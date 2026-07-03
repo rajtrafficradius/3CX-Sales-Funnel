@@ -103,9 +103,9 @@ def classify_window(
             sync_callbacks_for_day(analytics_pool, day)
         except Exception as exc:
             log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
-        try:  # RPC "Next Move": action + schedule retries for un-connected dials
+        try:  # RPC "Next Move": per-day upsert only; global resolve+schedule runs once after loop
             from .rpc import analyze_rpc_actions
-            analyze_rpc_actions(analytics_pool, settings, day)
+            analyze_rpc_actions(analytics_pool, settings, day, run_global=False)
         except Exception as exc:
             log.warning("rpc_actions_failed", error=str(exc)[:160])
         aggregate_day(analytics_pool, settings, day)
@@ -121,6 +121,12 @@ def classify_window(
         log.info("window_day_done", day=str(day), calls=ing["calls"],
                  transcribed=ing["transcribed"], stt=stt["transcribed"],
                  classified=cls["classified"], needs_review=cls["needs_review"])
+
+    try:  # RPC global passes ONCE for the whole window (resolve connected/DND + schedule retries)
+        from .rpc import finalize_rpc_actions
+        finalize_rpc_actions(analytics_pool, settings)
+    except Exception as exc:
+        log.warning("rpc_finalize_failed", error=str(exc)[:160])
 
     log.info("window_done", **totals)
     return totals

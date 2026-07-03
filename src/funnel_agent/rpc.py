@@ -105,7 +105,7 @@ def _derive_scenario(channel: str, reason: str, ev: dict, comp: dict) -> dict:
             "scenario": "Voicemail",
             "action_code": "retry_vary_time",
             "required_action": "Retry at a different time of day.",
-            "did": attempts >= 2,
+            "did": comp["bde_attempts"] >= 2,
         }
     if reason == "no_answer":
         if channel == "mobile":
@@ -119,7 +119,7 @@ def _derive_scenario(channel: str, reason: str, ev: dict, comp: dict) -> dict:
             "scenario": "No answer",
             "action_code": "retry_vary_time",
             "required_action": "Retry at a different time of day.",
-            "did": attempts >= 2,
+            "did": comp["bde_attempts"] >= 2,
         }
     # "other" / unknown fallback — treat like an un-reached DM by the number's channel.
     if channel == "mobile":
@@ -133,16 +133,19 @@ def _derive_scenario(channel: str, reason: str, ev: dict, comp: dict) -> dict:
         "scenario": "Decision-maker not reached",
         "action_code": "retry_vary_time",
         "required_action": "Retry at a different time of day.",
-        "did": attempts >= 2,
+        "did": comp["bde_attempts"] >= 2,
     }
 
 
 # --------------------------------------------------------------------------- #
 # Main entry point
 # --------------------------------------------------------------------------- #
-def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> dict:
+def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date,
+                        run_global: bool = True) -> dict:
     """Analyse `day`'s un-connected outbound dials, upsert `rpc_actions`, resolve
-    already-connected ones, and schedule retries. Idempotent (safe to re-run)."""
+    already-connected ones, and schedule retries. Idempotent (safe to re-run).
+    run_global=False skips the day-independent resolve+schedule passes (call
+    finalize_rpc_actions() once after a multi-day loop instead of per day)."""
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
     window_min = settings.rpc_double_tap_window_min
@@ -160,7 +163,7 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
             SELECT c.call_id, c.dest_number, c.bde_name, c.started_at,
                    c.answered, c.is_voicemail, c.talk_seconds,
                    right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9) AS dest9,
-                   (c.dest_number ~ '1(3|8)00') AS is_tollfree,
+                   (regexp_replace(c.dest_number, '[^0-9]', '', 'g') ~ '^(61)?(1300|1800)') AS is_tollfree,
                    COALESCE(cl.rpc_connect, false) AS rpc_connect,
                    COALESCE(cl.do_not_contact, false) AS do_not_contact,
                    COALESCE(cl.gatekeeper_handled_well, false) AS gatekeeper_handled_well,
@@ -229,6 +232,9 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
 
         comp = {
             "attempts": len(grp),
+            # attributed-BDE dials only — so a landline "retry done?" check reflects last_bde's
+            # own effort, not another BDE's dials to the same number that day.
+            "bde_attempts": sum(1 for g in grp if g["bde_name"] == anchor["bde_name"]),
             "double_tap_done": double_tap_done,
             "voicemail_left": voicemail_left,
             "gatekeeper_handled": anchor["gatekeeper_handled_well"],
@@ -318,6 +324,12 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
                     gatekeeper_handled = EXCLUDED.gatekeeper_handled,
                     did_required_action = EXCLUDED.did_required_action,
                     status = 'open', resolved_at = NULL, resolved_call_id = NULL,
+                    -- Only when RE-OPENING a previously-resolved row: clear the old (cancelled)
+                    -- retry event + BDM flag so a fresh retry is scheduled. For rows already open,
+                    -- KEEP event_id (else every cycle would re-trigger 554 create attempts).
+                    event_id = CASE WHEN rpc_actions.status='resolved' THEN NULL ELSE rpc_actions.event_id END,
+                    notified_bdm = CASE WHEN rpc_actions.status='resolved' THEN false ELSE rpc_actions.notified_bdm END,
+                    notified_bdm_at = CASE WHEN rpc_actions.status='resolved' THEN NULL ELSE rpc_actions.notified_bdm_at END,
                     updated_at = now()
                 """,
                 c,
@@ -325,8 +337,10 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
             analyzed += 1
         conn.commit()
 
-    resolved = _resolve_open(pool, settings)
-    scheduled = _schedule_retries(pool, settings)
+    # The resolve + schedule passes are day-INDEPENDENT (they scan all open rows), so in a
+    # multi-day loop run them ONCE via finalize_rpc_actions() rather than per day.
+    resolved = _resolve_open(pool, settings) if run_global else 0
+    scheduled = _schedule_retries(pool, settings) if run_global else 0
 
     # Count what remains open right now.
     with pool.connection() as conn, conn.cursor() as cur:
@@ -337,6 +351,14 @@ def analyze_rpc_actions(pool: ConnectionPool, settings: Settings, day: date) -> 
     if analyzed or resolved or scheduled:
         log.info("rpc_actions_done", day=str(day), **result)
     return result
+
+
+def finalize_rpc_actions(pool: ConnectionPool, settings: Settings) -> dict:
+    """Run the day-independent global passes once (resolve connected/DND + schedule retries).
+    Call after analyze_rpc_actions(..., run_global=False) over a multi-day window."""
+    resolved = _resolve_open(pool, settings)
+    scheduled = _schedule_retries(pool, settings)
+    return {"resolved": resolved, "scheduled": scheduled}
 
 
 # --------------------------------------------------------------------------- #
@@ -379,9 +401,19 @@ def _resolve_open(pool: ConnectionPool, settings: Settings) -> int:
             "RETURNING event_id"
         )
         rows2 = cur.fetchall()
+        # (3) Company-aware: dedup is company-level, so if a sibling number of the SAME company
+        # was already resolved (real company key, not the per-number 'num:' fallback), close the
+        # remaining open sibling too — otherwise its retry would nag a company already reached.
+        cur.execute(
+            "UPDATE rpc_actions SET status='resolved', resolved_at=now(), updated_at=now() "
+            "WHERE status='open' AND company_key NOT LIKE 'num:%%' AND company_key IN "
+            "(SELECT company_key FROM rpc_actions WHERE status='resolved' AND company_key NOT LIKE 'num:%%') "
+            "RETURNING event_id"
+        )
+        rows3 = cur.fetchall()
         conn.commit()
-    resolved = len(rows1) + len(rows2)
-    event_ids = [r["event_id"] for r in (rows1 + rows2) if r["event_id"]]
+    resolved = len(rows1) + len(rows2) + len(rows3)
+    event_ids = [r["event_id"] for r in (rows1 + rows2 + rows3) if r["event_id"]]
     # Cancel the linked retry events in ONE statement.
     if event_ids:
         try:

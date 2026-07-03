@@ -250,7 +250,7 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
     is_voicemail = outcome == "voicemail"
     rpc_next_move = RpcNextMove(
         rpc_unreached_reason="voicemail" if is_voicemail else "no_answer",
-        next_move=note,
+        next_move="",  # leave blank — rpc.py derives the user-facing move; don't leak the CDR note
         next_move_channel="retry_call",
     )
     return CallClassification(

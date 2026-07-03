@@ -115,6 +115,7 @@ function bookingBanner(ev, counts, dt, o){
   return banner(BLUE,'📅 Meeting Booked (counted)'+tent+' — the AI did not qualify the lead (BANT not met), so it is excluded from Qualified Booked. A BDM can override to qualify it.');
 }
 
+const RPC_REASON={reached_rpc:'Reached the decision-maker',gatekeeper_block:'Blocked by gatekeeper',dm_unavailable:'Decision-maker unavailable',voicemail:'Went to voicemail',no_answer:'No answer',wrong_number:'Wrong number',not_decision_maker:'Reached the wrong person',other:'Decision-maker not reached'};
 function rpcNextMoveCard(d){
   const c=d.call||{}, cl=d.classification||{}, ev=cl.evidence||{};
   const ra=d.rpc_action||{}, nm=ev.rpc_next_move||{};
