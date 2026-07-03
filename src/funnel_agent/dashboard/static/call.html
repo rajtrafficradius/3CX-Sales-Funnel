@@ -104,6 +104,23 @@
     margin-bottom:var(--s2);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1);padding:3px 9px;font-size:var(--t-meta);color:var(--txt-dim)}
+  /* BDM override ACTION buttons — solid, obviously clickable (not faint pills) */
+  .actbtn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:var(--t-cap);font-weight:700;
+    padding:10px 16px;border-radius:var(--r2);cursor:pointer;border:1px solid transparent;
+    transition:filter .12s,box-shadow .12s,transform .04s;box-shadow:var(--elev1)}
+  .actbtn:hover{filter:brightness(1.09)}
+  .actbtn:active{transform:translateY(1px)}
+  .actbtn:focus-visible{outline:none;box-shadow:var(--ring)}
+  .actbtn.pos{background:linear-gradient(180deg,#22c55e,#16a34a);color:#fff;border-color:#15803d}
+  .actbtn.neg{background:linear-gradient(180deg,#f05252,#dc2626);color:#fff;border-color:#b91c1c}
+  .actbtn.ghost{background:var(--panel3);color:var(--txt-dim);border-color:var(--line2);box-shadow:none}
+  .actbtn.ghost:hover{background:var(--panel2);border-color:var(--line2);color:var(--txt);filter:none}
+  /* booking-outcome choice buttons — tinted but clearly a raised, clickable control */
+  .obbtn{font:inherit;font-size:var(--t-cap);font-weight:700;padding:9px 13px;border-radius:var(--r2);
+    cursor:pointer;box-shadow:var(--elev1);transition:filter .12s,box-shadow .12s,transform .04s}
+  .obbtn:hover{filter:brightness(1.12)}
+  .obbtn:active{transform:translateY(1px)}
+  .obbtn:focus-visible{outline:none;box-shadow:var(--ring)}
   ul.ci{margin:6px 0;padding-left:18px;font-size:var(--t-body);line-height:1.55}
   ul.ci li{margin:4px 0}
   .obj{margin:8px 0}
@@ -378,17 +395,19 @@ function qualOverrideCard(d){
     const obBtns=OB.map(([v,lbl,rgb])=>{
       const qarg = v==='counts' ? 'true' : (v==='rescheduled'||v==='confirmation') ? String(!!aiQ) : 'false';
       const sel = (o&&o.booking_outcome===v) ? ';outline:2px solid rgba('+rgb+',.9);outline-offset:1px' : '';
-      return `<button onclick="setQualOverride(${qarg},'${v}')" style="background:rgba(${rgb},.14);color:rgb(${rgb});border:1px solid rgba(${rgb},.45);border-radius:8px;padding:7px 11px;cursor:pointer;font-size:12.5px${sel}">${lbl}</button>`;
+      return `<button class="obbtn" onclick="setQualOverride(${qarg},'${v}')" style="background:rgba(${rgb},.16);color:rgb(${rgb});border:1px solid rgba(${rgb},.55)${sel}">${lbl}</button>`;
     }).join('');
-    controls = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+    controls = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:14px">
       <div class="subh">Set what this call really is <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— overrides the AI &amp; updates the funnel</span></div>
-      <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${obBtns}</div>
-      <div class="subh" style="margin-top:14px">…or just flip the qualification flag <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">(leaves the booking as-is)</span></div>
-      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-        <button id="qoYes" style="background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.4);border-radius:8px;padding:8px 13px;cursor:pointer">✓ Mark Qualified</button>
-        <button id="qoNo" style="background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:8px 13px;cursor:pointer">✕ Mark Not Qualified</button>
-        ${o?`<button id="qoClear" style="background:#0b0f15;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:8px 13px;cursor:pointer">Clear override (revert to AI)</button>`:''}
+      <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${obBtns}</div>
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft)">
+        <div class="subh" style="margin-bottom:10px">…or just flip the qualification flag <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">(leaves the booking as-is)</span></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button id="qoYes" class="actbtn pos">✓ Mark Qualified</button>
+          <button id="qoNo" class="actbtn neg">✕ Mark Not Qualified</button>
+          ${o?`<button id="qoClear" class="actbtn ghost">↺ Clear override (revert to AI)</button>`:''}
+        </div>
       </div></div>`;
   }
   const OBL={counts:'✓ counts as qualified booking',rescheduled:'🔁 rescheduled',confirmation:'📞 confirmation',tentative:'🕓 tentative (not counted)',not_booking:'✕ not a booking'};
