@@ -83,7 +83,7 @@ const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
 // again (the booking was counted the day it was first made); tentative/cancelled
 // attempts never count.
 function banner(css,txt){return `<div style="padding:10px 12px;border-radius:8px;font-weight:700;margin:0 0 12px;line-height:1.4;${css}">${txt}</div>`;}
-function bookingBanner(ev, counts, dt, o){
+function bookingBanner(ev, counts, dt, o, pq, qvia){
   const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
         GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
   const bs=ev.booking_status;
@@ -106,7 +106,13 @@ function bookingBanner(ev, counts, dt, o){
   const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
   const resched = ev.meeting_rescheduled && ev.meeting_rescheduled.value;
   const already = ev.booking_already_exists && ev.booking_already_exists.value;
-  const qual = ev.qualified && ev.qualified.value;
+  // Qualified BOOKED is a PROSPECT-level fact (matches the funnel): the booking is qualified if
+  // THIS call is qualified OR any earlier call on the prospect was. Fall back to this call's
+  // verdict only when the API didn't supply the prospect-level flag.
+  const aiThisQual = ev.qualified && ev.qualified.value;
+  const qual = (pq==null) ? aiThisQual : !!pq;
+  const viaNote = (qual && !aiThisQual && qvia)
+    ? ` <span style="font-weight:400;opacity:.85">(the prospect was qualified on an earlier call${qvia.bde?' by '+esc(qvia.bde):''}${qvia.date?' on '+esc(qvia.date):''} — qualification is a prospect-level fact)</span>` : '';
   if(already){ const ev2=(ev.booking_already_exists&&ev.booking_already_exists.evidence)||'';
     return banner(AMBER,'🤝 Already booked for this company — a referral / hand-off to another contact of a company that was already booked. NOT counted as a new booking.'+(ev2?'<div style="font-weight:400;font-size:12px;margin-top:4px;opacity:.85">'+ev2+'</div>':'')); }
   if(conf) return banner(AMBER,'📞 Meeting Confirmation Call — re-confirms a meeting booked on an earlier call. NOT counted again.');
@@ -115,8 +121,8 @@ function bookingBanner(ev, counts, dt, o){
   // The AI self-qualifies EVERY booked meeting (firm or tentative) by its own BANT judgment.
   // A tentative booking is still qualified/not on the AI's verdict; the BDM can override either way.
   const tent = bs==='tentative' ? ' <span style="font-weight:400;opacity:.85">(tentative time — not firmly locked yet)</span>' : '';
-  if(qual) return banner(GREEN,'✅ Qualified booked meeting'+tent+' — counts as Meeting Booked AND Qualified Booked (the AI qualified the lead; a BDM can override).');
-  return banner(BLUE,'📅 Meeting Booked (counted)'+tent+' — the AI did not qualify the lead (BANT not met), so it is excluded from Qualified Booked. A BDM can override to qualify it.');
+  if(qual) return banner(GREEN,'✅ Qualified booked meeting'+tent+' — counts as Meeting Booked AND Qualified Booked.'+viaNote+' A BDM can override.');
+  return banner(BLUE,'📅 Meeting Booked (counted)'+tent+' — the prospect is not qualified (BANT not met on this or any earlier call), so it is excluded from Qualified Booked. A BDM can override to qualify it.');
 }
 
 const RPC_REASON={reached_rpc:'Reached the decision-maker',gatekeeper_block:'Blocked by gatekeeper',dm_unavailable:'Decision-maker unavailable',voicemail:'Went to voicemail',no_answer:'No answer',wrong_number:'Wrong number',not_decision_maker:'Reached the wrong person',other:'Decision-maker not reached'};
@@ -485,7 +491,7 @@ async function load(){
 
   const verdicts=`<div class="card"><h2>Funnel verdicts (AI)</h2>
     ${d.sms_confirmed?`<div style="background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.45);color:#86efac;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:700">📱 Booking confirmed by the prospect via SMS — this firmed the meeting (see the SMS / chat tab).</div>`:''}
-    ${bookingBanner(ev, d.booking_counts, cl.meeting_datetime, d.qual_override)}
+    ${bookingBanner(ev, d.booking_counts, cl.meeting_datetime, d.qual_override, d.prospect_qualified, d.qualified_via)}
     ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
     ${stageRow('Full Pitch', ev.full_pitch)}
     ${stageRow('Lead (interest)', ev.is_lead)}

@@ -1546,6 +1546,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false) LIMIT 1",
                     {"cid": call_id, "ck": c0.get("company_key")})
                 booking_counts = not prior
+        # Prospect-level qualification (mirrors the funnel's qualified_booked): the booking counts
+        # as Qualified Booked if THIS call is (effectively) qualified OR any in-scope call to the
+        # same number/company is. Surfaced so the call page's Qualified-Booked verdict matches the
+        # funnel — a booking can be qualified via an EARLIER call on the same prospect.
+        prospect_qualified = None
+        qualified_via = None  # {bde, date} of the earlier call that qualified the prospect
+        if c0:
+            eff_this = (ovr[0]["qualified"] if ovr else None)
+            if eff_this is None:
+                eff_this = c0.get("qualified")
+            if eff_this:
+                prospect_qualified = True
+            else:
+                sib_q = q(
+                    "SELECT COALESCE(c2.bde_name, c2.bde_extension) AS bde, c2.started_at::date AS d "
+                    "FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
+                    "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id, "
+                    "(SELECT dest_number FROM calls WHERE call_id=%(cid)s) cur "
+                    "WHERE c2.in_scope AND c2.call_id <> %(cid)s "
+                    "AND (right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(cur.dest_number,'[^0-9]','','g'),9) "
+                    "     OR (%(ck)s::text IS NOT NULL AND cl2.company_key = %(ck)s::text)) "
+                    "AND COALESCE(qo2.qualified, cl2.qualified) ORDER BY c2.started_at LIMIT 1",
+                    {"cid": call_id, "ck": c0.get("company_key")})
+                prospect_qualified = bool(sib_q)
+                if sib_q:
+                    qualified_via = {"bde": sib_q[0]["bde"], "date": str(sib_q[0]["d"])}
         # Inbound SMS/chat from this prospect (same number) + flag any that firmed THIS booking.
         _d9 = re.sub(r"\D", "", call.get("dest_number") or "")[-9:]
         messages = q(
@@ -1591,6 +1617,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "enrichment": enr,
             "qual_override": ovr[0] if ovr else None,
             "booking_counts": booking_counts,  # None=n/a, True=counts, False=company already booked
+            "prospect_qualified": prospect_qualified,  # prospect-level qualified (this OR a sibling call)
+            "qualified_via": qualified_via,  # {bde,date} of the earlier call that qualified, if not this one
             "can_override": can_manage_pipeline(u),  # BDM/admin only
             "messages": messages,
             "sms_confirmed": sms_confirmed,  # booking firmed by a prospect SMS
