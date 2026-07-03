@@ -928,6 +928,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      ("d30", "Last 30 days", 29)]
     _PIPE_ROWS = [("pipeline1_interested", "Pipeline 1 · Interested (callback)"),
                   ("pipeline2_existing_agency", "Pipeline 2 · Already with an agency")]
+    # Batch D 5-pipeline board. Prospect-level precedence: a prospect is shown under its
+    # HIGHEST-precedence stage in each window (p5 > p2 > p1 > p3) so a booked prospect
+    # appears only under P5, never P1-P4. P4 (fresh worklist) is a separate standing pool.
+    _PIPE5_ROWS = [("p5", "P5 · Meeting booked"),
+                   ("p2", "P2 · Already with an agency"),
+                   ("p1", "P1 · RPC callback requested"),
+                   ("p3", "P3 · Gatekeeper callback")]
+    _STAGE_RANK = {"p5": 1, "p2": 2, "p1": 3, "p3": 4}
+    _P4_SUBS = ["fresh_ads", "fresh_unscanned", "captured_3cx", "captured_aircall", "attempted"]
     # last 9 significant digits of the dialled number = the distinct-prospect key
     _DEST9_SQL = "right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9)"
 
@@ -1004,6 +1013,94 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"pipeline": pipeline, "window": window,
                              "count": len(rows), "rows": jsonable_encoder(rows)})
 
+    # ---- Batch D: 5-pipeline board (P1/P2/P3/P5 flow + P4 standing pool) --- #
+    _P5_RANK_CASE = ("CASE cl.pipeline_stage WHEN 'p5' THEN 1 WHEN 'p2' THEN 2 "
+                     "WHEN 'p1' THEN 3 WHEN 'p3' THEN 4 END")
+
+    @app.get("/api/pipelines5")
+    def pipelines5(request: Request, bde: str = "ALL") -> JSONResponse:
+        """P1/P2/P3/P5 × today/3d/7d/14d/30d (distinct prospects, prospect-level precedence)
+        plus the P4 standing worklist pool. The 5-model view; the legacy /api/pipelines is
+        left untouched."""
+        bde = _scoped_bde(request, bde)
+        today = _pipe_anchor()
+        if not today:
+            return JSONResponse({"found": False, "rows": [], "pools": {}})
+        where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
+                 "cl.pipeline_stage IN ('p1','p2','p3','p5')",
+                 "c.started_at >= (%(today)s::date - 29)", "c.started_at < (%(today)s::date + 1)"]
+        params: dict = {"today": today}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        # Per prospect, the winning (min) stage-rank within each nested window; then count
+        # distinct prospects whose winning rank is this pipeline's rank.
+        win_mins = ", ".join(
+            f"min(rnk) FILTER (WHERE d >= %(today)s::date - {off}) AS w_{k}"
+            for k, _lbl, off in _PIPE_WINDOWS)
+        cells = ", ".join(
+            f"count(*) FILTER (WHERE w_{k} = {r}) AS c_{st}_{k}"
+            for k, _lbl, _off in _PIPE_WINDOWS for st, r in _STAGE_RANK.items())
+        rows = q(
+            f"WITH base AS (SELECT {_DEST9_SQL} AS dest9, c.started_at::date AS d, {_P5_RANK_CASE} AS rnk "
+            f"  FROM calls c JOIN classifications cl ON cl.call_id=c.call_id WHERE {' AND '.join(where)}), "
+            f"perdest AS (SELECT dest9, {win_mins} FROM base GROUP BY dest9) "
+            f"SELECT {cells} FROM perdest",
+            params,
+        )
+        agg = rows[0] if rows else {}
+        out_rows = [{"pipeline": st, "label": label,
+                     "counts": {k: int(agg.get(f"c_{st}_{k}") or 0) for k, _l, _o in _PIPE_WINDOWS}}
+                    for st, label in _PIPE5_ROWS]
+        # P4 standing pool — the DB worklist (uncalled ads + captured + attempted), not per-day.
+        pool = q(
+            "SELECT "
+            + ", ".join(f"count(*) FILTER (WHERE p4_subpipeline='{s}') AS {s}" for s in _P4_SUBS)
+            + ", count(*) FILTER (WHERE pipeline_stage='p4' AND COALESCE(p4_subpipeline,'') "
+              "NOT IN ('dead','')) AS total FROM prospects"
+        )[0]
+        pools = {s: int(pool.get(s) or 0) for s in _P4_SUBS}
+        pools["total"] = int(pool.get("total") or 0)
+        return JSONResponse({"found": True, "today": today,
+                             "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
+                             "rows": out_rows, "pools": pools})
+
+    @app.get("/api/pipeline5-prospects")
+    def pipeline5_prospects(request: Request, pipeline: str, window: str = "d30",
+                            bde: str = "ALL") -> JSONResponse:
+        """Distinct prospects behind a P1/P2/P3/P5 board cell (prospect-level precedence)."""
+        bde = _scoped_bde(request, bde)
+        today = _pipe_anchor()
+        off = dict((k, o) for k, _l, o in _PIPE_WINDOWS).get(window, 29)
+        if not today or pipeline not in _STAGE_RANK:
+            return JSONResponse({"rows": []})
+        where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
+                 "cl.pipeline_stage IN ('p1','p2','p3','p5')",
+                 "c.started_at >= (%(today)s::date - %(off)s)", "c.started_at < (%(today)s::date + 1)"]
+        params: dict = {"today": today, "off": off, "want": _STAGE_RANK[pipeline]}
+        if bde and bde != "ALL":
+            where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
+            params["bde"] = bde
+        rows = q(
+            f"WITH base AS (SELECT {_DEST9_SQL} AS dest9, c.dest_number, c.started_at, "
+            f"  COALESCE(c.bde_name, c.bde_extension) AS bde, cl.prospect_company, cl.lead_temperature, "
+            f"  {_P5_RANK_CASE} AS rnk "
+            f"  FROM calls c JOIN classifications cl ON cl.call_id=c.call_id WHERE {' AND '.join(where)}), "
+            "win AS (SELECT dest9, min(rnk) AS wr, count(*) AS ncalls FROM base GROUP BY dest9), "
+            "latest AS (SELECT DISTINCT ON (dest9) dest9, dest_number, started_at, bde, "
+            "  prospect_company, lead_temperature FROM base ORDER BY dest9, started_at DESC) "
+            "SELECT l.dest_number, l.started_at, l.bde, l.prospect_company, l.lead_temperature, "
+            "  w.ncalls, pr.business_name, pr.domain "
+            "FROM win w JOIN latest l ON l.dest9 = w.dest9 "
+            "LEFT JOIN prospects pr ON w.dest9 = ANY(pr.phones_norm) "
+            "WHERE w.wr = %(want)s ORDER BY l.started_at DESC",
+            params,
+        )
+        for r in rows:
+            r["started_at"] = str(r["started_at"]) if r["started_at"] else None
+        return JSONResponse({"pipeline": pipeline, "window": window,
+                             "count": len(rows), "rows": jsonable_encoder(rows)})
+
     @app.get("/api/review-queue")
     def review_queue(request: Request, limit: int = 50) -> JSONResponse:
         where = ["cl.needs_human_review"]
@@ -1036,7 +1133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                       "right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) "
                       "OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key)) AND pc.started_at < c.started_at "
                       "AND pc.answered AND pc.talk_seconds >= %(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
-                      "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime IS NOT NULL)) "
+                      "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) "
                       "AND NOT COALESCE(pcl.meeting_confirmation,false) "
                       "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))")
     # A booking = firm OR a TENTATIVE meeting WITH a proposed date/time (rule B), honouring a BDM
@@ -1044,21 +1141,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # drill-down list equals the KPI count.
     _BO = "(SELECT qo.booking_outcome FROM qualification_overrides qo WHERE qo.call_id=c.call_id)"
     _BOOKED = (f"(CASE WHEN {_BO}='counts' THEN true WHEN {_BO}='not_booking' THEN false "
-               "ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime IS NOT NULL)) END)")
+               "ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) END)")
+    # Meeting Booked = ANY genuinely NEW booking the BDE made (no decision-maker/qualified
+    # gate). EXCLUDES confirmation-only, reschedules, AND duplicate bookings of the same
+    # prospect (only the first booked call per number counts). Batch D's P5 pipeline REUSES
+    # this exact predicate, so P5 == Meeting Booked with zero drift.
+    _MEETINGS_BOOKED = (f"{_CONN} AND {_BOOKED} "
+                        "AND NOT COALESCE(cl.meeting_confirmation, false) "
+                        "AND NOT COALESCE(cl.meeting_rescheduled, false) "
+                        "AND NOT COALESCE(cl.booking_already_exists, false) "
+                        f"AND {_FIRST_BOOKING}")
     _STAGE_COND = {
         "calls_made": "TRUE",
         "connected": _CONN,
         "unconnected": f"NOT ({_CONN})",
         "rpc_connect": f"{_CONN} AND cl.rpc_connect",
         "full_pitch": f"{_CONN} AND cl.rpc_connect AND cl.full_pitch",
-        # Meeting Booked = ANY genuinely NEW booking the BDE made (no decision-maker/
-        # qualified gate). EXCLUDES confirmation-only, reschedules, AND duplicate bookings
-        # of the same prospect (only the first booked call per number counts).
-        "meetings_booked": f"{_CONN} AND {_BOOKED} "
-                           "AND NOT COALESCE(cl.meeting_confirmation, false) "
-                           "AND NOT COALESCE(cl.meeting_rescheduled, false) "
-                           "AND NOT COALESCE(cl.booking_already_exists, false) "
-                           f"AND {_FIRST_BOOKING}",
+        "meetings_booked": _MEETINGS_BOOKED,
         # Qualified Booked = strict subset (also qualified, BAPU). Qualification is a
         # PROSPECT-level fact: this call qualified OR any in-scope call to the same number.
         "qualified_booked": f"{_CONN} AND {_BOOKED} AND NOT COALESCE(cl.meeting_confirmation, false) "
@@ -1102,6 +1201,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "super_hot": f"{_CONN} AND cl.lead_temperature = 'super_hot'",
         "pipeline1": f"{_CONN} AND cl.pipeline = 'pipeline1_interested'",
         "pipeline2": f"{_CONN} AND cl.pipeline = 'pipeline2_existing_agency'",
+        # Batch D 5-pipeline drill-downs (per-call routing bucket). p5_booked mirrors
+        # meetings_booked exactly (same predicate) so the KPI and pipeline agree.
+        "p1_callback": f"{_CONN} AND cl.pipeline_stage = 'p1'",
+        "p2_agency": f"{_CONN} AND cl.pipeline_stage = 'p2'",
+        "p3_gk_callback": f"{_CONN} AND cl.pipeline_stage = 'p3'",
+        "p5_booked": _MEETINGS_BOOKED,
     }
 
     @app.get("/api/stage-calls")
@@ -1436,7 +1541,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WHERE pc.in_scope AND pc.call_id <> %(cid)s AND pc.started_at < cur.started_at "
                     "AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(cur.dest_number,'[^0-9]','','g'),9) "
                     "     OR (%(ck)s::text IS NOT NULL AND pcl.company_key = %(ck)s::text)) "
-                    "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime IS NOT NULL)) "
+                    "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) "
                     "AND NOT COALESCE(pcl.meeting_confirmation,false) "
                     "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false) LIMIT 1",
                     {"cid": call_id, "ck": c0.get("company_key")})
@@ -2159,7 +2264,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = "",
                 tracking: str = "", transparency: str = "", industry: str = "", state: str = "",
-                website: str = "", multilocation: str = "", agency: str = ""):
+                website: str = "", multilocation: str = "", agency: str = "",
+                pipeline: str = "", p4sub: str = ""):
         """Shared companies+enrichment CTE for the Database browser. Returns
         (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
         into the CTE; the rest come back as `ge` conditions. Coverage filters are added by
@@ -2234,6 +2340,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conds.append("ge.has_agency")
         elif agency == "no":
             conds.append("NOT ge.has_agency")
+        # Batch D: 5-pipeline membership + P4 sub-pipeline (both derived on `ge`, whitelisted).
+        if pipeline in ("p1", "p2", "p3", "p4", "p5"):
+            conds.append("ge.pipeline = %(pl)s")
+            params["pl"] = pipeline
+        if p4sub in ("fresh_ads", "fresh_unscanned", "captured_3cx", "captured_aircall", "attempted", "dead"):
+            conds.append("ge.p4_sub = %(p4sub)s")
+            params["p4sub"] = p4sub
         cte = f"""
         WITH g AS (
           SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,
@@ -2277,9 +2390,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  (e.whois IS NOT NULL AND (e.whois->>'found')='true') AS has_whois,
                  -- "already working with an agency" — a BDE call classified this prospect as
                  -- pipeline2 (existing agency / in-house team), matched by the domain company_key.
-                 EXISTS (SELECT 1 FROM classifications cl WHERE cl.pipeline='pipeline2_existing_agency'
-                         AND g.domain IS NOT NULL AND cl.company_key = 'dom:' || g.domain) AS has_agency
-          FROM g LEFT JOIN enrichment e ON e.domain = g.domain
+                 COALESCE(k.k_agency, false) AS has_agency,
+                 -- Batch D 5-pipeline membership (query-time, domain-grained). Precedence
+                 -- p5>p2>p1>p3; everything unresolved is the P4 fresh worklist. Booked/agency/
+                 -- callback prospects are excluded from P4 by construction.
+                 CASE WHEN COALESCE(k.k_booked, false) THEN 'p5'
+                      WHEN COALESCE(k.k_agency, false) THEN 'p2'
+                      WHEN COALESCE(k.k_p1, false)     THEN 'p1'
+                      WHEN COALESCE(k.k_p3, false)     THEN 'p3'
+                      ELSE 'p4' END AS pipeline,
+                 CASE WHEN COALESCE(k.k_booked,false) OR COALESCE(k.k_agency,false)
+                           OR COALESCE(k.k_p1,false) OR COALESCE(k.k_p3,false) THEN NULL
+                      ELSE COALESCE(pr.p4_subpipeline,
+                           CASE WHEN NOT (COALESCE(k.k_called,false) OR pr.last_called_at IS NOT NULL)
+                                     AND ((e.dataforseo->>'running_google_ads')='true') THEN 'fresh_ads'
+                                WHEN NOT (COALESCE(k.k_called,false) OR pr.last_called_at IS NOT NULL) THEN 'fresh_unscanned'
+                                ELSE 'attempted' END)
+                      END AS p4_sub
+          FROM g
+          LEFT JOIN enrichment e ON e.domain = g.domain
+          LEFT JOIN prospects pr ON pr.domain = g.domain
+          LEFT JOIN LATERAL (
+            SELECT bool_or(cl.pipeline_stage = 'p5') AS k_booked,
+                   bool_or(cl.pipeline = 'pipeline2_existing_agency') AS k_agency,
+                   bool_or(cl.pipeline_stage = 'p1') AS k_p1,
+                   bool_or(cl.pipeline_stage = 'p3') AS k_p3,
+                   count(*) > 0 AS k_called
+            FROM classifications cl
+            WHERE g.domain IS NOT NULL AND cl.company_key = 'dom:' || g.domain
+          ) k ON g.domain IS NOT NULL
         )
         """
         return cte, params, conds
@@ -2290,12 +2429,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "source": "sources", "industry": "industry", "sub_industry": "sub_industry",
         "location": "location", "businesses": "businesses", "revenue": "total_revenue",
         "employees": "employees", "contacts": "contacts", "phone": "phone",
-        "enriched": "enriched",
+        "enriched": "enriched", "pipeline": "pipeline",
     }
 
     @app.get("/api/database/prospects")
     def database_prospects(request: Request, search: str = "", limit: int = 50, offset: int = 0,
-                           enriched: str = "", pipeline: str = "", paid_ads: str = "",
+                           enriched: str = "", pipeline: str = "", p4sub: str = "", paid_ads: str = "",
                            source: str = "", coverage: str = "", revenue: str = "",
                            tracking: str = "", transparency: str = "", industry: str = "",
                            state: str = "", website: str = "", multilocation: str = "", agency: str = "",
@@ -2303,12 +2442,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
         All filters combine with AND; `coverage`/`tracking` may carry several comma-separated
-        facets. `sort`/`dir` order by any column (allow-listed). `total` is the full-filter count."""
+        facets. `pipeline` (p1-p5) + `p4sub` filter by Batch D pipeline membership. `sort`/`dir`
+        order by any column (allow-listed). `total` is the full-filter count."""
         _require_db_access(request)
         limit = max(1, min(limit, 200))
         cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
                                      tracking, transparency, industry, state, website=website,
-                                     multilocation=multilocation, agency=agency)
+                                     multilocation=multilocation, agency=agency,
+                                     pipeline=pipeline, p4sub=p4sub)
         params["lim"] = limit
         params["off"] = offset
         conds += _coverage_conds(coverage)
@@ -2357,6 +2498,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             count(*) FILTER (WHERE ge.has_whois) AS whois,
             count(*) FILTER (WHERE ge.has_dataforseo) AS dataforseo,
             count(*) FILTER (WHERE ge.kind='domain') AS domains,
+            count(*) FILTER (WHERE ge.pipeline='p1') AS p1,
+            count(*) FILTER (WHERE ge.pipeline='p2') AS p2,
+            count(*) FILTER (WHERE ge.pipeline='p3') AS p3,
+            count(*) FILTER (WHERE ge.pipeline='p4') AS p4,
+            count(*) FILTER (WHERE ge.pipeline='p5') AS p5,
+            count(*) FILTER (WHERE ge.p4_sub='fresh_ads') AS p4_fresh_ads,
+            count(*) FILTER (WHERE ge.p4_sub='captured_3cx' OR ge.p4_sub='captured_aircall') AS p4_captured,
             count(*) AS matching
           FROM ge {base}""", params)[0]
         # a freshness fingerprint so the client can poll cheaply for changes

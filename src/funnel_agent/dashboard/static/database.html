@@ -118,6 +118,23 @@
       <option value="yes">🤝 Has an agency</option>
       <option value="no">No agency (yet)</option>
     </select>
+    <select id="pipeline">
+      <option value="">Pipeline: any</option>
+      <option value="p4">🆕 P4 · Fresh worklist</option>
+      <option value="p1">📞 P1 · RPC callback</option>
+      <option value="p2">🤝 P2 · Has agency</option>
+      <option value="p3">🚪 P3 · Gatekeeper callback</option>
+      <option value="p5">📅 P5 · Meeting booked</option>
+    </select>
+    <select id="p4sub">
+      <option value="">P4 sub: any</option>
+      <option value="fresh_ads">🎯 Fresh · running ads</option>
+      <option value="fresh_unscanned">Fresh · ads unknown</option>
+      <option value="captured_3cx">📇 Captured · 3CX</option>
+      <option value="captured_aircall">📇 Captured · Aircall</option>
+      <option value="attempted">🔁 Attempted (retry)</option>
+      <option value="dead">🚫 Dead / DNC</option>
+    </select>
   </div>
   <!-- Row 2: paid ads (Transparency = primary) -->
   <div class="bar covbar">
@@ -186,13 +203,19 @@ const PA_LBL={google:'🎯 Running Google Ads',meta:'📘 Has Meta pixel',both:'
 const TRANSP_LBL={checked:'Transparency checked',running:'Confirmed running ads',not_running:'Checked · not running'};
 const TRK_LBL={google_ads:'Google Ads tag',meta_pixel:'Meta Pixel',gtm:'GTM',ga4:'GA4',bing:'Bing',tiktok:'TikTok',linkedin:'LinkedIn'};
 const REV_LBL={lt1:'< $1M',['1-10']:'$1M–$10M',['10-50']:'$10M–$50M',['50-100']:'$50M–$100M',['100up']:'$100M+'};
+const PIPE_LBL={p1:'📞 P1 · RPC callback',p2:'🤝 P2 · Has agency',p3:'🚪 P3 · Gatekeeper callback',
+                p4:'🆕 P4 · Fresh worklist',p5:'📅 P5 · Meeting booked'};
+const P4SUB_LBL={fresh_ads:'🎯 Fresh · running ads',fresh_unscanned:'Fresh · ads unknown',
+                 captured_3cx:'📇 Captured · 3CX',captured_aircall:'📇 Captured · Aircall',
+                 attempted:'🔁 Attempted',dead:'🚫 Dead / DNC'};
 
 function curFilters(){
   return {q:$('#search').value.trim(), source:$('#source').value, enriched:$('#enriched').value,
           paid_ads:$('#paidAds').value, revenue:$('#revenue').value, coverage:[...cov].join(','),
           tracking:[...trk].join(','), transparency:$('#transparency').value,
           industry:$('#industry').value.trim(), state:$('#state').value.trim(),
-          website:$('#website').value, multilocation:$('#multiloc').value, agency:$('#agency').value};
+          website:$('#website').value, multilocation:$('#multiloc').value, agency:$('#agency').value,
+          pipeline:$('#pipeline').value, p4sub:$('#p4sub').value};
 }
 function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComponent(f.source)}`
   +`&enriched=${encodeURIComponent(f.enriched)}&paid_ads=${encodeURIComponent(f.paid_ads)}`
@@ -200,7 +223,8 @@ function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComp
   +`&tracking=${encodeURIComponent(f.tracking)}&transparency=${encodeURIComponent(f.transparency)}`
   +`&industry=${encodeURIComponent(f.industry)}&state=${encodeURIComponent(f.state)}`
   +`&website=${encodeURIComponent(f.website)}`
-  +`&multilocation=${encodeURIComponent(f.multilocation)}&agency=${encodeURIComponent(f.agency)}`; }
+  +`&multilocation=${encodeURIComponent(f.multilocation)}&agency=${encodeURIComponent(f.agency)}`
+  +`&pipeline=${encodeURIComponent(f.pipeline)}&p4sub=${encodeURIComponent(f.p4sub)}`; }
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
 function covCard(key,l,n){
@@ -241,6 +265,8 @@ function renderResult(){
   if(f.website) _pills.push([(f.website==='yes'?'Has website':'No website'), ()=>{$('#website').value='';}]);
   if(f.multilocation) _pills.push([(f.multilocation==='yes'?'Multi-location':'Single location'), ()=>{$('#multiloc').value='';}]);
   if(f.agency) _pills.push([(f.agency==='yes'?'Has an agency':'No agency'), ()=>{$('#agency').value='';}]);
+  if(f.pipeline) _pills.push([(PIPE_LBL[f.pipeline]||f.pipeline), ()=>{$('#pipeline').value='';}]);
+  if(f.p4sub) _pills.push([(P4SUB_LBL[f.p4sub]||f.p4sub), ()=>{$('#p4sub').value='';}]);
   if(f.paid_ads) _pills.push([(PA_LBL[f.paid_ads]||f.paid_ads), ()=>{$('#paidAds').value='';}]);
   if(f.transparency) _pills.push([(TRANSP_LBL[f.transparency]||f.transparency), ()=>{$('#transparency').value='';}]);
   if(f.revenue) _pills.push([(REV_LBL[f.revenue]||f.revenue), ()=>{$('#revenue').value='';}]);
@@ -257,7 +283,7 @@ function renderResult(){
 }
 function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; syncTrkChips(); loadRows(); loadStats(); } }
 function clearAll(){ clearTimeout(searchTimer);
-  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency'].forEach(s=>$(s).value='');
+  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency','#pipeline','#p4sub'].forEach(s=>$(s).value='');
   cov.clear(); trk.clear(); syncTrkChips(); offset=0; loadRows(); loadStats(); }
 
 // Revenue stored in millions USD; show as $X.XM / $X.XB.
@@ -331,7 +357,7 @@ const _deb=()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0
 $('#search').addEventListener('input',_deb);
 $('#industry').addEventListener('input',_deb);
 $('#state').addEventListener('input',_deb);
-['#enriched','#paidAds','#revenue','#source','#transparency','#website'].forEach(s=>$(s).onchange=()=>{offset=0;loadRows();loadStats();});
+['#enriched','#paidAds','#revenue','#source','#transparency','#website','#multiloc','#agency','#pipeline','#p4sub'].forEach(s=>$(s).onchange=()=>{offset=0;loadRows();loadStats();});
 document.querySelectorAll('.trkchip').forEach(b=>b.onclick=()=>{
   const k=b.dataset.trk; trk.has(k)?trk.delete(k):trk.add(k); b.classList.toggle('active', trk.has(k));
   offset=0; loadRows(); loadStats();
@@ -348,6 +374,14 @@ document.querySelectorAll('#dbhead th.sortable').forEach(th=>th.onclick=()=>{
   else { sortBy=k; sortDir = _TEXTSORT.has(k)?'asc':'desc'; }
   updateHead(); offset=0; loadRows();
 });
+
+// Deep-link support: /database?pipeline=p4&p4sub=fresh_ads presets the pipeline filters
+// (used by the dashboard's P4 worklist tiles).
+(function(){ const p=new URLSearchParams(location.search);
+  const setSel=(id,val)=>{ const el=$(id); if(el && val && [...el.options].some(o=>o.value===val)) el.value=val; };
+  setSel('#pipeline', p.get('pipeline')); setSel('#p4sub', p.get('p4sub'));
+  setSel('#paidAds', p.get('paid_ads')); setSel('#agency', p.get('agency'));
+})();
 
 // realtime: SSE refresh + a stats poll that detects DB changes and reloads.
 updateHead(); loadStats(); loadRows();

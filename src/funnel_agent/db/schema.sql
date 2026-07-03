@@ -122,6 +122,12 @@ ALTER TABLE classifications ADD COLUMN IF NOT EXISTS booking_already_exists bool
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS company_key text;
 CREATE INDEX IF NOT EXISTS idx_class_website ON classifications (prospect_website);
 CREATE INDEX IF NOT EXISTS idx_class_company_key ON classifications (company_key);
+-- Batch D 5-pipeline routing (per-call bucket). Deterministic post-processing over the
+-- existing verdict fields (derive_pipeline_stage) — the LLM `pipeline` column is UNTOUCHED.
+-- 'p1'=RPC reached+callback | 'p2'=existing agency | 'p3'=gatekeeper callback | 'p5'=new
+-- booking | 'none'. P4 (fresh worklist) is DB-derived and is NEVER a call outcome.
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS pipeline_stage text;
+CREATE INDEX IF NOT EXISTS idx_class_pipeline_stage ON classifications (pipeline_stage);
 
 -- WhatsApp nurturing queue (#13). One row per scheduled message in the meeting-
 -- confirmation sequence. The engine schedules these when a meeting is booked and a
@@ -250,6 +256,13 @@ ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS hot int;
 ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS super_hot int;
 ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS pipeline1 int;
 ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS pipeline2 int;
+-- Batch D 5-pipeline per-day call counts (additive; legacy pipeline1/pipeline2 kept as-is).
+-- p5_booked REUSES the exact meetings_booked expression so it is a zero-drift mirror.
+-- (No P4 column — P4 is a standing DB pool, not a per-day flow count.)
+ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS p1_callback int;
+ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS p2_agency int;
+ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS p3_gk_callback int;
+ALTER TABLE daily_funnel ADD COLUMN IF NOT EXISTS p5_booked int;
 
 CREATE TABLE IF NOT EXISTS processing_state (
   job                 text PRIMARY KEY,   -- 'funnel_agent'
@@ -339,6 +352,18 @@ CREATE TABLE IF NOT EXISTS prospects (
 CREATE INDEX IF NOT EXISTS idx_prospects_phones ON prospects USING gin (phones_norm);
 CREATE INDEX IF NOT EXISTS idx_prospects_pipeline ON prospects (pipeline);
 CREATE INDEX IF NOT EXISTS idx_prospects_assigned ON prospects (assigned_bde);
+-- Batch D materialized 5-pipeline worklist layer (filled idempotently by
+-- sync_prospect_pipelines; legacy `pipeline`/`assigned_bde` columns are untouched).
+--   pipeline_stage: 'p1'|'p2'|'p3'|'p5' (resolved from the prospect's calls) or 'p4' (fresh worklist).
+--   p4_subpipeline: fresh_ads | fresh_unscanned | captured_3cx | captured_aircall | attempted | dead.
+--   last_called_at NULL = never dialled (P4 fresh); last_call_provider = 3cx|aircall.
+ALTER TABLE prospects ADD COLUMN IF NOT EXISTS pipeline_stage text;
+ALTER TABLE prospects ADD COLUMN IF NOT EXISTS p4_subpipeline text;
+ALTER TABLE prospects ADD COLUMN IF NOT EXISTS last_called_at timestamptz;
+ALTER TABLE prospects ADD COLUMN IF NOT EXISTS last_call_provider text;
+ALTER TABLE prospects ADD COLUMN IF NOT EXISTS pipeline_synced_at timestamptz;
+CREATE INDEX IF NOT EXISTS idx_prospects_pipeline_stage ON prospects (pipeline_stage);
+CREATE INDEX IF NOT EXISTS idx_prospects_p4sub ON prospects (p4_subpipeline);
 
 -- Pipeline-2 assignment + cadence state, keyed by the normalized dialled number
 -- (dest9 = trailing 9 significant digits) — the same distinct-prospect key the

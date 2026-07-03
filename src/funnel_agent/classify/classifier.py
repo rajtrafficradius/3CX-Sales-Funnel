@@ -165,6 +165,67 @@ def derive_temperature(v: CallClassification) -> str:
     return "none"
 
 
+import re as _re
+
+# A tentative booking counts as a real Meeting Booked ONLY when a SPECIFIC time was agreed —
+# a clock time (10:00 / 3:30), an am/pm time (10am, 2 pm), or noon/midday. A vague day or range
+# ("next Thursday or Friday", "Monday", "next week") is a soft follow-up, not a booking. Firm
+# bookings (meeting_booked=True) always count regardless of the datetime text. This mirrors the
+# SQL regex used in aggregate.py / app.py / cli.py so the count and the pipeline routing agree.
+_MEETING_TIME_RE = _re.compile(r"[0-9]:[0-9]|[0-9]\s*[ap]\.?m|noon|midday", _re.IGNORECASE)
+
+
+def _has_meeting_time(dt: str | None) -> bool:
+    return bool(dt) and bool(_MEETING_TIME_RE.search(dt))
+
+
+def derive_pipeline_stage(v: CallClassification) -> str:
+    """Batch D — deterministic 5-pipeline routing bucket for THIS call.
+
+    Precedence (first match wins); P4 (fresh worklist) is DB-derived and is NEVER a
+    call outcome, so it is not returned here:
+      1. 'p5'  — a genuinely NEW meeting was booked on this call (firm OR tentative-with-a-
+                 time), and it is not a confirmation / reschedule / already-existing booking.
+                 P5 wins over everything so a booked prospect never lands in P1-P4.
+      2. 'p2'  — the LLM routed the call to the existing-agency pipeline. Kept ABOVE p1 so an
+                 agency prospect who also asks for a callback stays in the P2 rotation.
+      3. 'p1'  — the decision-maker was REACHED (rpc_connect) AND explicitly asked for a
+                 callback (strict — narrower than the legacy "interested" pipeline1).
+      4. 'p3'  — the decision-maker was NOT reached but a gatekeeper/receptionist arranged
+                 a callback.
+      5. 'none' — voicemail / no-answer / wrong number / flat-no / reached-but-no-callback.
+    The first-booking-per-company dedup and BDM booking/qualification overrides are applied
+    at COUNT time (aggregate.py / _STAGE_COND), NOT here, so the stored value is a pure
+    per-call signal that mirrors aggregate.py's "new booking" flag.
+    """
+    new_booking = (
+        (v.meeting_booked.value or (v.booking_status == "tentative" and _has_meeting_time(v.meeting_datetime)))
+        and not v.meeting_confirmation_only.value
+        and not v.meeting_rescheduled.value
+        and not v.booking_already_exists.value
+    )
+    if new_booking:
+        return "p5"
+    if v.pipeline == "pipeline2_existing_agency":
+        return "p2"
+    if v.rpc_connect.value and v.callback_requested.value:
+        return "p1"
+    who = (v.who_answered or "").lower()
+    is_gatekeeper = (v.call_outcome == "gatekeeper") or ("gatekeeper" in who) or ("recept" in who)
+    # A callback must actually have been ARRANGED — an explicit callback request/time, the BDE
+    # asking when to call back, or the gatekeeper stating when the DM is available. "Handled
+    # well" is call quality, NOT a callback, so it does not qualify a prospect for P3.
+    gk_callback = (
+        v.callback_requested.value
+        or bool((v.callback_when or "").strip())
+        or v.rpc_next_move.asked_callback_time
+        or bool((v.rpc_next_move.dm_available_when or "").strip())
+    )
+    if (not v.rpc_connect.value) and is_gatekeeper and gk_callback:
+        return "p3"
+    return "none"
+
+
 def apply_auto_validation(v: CallClassification) -> None:
     """Auto-validate budget + aspiration from BEHAVIOUR (#6).
 
@@ -404,6 +465,7 @@ class Classifier:
             "problem_summary": v.problem_summary or None,
             "lead_temperature": derive_temperature(v),
             "pipeline": v.pipeline,
+            "pipeline_stage": derive_pipeline_stage(v),  # Batch D 5-pipeline routing bucket
             "callback_requested": v.callback_requested.value,
             "callback_when": v.callback_when or None,
             # pipeline 2 cadence intelligence
@@ -440,7 +502,7 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 aspiration, open_to_listening, runs_paid_ads, has_marketing_agency, do_not_contact,
                 gatekeeper_handled_well, gatekeeper_notes, problem_summary,
                 lead_temperature,
-                pipeline, callback_requested, callback_when, contract_end, recommended_cadence_days,
+                pipeline, pipeline_stage, callback_requested, callback_when, contract_end, recommended_cadence_days,
                 prospect_company, prospect_website, prospect_industry,
                 prospect_contact_name, prospect_mobile, prospect_email,
                 call_outcome, evidence, model, classified_at, needs_human_review)
@@ -453,7 +515,7 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 %(aspiration)s, %(open_to_listening)s, %(runs_paid_ads)s, %(has_marketing_agency)s, %(do_not_contact)s,
                 %(gatekeeper_handled_well)s, %(gatekeeper_notes)s, %(problem_summary)s,
                 %(lead_temperature)s,
-                %(pipeline)s, %(callback_requested)s, %(callback_when)s, %(contract_end)s, %(recommended_cadence_days)s,
+                %(pipeline)s, %(pipeline_stage)s, %(callback_requested)s, %(callback_when)s, %(contract_end)s, %(recommended_cadence_days)s,
                 %(prospect_company)s, %(prospect_website)s, %(prospect_industry)s,
                 %(prospect_contact_name)s, %(prospect_mobile)s, %(prospect_email)s,
                 %(call_outcome)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
@@ -477,6 +539,7 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 gatekeeper_notes = EXCLUDED.gatekeeper_notes,
                 problem_summary = EXCLUDED.problem_summary,
                 lead_temperature = EXCLUDED.lead_temperature, pipeline = EXCLUDED.pipeline,
+                pipeline_stage = EXCLUDED.pipeline_stage,
                 callback_requested = EXCLUDED.callback_requested, callback_when = EXCLUDED.callback_when,
                 contract_end = EXCLUDED.contract_end,
                 recommended_cadence_days = EXCLUDED.recommended_cadence_days,

@@ -296,20 +296,27 @@ def capture_called_prospects(pool: ConnectionPool) -> dict:
     # Phase 2 — BACKFILL: a prospect already on file with NO website, whose calls now
     # carry an AI-extracted website (e.g. recovered from an email after a prompt change),
     # gets that website set so it can be enriched. Merges if the domain already exists.
+    # Same result as before (latest non-null extracted website across a domainless prospect's
+    # phone-matched calls) but computed as a plain equijoin: aggregate website-bearing calls by
+    # dest9 FIRST, explode prospect phones, then hash-join on the number — instead of a nested
+    # loop that recomputed right(regexp_replace(dest_number)) against every prospect × every call
+    # (which grew to many minutes as captured prospects accumulated).
     filled = fetch_all(
         pool,
         """
-        WITH cand AS (
-          SELECT pr.id,
-                 (array_remove(array_agg(NULLIF(cl.prospect_website,'') ORDER BY c.started_at DESC), NULL))[1] AS website
-          FROM prospects pr
-          JOIN calls c ON c.in_scope AND c.dest_number <> ''
-            AND right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) = ANY(pr.phones_norm)
-          JOIN classifications cl ON cl.call_id = c.call_id
+        WITH callweb AS (
+          SELECT right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AS dest9,
+                 c.started_at, NULLIF(cl.prospect_website,'') AS website
+          FROM calls c JOIN classifications cl ON cl.call_id = c.call_id
+          WHERE c.in_scope AND c.dest_number <> '' AND NULLIF(cl.prospect_website,'') IS NOT NULL
+        ),
+        prno AS (
+          SELECT pr.id, ph AS dest9 FROM prospects pr, unnest(pr.phones_norm) AS ph
           WHERE pr.domain IS NULL
-          GROUP BY pr.id
         )
-        SELECT id, website FROM cand WHERE website IS NOT NULL
+        SELECT p.id, (array_agg(cw.website ORDER BY cw.started_at DESC))[1] AS website
+        FROM prno p JOIN callweb cw ON cw.dest9 = p.dest9
+        GROUP BY p.id
         """,
     )
     backfilled = 0
@@ -335,6 +342,133 @@ def capture_called_prospects(pool: ConnectionPool) -> dict:
 
     stats = {"candidates": len(candidates), "created": created, "merged": merged, "backfilled": backfilled}
     log.info("capture_called_prospects", **stats)
+    return stats
+
+
+def sync_prospect_pipelines(pool: ConnectionPool, *, min_interval_minutes: int = 0) -> dict:
+    """Batch D — materialize the 5-pipeline worklist layer on `prospects` (idempotent).
+
+    Runs at the TAIL of the refresh, AFTER capture_called_prospects + classify, and writes
+    ONLY the additive columns pipeline_stage / p4_subpipeline / last_called_at /
+    last_call_provider / pipeline_synced_at. It reads calls + classifications + enrichment
+    read-only, so it can never affect ingest, capture, or booking/qualification reporting.
+
+    One set-based UPDATE recomputes every prospect from scratch, so re-running is stable:
+      * last_called_at / last_call_provider — the most recent in-scope call matched by the
+        trailing-9 phone (NULL provider/date = never dialled = P4 fresh).
+      * pipeline_stage — the precedence rollup (p5 > p2 > p1 > p3) over BOTH the prospect's
+        phone-matched calls AND the domain company_key classifications (so a booked company
+        is P5 even if the booking call was to a different contact number). Unresolved → 'p4'.
+      * p4_subpipeline (only for 'p4' rows): dead (do-not-contact) > captured_<provider>
+        (call_capture origin) > attempted (known prospect, dialled, no outcome) >
+        fresh_ads (running-ads confirmed, never dialled) > fresh_unscanned (uncalled, ads unknown).
+
+    The full recompute is a heavy scan, so the refresh loop passes min_interval_minutes to
+    skip it when the last sync is still fresh (the worklist changes slowly). A one-off
+    backfill or CLI run passes 0 to always recompute.
+    """
+    if min_interval_minutes > 0:
+        row = fetch_all(
+            pool,
+            "SELECT max(pipeline_synced_at) AS last FROM prospects WHERE pipeline_synced_at IS NOT NULL",
+        )
+        last = row[0]["last"] if row else None
+        if last is not None:
+            age_min = (datetime.now(timezone.utc) - last).total_seconds() / 60.0
+            if age_min < min_interval_minutes:
+                return {"skipped": True, "age_min": round(age_min, 1)}
+    sql = """
+    WITH callagg AS (
+      -- Aggregate calls by dest9 FIRST (few thousand distinct numbers), so the prospect join
+      -- is a plain equijoin per number instead of a nested loop over every call × every prospect.
+      SELECT right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)  AS dest9,
+             max(c.started_at)                                       AS last_at,
+             (array_agg(c.provider ORDER BY c.started_at DESC))[1]   AS provider,
+             bool_or(cl.pipeline_stage = 'p5')                       AS has_p5,
+             bool_or(cl.pipeline_stage = 'p2')                       AS has_p2,
+             bool_or(cl.pipeline_stage = 'p1')                       AS has_p1,
+             bool_or(cl.pipeline_stage = 'p3')                       AS has_p3,
+             bool_or(COALESCE(cl.do_not_contact, false))             AS dnc
+      FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id
+      WHERE c.in_scope AND c.dest_number <> ''
+        AND length(right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)) >= 8
+      GROUP BY 1
+    ),
+    prphones AS (
+      -- explode each prospect's phone list so the call→prospect match is a plain equijoin
+      -- (hash join) on the number, not a per-number GIN probe.
+      SELECT pr.id, ph AS phone FROM prospects pr, unnest(pr.phones_norm) AS ph
+    ),
+    callroll AS (
+      SELECT p.id,
+             max(ca.last_at)                                       AS last_at,
+             (array_agg(ca.provider ORDER BY ca.last_at DESC))[1]  AS provider,
+             bool_or(ca.has_p5)  AS has_p5,
+             bool_or(ca.has_p2)  AS has_p2,
+             bool_or(ca.has_p1)  AS has_p1,
+             bool_or(ca.has_p3)  AS has_p3,
+             bool_or(ca.dnc)     AS dnc
+      FROM callagg ca JOIN prphones p ON p.phone = ca.dest9
+      GROUP BY p.id
+    ),
+    compkey AS (
+      -- domain-level rollup: any classification for this prospect's domain company_key
+      SELECT pr.id,
+             bool_or(cl.pipeline_stage = 'p5') AS c_p5,
+             bool_or(cl.pipeline_stage = 'p2') AS c_p2,
+             bool_or(cl.pipeline_stage = 'p1') AS c_p1,
+             bool_or(cl.pipeline_stage = 'p3') AS c_p3
+      FROM prospects pr
+      JOIN classifications cl ON pr.domain IS NOT NULL AND cl.company_key = 'dom:' || pr.domain
+      GROUP BY pr.id
+    ),
+    ads AS (
+      SELECT pr.id, ((e.dataforseo->>'running_google_ads') = 'true') AS runs_ads
+      FROM prospects pr JOIN enrichment e ON e.domain = pr.domain
+    ),
+    roll AS (
+      SELECT base.id,
+             cr.last_at, cr.provider,
+             (COALESCE(cr.has_p5,false) OR COALESCE(ck.c_p5,false)) AS p5,
+             (COALESCE(cr.has_p2,false) OR COALESCE(ck.c_p2,false)) AS p2,
+             (COALESCE(cr.has_p1,false) OR COALESCE(ck.c_p1,false)) AS p1,
+             (COALESCE(cr.has_p3,false) OR COALESCE(ck.c_p3,false)) AS p3,
+             COALESCE(cr.dnc, false)      AS dnc,
+             COALESCE(a.runs_ads, false)  AS runs_ads,
+             (cr.last_at IS NOT NULL)     AS called,
+             base.source
+      FROM prospects base
+      LEFT JOIN callroll cr ON cr.id = base.id
+      LEFT JOIN compkey  ck ON ck.id = base.id
+      LEFT JOIN ads       a ON a.id  = base.id
+    )
+    UPDATE prospects pr SET
+      last_called_at     = r.last_at,
+      last_call_provider = r.provider,
+      pipeline_stage = CASE WHEN r.p5 THEN 'p5' WHEN r.p2 THEN 'p2'
+                            WHEN r.p1 THEN 'p1' WHEN r.p3 THEN 'p3' ELSE 'p4' END,
+      p4_subpipeline = CASE
+        WHEN r.p5 OR r.p2 OR r.p1 OR r.p3 THEN NULL
+        WHEN r.dnc THEN 'dead'
+        WHEN r.source = 'call_capture' AND r.provider = 'aircall' THEN 'captured_aircall'
+        WHEN r.source = 'call_capture' AND r.called THEN 'captured_3cx'
+        WHEN r.called THEN 'attempted'
+        WHEN r.runs_ads THEN 'fresh_ads'
+        ELSE 'fresh_unscanned' END,
+      pipeline_synced_at = now()
+    FROM roll r
+    WHERE pr.id = r.id
+    """
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        touched = cur.rowcount
+        conn.commit()
+    dist = fetch_all(
+        pool,
+        "SELECT COALESCE(pipeline_stage,'?') AS stage, count(*) AS n FROM prospects GROUP BY 1",
+    )
+    stats = {"prospects": touched, **{str(r["stage"]): int(r["n"]) for r in dist}}
+    log.info("sync_prospect_pipelines", **stats)
     return stats
 
 

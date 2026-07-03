@@ -23,6 +23,8 @@ _ZERO = {
     "full_pitch": 0, "leads": 0, "qualified": 0, "meetings_booked": 0,
     "qualified_booked": 0, "meetings_done": 0,
     "warm": 0, "hot": 0, "super_hot": 0, "pipeline1": 0, "pipeline2": 0,
+    # Batch D 5-pipeline per-day counts (p5_booked mirrors meetings_booked for zero-drift).
+    "p1_callback": 0, "p2_agency": 0, "p3_gk_callback": 0, "p5_booked": 0,
 }
 
 # Per-(scope, track) aggregation via GROUPING SETS:
@@ -55,11 +57,13 @@ WITH base AS (
         -- per PROSPECT (dest_number): if the same prospect has an earlier booked call, this
         -- later one is a duplicate/re-touch and must NOT count again — one booking per lead.
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
-                   -- A booking = firm OR TENTATIVE (a tentative meeting still counts as Meeting
-                   -- Booked — it's a booking), honouring a BDM booking-outcome override (#4c).
+                   -- A booking = firm OR a TENTATIVE meeting WITH a SPECIFIC agreed time (clock
+                   -- time / am-pm / noon). A tentative with only a vague day or range ("next
+                   -- Thursday or Friday", "next week") is a soft follow-up, NOT a booking.
+                   -- Honours a BDM booking-outcome override (#4c).
                    AND (CASE WHEN qo.booking_outcome='counts' THEN true
                              WHEN qo.booking_outcome='not_booking' THEN false
-                             ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime IS NOT NULL)) END)
+                             ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) END)
                    AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
                                  WHEN qo.booking_outcome IN ('counts','not_booking','rescheduled') THEN false
                                  ELSE COALESCE(cl.meeting_confirmation, false) END)
@@ -75,7 +79,7 @@ WITH base AS (
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime IS NOT NULL)) AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
               THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
@@ -86,7 +90,7 @@ WITH base AS (
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND (CASE WHEN qo.booking_outcome='counts' THEN true
                              WHEN qo.booking_outcome='not_booking' THEN false
-                             ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime IS NOT NULL)) END)
+                             ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) END)
                    AND NOT (CASE WHEN qo.booking_outcome='confirmation' THEN true
                                  WHEN qo.booking_outcome IN ('counts','not_booking','rescheduled') THEN false
                                  ELSE COALESCE(cl.meeting_confirmation, false) END)
@@ -101,7 +105,7 @@ WITH base AS (
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime IS NOT NULL)) AND NOT COALESCE(pcl.meeting_confirmation,false)
+                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
                    -- Effective qualification: a BDM/admin OVERRIDE always wins; otherwise the AI's
                    -- OWN verdict. The AI SELF-QUALIFIES every booked meeting (firm OR tentative) by
@@ -127,6 +131,13 @@ WITH base AS (
                    AND cl.pipeline = 'pipeline1_interested' THEN 1 ELSE 0 END) AS pipeline1,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.pipeline = 'pipeline2_existing_agency' THEN 1 ELSE 0 END) AS pipeline2,
+        -- Batch D 5-pipeline per-call routing buckets (p4 is DB-derived, never counted here).
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.pipeline_stage = 'p1' THEN 1 ELSE 0 END) AS p1_callback,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.pipeline_stage = 'p2' THEN 1 ELSE 0 END) AS p2_agency,
+        (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
+                   AND cl.pipeline_stage = 'p3' THEN 1 ELSE 0 END) AS p3_gk_callback,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
                    AND cl.lead_temperature = 'warm' THEN 1 ELSE 0 END) AS warm,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail'
@@ -155,6 +166,10 @@ SELECT
     SUM(meetings_done)   AS meetings_done,
     SUM(pipeline1)       AS pipeline1,
     SUM(pipeline2)       AS pipeline2,
+    SUM(p1_callback)     AS p1_callback,
+    SUM(p2_agency)       AS p2_agency,
+    SUM(p3_gk_callback)  AS p3_gk_callback,
+    SUM(meetings_booked) AS p5_booked,
     SUM(warm)            AS warm,
     SUM(hot)             AS hot,
     SUM(super_hot)       AS super_hot
@@ -212,12 +227,14 @@ def aggregate_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:
                 INSERT INTO daily_funnel (
                     report_date, bde_name, track, calls_made, connected, transcribed,
                     rpc_connect, full_pitch, leads, qualified, meetings_booked, qualified_booked,
-                    meetings_done, warm, hot, super_hot, pipeline1, pipeline2)
+                    meetings_done, warm, hot, super_hot, pipeline1, pipeline2,
+                    p1_callback, p2_agency, p3_gk_callback, p5_booked)
                 VALUES (
                     %(report_date)s, %(bde_name)s, %(track)s, %(calls_made)s, %(connected)s,
                     %(transcribed)s, %(rpc_connect)s, %(full_pitch)s, %(leads)s,
                     %(qualified)s, %(meetings_booked)s, %(qualified_booked)s, %(meetings_done)s,
-                    %(warm)s, %(hot)s, %(super_hot)s, %(pipeline1)s, %(pipeline2)s)
+                    %(warm)s, %(hot)s, %(super_hot)s, %(pipeline1)s, %(pipeline2)s,
+                    %(p1_callback)s, %(p2_agency)s, %(p3_gk_callback)s, %(p5_booked)s)
                 """,
                 rows_to_write,
             )

@@ -460,6 +460,12 @@
     color:var(--txt);border-bottom:1px dotted var(--muted);text-decoration:none}
   #pipelineTable td .drill:hover{color:var(--accent);border-color:var(--accent)}
   #pipelineTable td.muted{color:var(--faint);font-weight:500}
+  /* --- P4 standing-pool tiles (Batch D) --- */
+  .p4tile{display:inline-flex;flex-direction:column;align-items:center;gap:1px;padding:7px 12px;
+    border:1px solid var(--line2);border-radius:10px;background:var(--panel3);color:var(--txt);min-width:78px}
+  .p4tile:hover{border-color:var(--accent);background:var(--panel2)}
+  .p4tile .n{font-weight:800;font-size:16px;font-variant-numeric:tabular-nums}
+  .p4tile .t{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
 
   /* --- pills (engine: p-good/p-mid/p-bad; p-ok defensive) --- */
   .pill{display:inline-block;min-width:42px;text-align:center;padding:2px 9px;border-radius:7px;font-size:11.5px;
@@ -576,6 +582,7 @@
   <div class="card" id="pipelineCard" style="margin-top:16px">
     <h2>Pipelines — distinct prospects <span class="muted" id="pipelineAnchor" style="font-weight:400"></span></h2>
     <div id="callbacksBanner" style="margin:2px 0 12px"></div>
+    <div id="p4PoolTiles" style="margin:2px 0 14px"></div>
     <div style="overflow:auto"><table id="pipelineTable"><thead></thead><tbody></tbody></table></div>
   </div>
 
@@ -830,7 +837,7 @@ async function refresh(){
   CMP_WIN = (f.compare && f.compare.window) || null;
   renderKpis(f); renderFunnel(f); renderFunnelTable(f); renderLead(f); renderWorkday(f.workday);
   jget(`/api/callbacks-today?bde=${encodeURIComponent(bde)}`).then(renderCallbacks).catch(()=>{});
-  renderPipelines(await jget(`/api/pipelines?bde=${encodeURIComponent(bde)}`), bde);
+  renderPipelines(await jget(`/api/pipelines5?bde=${encodeURIComponent(bde)}`), bde);
   renderLeaderboard(await jget(`/api/leaderboard?start=${WIN.start}&end=${WIN.end}`));
   jget(`/api/channel-report?start=${WIN.start}&end=${WIN.end}`).then(renderChannel).catch(()=>{});
   jget(`/api/pitch-quality?start=${WIN.start}&end=${WIN.end}`).then(renderPitch).catch(()=>{});
@@ -906,28 +913,48 @@ function openCallbacks(){
   $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
 let _pipeBde='ALL';
+// P4 standing-pool sub-buckets → the Database browser worklist (one-click filtered).
+const P4_TILES=[['fresh_ads','🎯 Fresh · running ads','fresh_ads'],
+                ['fresh_unscanned','🆕 Fresh · ads unknown','fresh_unscanned'],
+                ['captured_3cx','📇 Captured · 3CX','captured_3cx'],
+                ['captured_aircall','📇 Captured · Aircall','captured_aircall'],
+                ['attempted','🔁 Attempted (retry)','attempted']];
 function renderPipelines(p, bde){
   _pipeBde = bde || 'ALL';
   const thead=$('#pipelineTable thead'), tb=$('#pipelineTable tbody');
-  if(!p || !p.found){ thead.innerHTML=''; tb.innerHTML='<tr><td class="empty" colspan="6">No pipeline data yet</td></tr>'; return; }
+  if(!p || !p.found){ thead.innerHTML=''; tb.innerHTML='<tr><td class="empty" colspan="6">No pipeline data yet</td></tr>'; $('#p4PoolTiles').innerHTML=''; return; }
   $('#pipelineAnchor').textContent = '(rolling windows ending '+p.today+')';
+  // P4 · Fresh worklist — a standing DB pool (not a per-day flow). Each tile deep-links to
+  // the Database browser filtered to that P4 sub-pipeline.
+  const pool=p.pools||{};
+  const tiles = P4_TILES.map(([k,lbl,sub])=>{
+    const v=pool[k]||0;
+    return `<a class="p4tile" href="/database?pipeline=p4&p4sub=${sub}" target="_blank"
+        style="text-decoration:none"><span class="n">${(v).toLocaleString()}</span><span class="t">${lbl}</span></a>`;
+  }).join('');
+  $('#p4PoolTiles').innerHTML =
+    `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+       <a href="/database?pipeline=p4" target="_blank" style="text-decoration:none;font-weight:800;font-size:14px;color:var(--txt)">
+         🆕 P4 · Fresh worklist <span class="muted" style="font-weight:600">${(pool.total||0).toLocaleString()} to call</span></a>
+       ${tiles}
+     </div>`;
+  // P1/P2/P3/P5 flow rows (distinct prospects, prospect-level precedence).
   thead.innerHTML = '<tr><th style="text-align:left">Pipeline</th>'+
     p.windows.map(([k,lbl])=>`<th>${lbl}</th>`).join('')+'</tr>';
   tb.innerHTML = p.rows.map(r=>{
     const cells = p.windows.map(([k,lbl])=>{
       const v=r.counts[k]||0;
       return v>0
-        ? `<td><span class="drill" onclick="openPipelineProspects('${r.pipeline}','${k}','${lbl.replace(/'/g,'')}')">${v}</span></td>`
+        ? `<td><span class="drill" onclick="openPipeline5Prospects('${r.pipeline}','${k}','${r.label.replace(/'/g,'')} — ${lbl.replace(/'/g,'')}')">${v}</span></td>`
         : `<td class="muted">0</td>`;
     }).join('');
     return `<tr><td style="text-align:left;font-weight:600">${r.label}</td>${cells}</tr>`;
   }).join('');
 }
 
-async function openPipelineProspects(pipeline, window, wlabel){
-  const d = await jget(`/api/pipeline-prospects?pipeline=${pipeline}&window=${window}&bde=${encodeURIComponent(_pipeBde)}`);
-  const plabel = pipeline==='pipeline1_interested' ? 'Pipeline 1 · Interested' : 'Pipeline 2 · Has agency';
-  $('#dTitle').textContent = `${plabel} — ${wlabel} (${d.count} prospect${d.count===1?'':'s'})`;
+async function openPipeline5Prospects(pipeline, window, title){
+  const d = await jget(`/api/pipeline5-prospects?pipeline=${pipeline}&window=${window}&bde=${encodeURIComponent(_pipeBde)}`);
+  $('#dTitle').textContent = `${title} (${d.count} prospect${d.count===1?'':'s'})`;
   const TEMP={super_hot:'🔥',hot:'🔥',warm:'🌤'};
   $('#dBody').innerHTML = d.rows.length
     ? '<div style="display:flex;flex-direction:column;gap:8px">'+d.rows.map(r=>{

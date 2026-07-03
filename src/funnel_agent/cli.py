@@ -442,6 +442,55 @@ def aggregate(date_: str = typer.Option(..., "--date", help="YYYY-MM-DD")) -> No
         typer.echo(f"aggregate {date_}: {aggregate_day(ana, settings, _parse_date(date_))}")
 
 
+# SQL CASE that MIRRORS classify.classifier.derive_pipeline_stage EXACTLY (deterministic,
+# no LLM). Used to backfill classifications.pipeline_stage over history. Precedence p5>p2>p1>p3.
+_PIPELINE_STAGE_CASE = """
+CASE
+  WHEN (meeting_booked OR (booking_status='tentative' AND meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday'))
+       AND NOT COALESCE(meeting_confirmation, false)
+       AND NOT COALESCE(meeting_rescheduled, false)
+       AND NOT COALESCE(booking_already_exists, false)
+    THEN 'p5'
+  WHEN pipeline = 'pipeline2_existing_agency' THEN 'p2'
+  WHEN COALESCE(rpc_connect, false) AND COALESCE(callback_requested, false) THEN 'p1'
+  WHEN (NOT COALESCE(rpc_connect, false))
+       AND (call_outcome = 'gatekeeper'
+            OR (evidence->>'who_answered') ILIKE '%%gatekeeper%%'
+            OR (evidence->>'who_answered') ILIKE '%%recept%%')
+       AND (COALESCE(callback_requested, false)
+            OR NULLIF(callback_when, '') IS NOT NULL
+            OR (evidence->'rpc_next_move'->>'asked_callback_time') = 'true'
+            OR NULLIF(evidence->'rpc_next_move'->>'dm_available_when', '') IS NOT NULL)
+    THEN 'p3'
+  ELSE 'none' END
+"""
+
+
+@app.command(name="backfill-pipelines")
+def backfill_pipelines() -> None:
+    """One-off Batch D backfill: stamp classifications.pipeline_stage over ALL history
+    (deterministic CASE, no LLM), re-aggregate every day so daily_funnel p1_callback..p5_booked
+    populate, then materialize the prospects worklist layer. Idempotent — safe to re-run on
+    both local and cloud (via DATABASE_PUBLIC_URL)."""
+    settings = _settings()
+    from .aggregate import aggregate_day
+    from .prospects import sync_prospect_pipelines
+
+    with _analytics_pool(settings) as ana:
+        with ana.connection() as conn, conn.cursor() as cur:
+            cur.execute(f"UPDATE classifications SET pipeline_stage = {_PIPELINE_STAGE_CASE}")
+            stamped = cur.rowcount
+            conn.commit()
+            cur.execute("SELECT DISTINCT (started_at AT TIME ZONE %s)::date AS d FROM calls "
+                        "WHERE in_scope AND started_at IS NOT NULL ORDER BY d", (settings.tz,))
+            days = [r["d"] for r in cur.fetchall()]
+        typer.echo(f"backfill-pipelines: stamped {stamped} classifications; re-aggregating {len(days)} days")
+        for d in days:
+            aggregate_day(ana, settings, d)
+        pl5 = sync_prospect_pipelines(ana)
+    typer.echo(f"backfill-pipelines: done. prospects worklist: {pl5}")
+
+
 @app.command()
 def enrich(
     date_: str = typer.Option(None, "--date", help="single day YYYY-MM-DD"),
@@ -610,7 +659,7 @@ def refresh(
     settings = _settings()
     from .pipeline import classify_window
     from .pipeline2 import sync_pipeline2
-    from .prospects import capture_called_prospects
+    from .prospects import capture_called_prospects, sync_prospect_pipelines
 
     today = datetime.now(ZoneInfo(settings.tz)).date()
     start = today - timedelta(days=max(1, days) - 1)
@@ -624,6 +673,14 @@ def refresh(
         from .companies import sync_company_sources_from_prospects
         sync_company_sources_from_prospects(ana)
         p2 = sync_pipeline2(ana, default_cadence_days=settings.pipeline2_default_cadence_days)
+        # Batch D: materialize the 5-pipeline worklist layer (pipeline_stage + P4 sub-pipelines)
+        # from the freshly-classified calls + captured prospects. Additive; never blocks the loop.
+        # Heavy full recompute — gated to at most every ~10 min (the worklist changes slowly).
+        try:
+            pl5 = sync_prospect_pipelines(ana, min_interval_minutes=10)
+        except Exception as exc:
+            pl5 = {"error": str(exc)[:80]}
+            log.warning("sync_prospect_pipelines_failed", error=str(exc)[:160])
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}
         if settings.website_scan_per_cycle > 0:
@@ -665,7 +722,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()

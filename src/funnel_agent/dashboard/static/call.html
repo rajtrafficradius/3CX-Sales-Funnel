@@ -73,6 +73,9 @@
 
 <script>
 const pill=(v)=>`<span class="pill ${v?'yes':'no'}">${v?'YES':'NO'}</span>`;
+// A tentative booking is only a real booking when a SPECIFIC time was agreed (clock time /
+// am-pm / noon), not just a vague day/range. Mirrors the SQL/Python booking rule.
+const hasMeetingTime=(dt)=>!!dt && /[0-9]:[0-9]|[0-9]\s*[ap]\.?m|noon|midday/i.test(dt);
 const esc=s=>(s==null?'':String(s)).replace(/[&<]/g,c=>({'&':'&amp;','<':'&lt;'}[c]));
 const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
 
@@ -84,9 +87,10 @@ function bookingBanner(ev, counts, dt, o){
   const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
         GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
   const bs=ev.booking_status;
-  // A booking = firm OR a TENTATIVE meeting WITH a proposed date/time. A "tentative" with no
-  // date/time is just a follow-up (prospect will get back / check internally) — not a booking.
-  const isBooking = (ev.meeting_booked && ev.meeting_booked.value) || (bs==='tentative' && !!dt);
+  // A booking = firm OR a TENTATIVE meeting WITH a SPECIFIC agreed time (clock time / am-pm /
+  // noon). A tentative with only a vague day or range ("next Thursday or Friday", "next week")
+  // is a soft follow-up, not a booking. Mirrors the SQL/Python rule in aggregate.py/app.py.
+  const isBooking = (ev.meeting_booked && ev.meeting_booked.value) || (bs==='tentative' && hasMeetingTime(dt));
   // A BDM override is the source of truth over the AI. When the BDM qualifies a (tentative)
   // booking, the meeting is CONFIRMED because of his override — say so explicitly.
   const by = o && o.override_by ? ' ('+esc(o.override_by)+')' : '';
@@ -96,7 +100,7 @@ function bookingBanner(ev, counts, dt, o){
     return banner(AMBER,'✕ Marked <b>not a booking by the BDM'+by+"'s override</b> — NOT counted, even though the AI read it as a booking.");
   if(!isBooking){
     if(bs==='cancelled_or_declined') return banner(AMBER,'❌ Booking attempt — the prospect cancelled / declined. NOT counted as a booking.');
-    if(bs==='tentative') return banner(GREY,'🕓 Discussed but no date/time set — NOT counted as a booking (treat as a follow-up).');
+    if(bs==='tentative') return banner(GREY,'🕓 Tentative — no specific meeting time agreed (only a vague day/range or none). NOT counted as a booking (treat as a follow-up).');
     return '';
   }
   const conf = ev.meeting_confirmation_only && ev.meeting_confirmation_only.value;
@@ -201,6 +205,19 @@ function stageRow(name, v){
   return `<div class="stage"><div><div class="nm">${name}</div><div class="ev">${esc(v.evidence)}</div></div>
     <div style="text-align:right">${pill(v.value)}<div class="muted" style="font-size:11px;margin-top:3px">${conf}</div></div></div>`;
 }
+// The "Qualified" funnel row honours a BDM override (override wins over the AI verdict, matching
+// the count). When overridden, it shows the effective YES/NO + a BDM-override note.
+function qualStageRow(v, o){
+  if(!v) return '';
+  const aiQ=!!v.value, hasOv=!!(o && o.qualified != null), eff=hasOv?!!o.qualified:aiQ;
+  const conf=v.confidence!=null?` · ${Math.round(v.confidence*100)}% conf`:'';
+  const nm = 'Qualified' + (hasOv?` <span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd;font-size:11px">BDM override</span>`:'');
+  const evTxt = hasOv
+    ? `BDM override by ${esc(o.override_by)||'BDM'}: ${esc(o.reason||'')} — the AI originally said ${aiQ?'qualified':'not qualified'}.`
+    : esc(v.evidence);
+  return `<div class="stage"><div><div class="nm">${nm}</div><div class="ev">${evTxt}</div></div>
+    <div style="text-align:right">${pill(eff)}<div class="muted" style="font-size:11px;margin-top:3px">${conf}</div></div></div>`;
+}
 
 const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
@@ -223,11 +240,17 @@ function recordingCard(c, canDownload){
       <audio controls preload="none" style="height:38px;max-width:420px;flex:1" src="${url}"></audio>${dl}
     </div></div>`;
 }
-function leadCard(cl, ev){
+function leadCard(cl, ev, o){
   const t=cl.lead_temperature||'none', [lbl,col,bg]=TEMP[t]||TEMP.none;
   const cb = cl.callback_requested
     ? `<span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">📞 Callback${cl.callback_when?': '+esc(cl.callback_when):' requested'}</span>` : '';
-  const qpill = ev.qualified ? `<span class="pill ${ev.qualified.value?'yes':'no'}">${ev.qualified.value?'✓ Qualified':'Not qualified'}</span>` : '';
+  // Effective qualification: a BDM/admin override WINS over the AI verdict (matches the funnel
+  // count). Show the effective status, with a "BDM override" tag so it's clear it was changed.
+  const aiQ = !!(ev.qualified && ev.qualified.value);
+  const hasOv = !!(o && o.qualified != null);
+  const effQ = hasOv ? !!o.qualified : aiQ;
+  const ovTag = hasOv ? ` <span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd" title="${esc(o.reason||'')}">BDM override${o.override_by?' · '+esc(o.override_by):''}</span>` : '';
+  const qpill = ev.qualified ? `<span class="pill ${effQ?'yes':'no'}">${effQ?'✓ Qualified':'Not qualified'}</span>${ovTag}` : '';
   const autov = (ev.runs_paid_ads||ev.has_marketing_agency)
     ? `<div class="muted" style="font-size:12.5px;margin-top:10px">⚡ Auto-validated (budget + aspiration): ${[ev.runs_paid_ads?'already runs paid ads':null, ev.has_marketing_agency?'already has a marketing agency':null].filter(Boolean).join(' · ')}</div>` : '';
   const prob = ev.problem_summary ? `<div style="font-size:13px;margin-top:10px"><b>Marketing problem (prospect's words):</b> ${esc(ev.problem_summary)}</div>` : '';
@@ -466,7 +489,7 @@ async function load(){
     ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
     ${stageRow('Full Pitch', ev.full_pitch)}
     ${stageRow('Lead (interest)', ev.is_lead)}
-    ${stageRow('Qualified', ev.qualified)}
+    ${qualStageRow(ev.qualified, d.qual_override)}
     ${stageRow('Meeting Booked', ev.meeting_booked)}
     ${ev.meeting_rescheduled?stageRow('Rescheduled booking (re-booked an earlier meeting — still counts)', ev.meeting_rescheduled):''}
     ${ev.meeting_confirmation_only?stageRow('Meeting confirmation only (re-confirmed, no new date)', ev.meeting_confirmation_only):''}
@@ -498,7 +521,7 @@ async function load(){
     : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
 
   const tabs=[
-    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev) + qualOverrideCard(d) + feedbackCard(ev,cl) + rpcNextMoveCard(d) + meta + verdicts + extractedCard(cl,ev)],
+    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev,d.qual_override) + qualOverrideCard(d) + feedbackCard(ev,cl) + rpcNextMoveCard(d) + meta + verdicts + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],
