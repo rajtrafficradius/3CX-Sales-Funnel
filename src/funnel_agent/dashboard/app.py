@@ -2042,6 +2042,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for m in messages:
             m["time_sent"] = str(m["time_sent"]) if m.get("time_sent") else None
 
+        # Smart next-call priority for this prospect (A) — defensive: table may not exist yet.
+        priority = None
+        try:
+            pr_id = (master or {}).get("id")
+            if pr_id:
+                pr = q("SELECT prospect_id, score, tier, reason, next_best_time, assigned_bde, "
+                       "override_by, source_signal FROM next_call_queue WHERE prospect_id=%s", (pr_id,))
+            else:
+                pr = q("SELECT prospect_id, score, tier, reason, next_best_time, assigned_bde, "
+                       "override_by, source_signal FROM next_call_queue "
+                       "WHERE (domain=%s AND %s<>'') OR dest9 = ANY(%s) ORDER BY score DESC LIMIT 1",
+                       (domain, domain or "", list(d9s) if d9s else [])) if (domain or d9s) else []
+            priority = pr[0] if pr else None
+        except Exception:
+            priority = None
+
         return JSONResponse(jsonable_encoder({
             "found": True,
             "key": key,
@@ -2052,6 +2068,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "company_summary": company_summary,
             "rollup": rollup,
             "paid_ads": _paid_ads_intel(enr, calls),
+            "priority": priority,
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
             "calls": calls,
             "messages": messages,
@@ -2178,6 +2195,81 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(502, f"SEO audit unavailable — DataForSEO error: {str(exc)[:120]}")
         return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "audit": audit}))
+
+    @app.post("/api/prospect/{key}/competitor-audit")
+    async def prospect_competitor_audit(request: Request, key: str) -> JSONResponse:
+        """PAID on-demand (K): top-5 competitor gap audit — paid + organic competitors, keyword /
+        content / backlink gap, GEO/AEO readiness, quick-wins -> growth. Cached in enrichment
+        jsonb (re-open is free). BDM / admin / manager only; capped at ~6 DataForSEO calls."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "Competitor audit is paid — restricted to BDM / admin / manager")
+        if not settings.dataforseo_enabled:
+            raise HTTPException(503, "DataForSEO not configured")
+        _master, domain, _norm = _resolve_prospect(key)
+        if not domain:
+            return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
+        force = (await _form(request)).get("force") in ("1", "true", "on")
+        from ..competitor import run_competitor_audit
+        try:
+            audit = await run_in_threadpool(lambda: run_competitor_audit(pool, settings, domain, force=force))
+        except Exception as exc:
+            raise HTTPException(502, f"Competitor audit unavailable — {str(exc)[:120]}")
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "audit": audit}))
+
+    # ---- Smart next-call priority queue (A) ------------------------------ #
+    @app.get("/api/next-calls")
+    def next_calls(request: Request, bde: str = "ALL", due_only: bool = False,
+                   tier: str = "", limit: int = 200) -> JSONResponse:
+        """The ranked next-call queue (intent x attention x revenue). BDEs see only their own."""
+        scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
+        from ..next_call import list_next_calls
+        rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
+                               due_only=bool(due_only), tier=(tier or None), limit=min(500, max(1, limit)))
+        u = getattr(request.state, "user", None) or {}
+        roster = [r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
+                                       "FROM bde_agents WHERE in_scope AND active ORDER BY 1")]
+        return JSONResponse(jsonable_encoder({"rows": rows, "can_assign": can_manage_pipeline(u), "roster": roster}))
+
+    @app.post("/api/next-calls/sync")
+    async def next_calls_sync(request: Request) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "manager only")
+        from ..next_call import sync_next_call_scores
+        stats = await run_in_threadpool(lambda: sync_next_call_scores(pool, settings, min_interval_minutes=0))
+        return JSONResponse(jsonable_encoder({"ok": True, "stats": stats}))
+
+    @app.post("/api/next-calls/{key}/reassign")
+    async def next_calls_reassign(request: Request, key: str) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "manager only")
+        d = await _form(request)
+        bde = (d.get("bde") or "").strip()
+        if not bde:
+            return JSONResponse({"error": "bde required"}, status_code=400)
+        from ..next_call import reassign_next_call
+        ok = await run_in_threadpool(lambda: reassign_next_call(pool, int(key), bde,
+                                     by=(u.get("email") or "manager"), notes=d.get("notes")))
+        return JSONResponse({"ok": bool(ok)})
+
+    @app.post("/api/next-calls/{key}/schedule")
+    async def next_calls_schedule(request: Request, key: str) -> JSONResponse:
+        d = await _form(request)
+        try:
+            start_at = _dt.fromisoformat((d.get("start_at") or "").replace("Z", "+00:00"))
+        except Exception:
+            return JSONResponse({"error": "invalid start_at (ISO datetime required)"}, status_code=400)
+        from ..next_call import set_next_best_time
+        eid = await run_in_threadpool(lambda: set_next_best_time(pool, int(key), start_at))
+        return JSONResponse({"ok": True, "event_id": eid})
+
+    @app.post("/api/next-calls/{key}/done")
+    async def next_calls_done(request: Request, key: str) -> JSONResponse:
+        from ..next_call import mark_done
+        ok = await run_in_threadpool(lambda: mark_done(pool, int(key)))
+        return JSONResponse({"ok": bool(ok)})
 
     @app.post("/api/prospect/{key}/set-website")
     async def prospect_set_website(request: Request, key: str) -> JSONResponse:

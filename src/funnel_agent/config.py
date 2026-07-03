@@ -149,6 +149,14 @@ class Settings(BaseSettings):
     rpc_voicemail_left_seconds: int = 10
     # How long an open, un-actioned RPC retry can sit before we flag the BDM.
     rpc_retry_notify_hours: int = 6
+    # --- Smart next-call priority (next_call.py): score = intent x attention x revenue (Intent-led) ---
+    next_call_w_intent: float = 0.5
+    next_call_w_attention: float = 0.3
+    next_call_w_revenue: float = 0.2
+    next_call_revenue_cap_musd: float = 100.0   # revenue score saturates at this ($M USD)
+    next_call_tier_hot: int = 70                 # score >= => 'hot'
+    next_call_tier_warm: int = 40                # score >= => 'warm' (else 'cool')
+    next_call_sync_interval_min: int = 10        # skip the recompute if a sync is fresher than this
     tz: str = "Australia/Melbourne"
     # Pipeline 2 (already-with-agency): default WEEKLY BDE rotation cadence. A
     # contract-end signal from the AI still overrides this per-prospect (don't pester

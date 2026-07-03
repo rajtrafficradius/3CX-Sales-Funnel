@@ -681,6 +681,13 @@ def refresh(
         except Exception as exc:
             pl5 = {"error": str(exc)[:80]}
             log.warning("sync_prospect_pipelines_failed", error=str(exc)[:160])
+        # Smart next-call priority queue (revenue x attention x intent). Gated like the worklist.
+        try:
+            from .next_call import sync_next_call_scores
+            nc = sync_next_call_scores(ana, settings, min_interval_minutes=settings.next_call_sync_interval_min)
+        except Exception as exc:
+            nc = {"error": str(exc)[:80]}
+            log.warning("sync_next_call_scores_failed", error=str(exc)[:160])
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}
         if settings.website_scan_per_cycle > 0:
@@ -722,7 +729,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()

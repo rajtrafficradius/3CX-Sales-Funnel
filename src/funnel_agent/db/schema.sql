@@ -488,3 +488,30 @@ CREATE INDEX IF NOT EXISTS idx_rpc_actions_company ON rpc_actions (company_key);
 -- One auto-scheduled RPC retry per number (idempotent for the scheduler in rpc.py).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_rpc_retry
   ON calendar_events (dest_number) WHERE type = 'rpc_retry';
+
+-- Smart next-call priority queue (next_call.py). One row per ACTIONABLE prospect, rebuilt
+-- idempotently by sync_next_call_scores (INTENT x ATTENTION x REVENUE). Reads calls/
+-- classifications/companies/rpc_actions read-only; this is the only table that engine writes.
+CREATE TABLE IF NOT EXISTS next_call_queue (
+  prospect_id     int PRIMARY KEY REFERENCES prospects(id) ON DELETE CASCADE,
+  dest9           text,
+  domain          text,
+  business_name   text,
+  score           numeric,            -- blended 0..100 (intent x attention x revenue)
+  tier            text,               -- 'hot' (>=70) | 'warm' (>=40) | 'cool'
+  revenue_musd    numeric,
+  rev_score       numeric,
+  att_score       numeric,
+  int_score       numeric,
+  source_signal   text,               -- callback | rpc_action | pipeline_p1 | pipeline_p3 | recent_call
+  reason          jsonb,              -- {drivers:[...], revenue_musd, intent, attention, revenue}
+  next_best_time  timestamptz,
+  assigned_bde    text,
+  override_by     text,               -- set by reassign / reschedule; freezes owner+time on re-sync
+  linked_event_id int,
+  status          text NOT NULL DEFAULT 'open',   -- 'open' | 'done'
+  synced_at       timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_ncq_bde_score ON next_call_queue (assigned_bde, score DESC);
+CREATE INDEX IF NOT EXISTS idx_ncq_tier ON next_call_queue (tier);
+CREATE INDEX IF NOT EXISTS idx_ncq_nbt ON next_call_queue (next_best_time);
