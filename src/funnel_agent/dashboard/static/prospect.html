@@ -232,15 +232,22 @@ function apolloCard(d){
   const people=(ap.people||[]).slice().sort((a,b)=>((a.rank==null?4:a.rank)-(b.rank==null?4:b.rank)));
   // Contacts WE'VE already spoken to (dedup vs Apollo): first names from our calls + master.
   const _calls=d.calls||[], _m=d.master||{}, _ro=d.rollup||{};
-  const firstName=s=>String(s||'').trim().toLowerCase().split(/\s+/)[0];
-  const known=new Set(), knownFull=[];
-  _calls.forEach(c=>{ if(c.prospect_contact_name){ known.add(firstName(c.prospect_contact_name)); knownFull.push(c.prospect_contact_name); } });
-  if(_m.contact_name){ known.add(firstName(_m.contact_name)); knownFull.push(_m.contact_name); }
-  known.delete('');
-  const inRecords=p=>{ const fn=firstName(p.name); return fn && known.has(fn); };
-  const contactName=knownFull.length?knownFull[knownFull.length-1]:null;
+  // Name matching: same first name AND (same last name OR one lacks a last name) — tolerant of
+  // titles/middle names but avoids matching every "John". Used to cross-reference Apollo's
+  // decision-makers against BOTH our master DB records and the people we've actually called.
+  const _norm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const _toks=s=>_norm(s).split(' ').filter(Boolean);
+  const sameName=(a,b)=>{const A=_toks(a),B=_toks(b);if(!A.length||!B.length)return false;if(A[0]!==B[0])return false;const la=A[A.length-1],lb=B[B.length-1];return la===A[0]||lb===B[0]||la===lb;};
+  // Master-DB decision-makers on file (owner + contacts) — for the "in both records" flag.
+  const masterNames=[_m.contact1_name,_m.contact2_name,_m.contact_name].filter(Boolean)
+    .concat((_m.extra_contacts||[]).map(x=>x&&x.name).filter(Boolean));
+  // People we've actually spoken to on a call.
+  const calledNames=_calls.map(c=>c.prospect_contact_name).filter(Boolean);
+  const inMaster=p=>masterNames.some(mn=>sameName(p.name,mn));   // Apollo DM ↔ master DB record
+  const inCalled=p=>calledNames.some(cn=>sameName(p.name,cn));   // Apollo DM ↔ someone we've called
+  const contactName=calledNames.length?calledNames[calledNames.length-1]:(masterNames[0]||null);
   // skip-if-DM-already-reached: if we've reached the decision-maker, the Apollo list is supplementary.
-  const reachedNote=(_ro.ever_rpc||known.size>0)
+  const reachedNote=(_ro.ever_rpc||calledNames.length>0)
     ? `<div class="muted small mt6" style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#93c5fd;padding:6px 10px;border-radius:8px">✓ Decision-maker already reached on a call${contactName?' — <b>'+esc(contactName)+'</b>':''}. The Apollo list below is supplementary (other contacts at the company).</div>`
     : '';
   // LinkedIn per decision-maker: use Apollo's real profile URL if present (rare — it's
@@ -258,7 +265,7 @@ function apolloCard(d){
     :ap.found===false?'No decision-makers — Apollo has no record for this domain.'
     :'No decision-makers listed by Apollo for this company.';
   const peopleHtml=people.length?`<div class="subh">Decision-makers (${people.length})</div>${reachedNote}
-    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'}${inRecords(p)?' <span class="pill yes" style="font-size:10px">✓ already contacted</span>':''} <span class="muted" style="font-size:11px">${liLink(p)}</span></div>
+    <div class="kv">${people.map(p=>`<div>${esc(p.name)||'—'}${inMaster(p)?' <span class="pill yes" style="font-size:10px" title="This decision-maker is also in your master DB records (owner/contact on file)">✓ in both records</span>':''}${(inCalled(p)&&!inMaster(p))?' <span class="pill yes" style="font-size:10px">✓ already contacted</span>':''} <span class="muted" style="font-size:11px">${liLink(p)}</span></div>
       <div>${esc(p.title)||'—'}${(p.has_email||p.has_phone)?` <span class="muted" style="font-size:11px">(${[p.has_email?'email':null,p.has_phone?'phone':null].filter(Boolean).join('/')} on file — credits to reveal)</span>`:''}</div>`).join('')}</div>`
     :`<div class="subh">Decision-makers</div><div class="muted small mt6">${noDmReason}</div>`;
   return `<div class="card full"><h2>🏢 Apollo data</h2>${aHtml}${descr}${techHtml}${peopleHtml}</div>`;
