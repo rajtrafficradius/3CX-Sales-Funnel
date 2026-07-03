@@ -5,55 +5,141 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Calendar — 3CX Funnel</title>
 <style>
-  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6}
+  :root{
+    /* ---- Premium design system (shared with the main dashboard) ---- */
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14); --ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+    --r1:8px; --r2:10px; --r3:12px; --r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+    /* type scale */
+    --t-micro:10px; --t-eyebrow:10.5px; --t-meta:11px; --t-cap:12px; --t-body:13px;
+    --t-base:14px; --t-strong:16px; --t-fig:22px; --t-kpi:27px; --t-h1:30px;
+    /* ---- page-specific: priority tiers + type accents ---- */
+    --tier-hot:#f87171;  --tier-hot-bg:rgba(248,113,113,.13);  --tier-hot-soft:rgba(248,113,113,.32);
+    --tier-warm:#fbbf24; --tier-warm-bg:rgba(251,191,36,.12);  --tier-warm-soft:rgba(251,191,36,.32);
+    --tier-cool:#7e8a9c;
+    --ty-meeting:#4ade80; --ty-callback:#5b8cff; --ty-note:#9aa6b6; --ty-rpc:#c084fc; --ty-next:#fbbf24;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  header{display:flex;align-items:center;gap:14px;padding:12px 20px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-  header a{color:var(--accent);text-decoration:none;font-size:13px}
-  .brand{background:#fff;border-radius:10px;padding:5px 10px;line-height:0}.brand img{height:24px;display:block}
-  h1{font-size:16px;margin:0;font-weight:650}
+  body{margin:0;background:var(--bg);color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  /* ---- header ---- */
+  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 20px;background:linear-gradient(180deg,#11161f,var(--bg));border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:var(--t-body)}
+  header a:hover{text-decoration:underline}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0;box-shadow:var(--elev1)}
+  .brand img{height:24px;display:block}
+  h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:.2px}
   .spacer{flex:1}
-  select,button,input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
-  button{cursor:pointer}
-  .who{font-size:12px;color:var(--muted)}
-  main{max-width:1200px;margin:0 auto;padding:18px 20px}
-  .navrow{display:flex;align-items:center;gap:12px;margin-bottom:14px}
-  .navrow .mlabel{font-size:18px;font-weight:700;min-width:200px;text-align:center}
+  /* ---- form controls ---- */
+  select,button,input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);padding:7px 11px;font:inherit}
+  input[type=time]{color-scheme:dark}
+  button{cursor:pointer;transition:border-color .15s,background .15s,color .15s}
+  button:hover{border-color:var(--line2)}
+  select:focus,button:focus,input:focus{outline:none;box-shadow:var(--ring);border-color:var(--accent)}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn-primary:hover{background:var(--accent2);border-color:var(--accent2)}
+  .who{font-size:var(--t-cap);color:var(--muted)}
+  .pill{display:inline-block;font-size:var(--t-cap);padding:3px 10px;border-radius:20px;background:var(--accent-soft);border:1px solid var(--line);color:var(--txt-dim);font-weight:600}
+  /* ---- layout ---- */
+  main{max-width:1200px;margin:0 auto;padding:20px 22px}
+  .over{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.7px;color:var(--faint);font-weight:800}
+  .hint{margin:0 0 var(--s4);color:var(--muted);font-size:var(--t-cap);line-height:1.55;max-width:820px}
+  .hint b{color:var(--txt-dim)}
+  .hint .hot{color:var(--tier-hot);font-weight:700}
+  .navrow{display:flex;align-items:center;gap:10px;margin-bottom:var(--s4)}
+  .navrow button{padding:7px 12px;font-size:var(--t-strong);line-height:1;min-width:36px}
+  .navrow .mlabel{font-size:var(--t-fig);font-weight:800;letter-spacing:.2px;min-width:210px;text-align:center;font-variant-numeric:tabular-nums}
+  /* ---- month grid ---- */
   .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
-  .dow{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:center;padding:4px 0}
-  .cell{min-height:96px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;cursor:pointer;overflow:hidden}
-  .cell:hover{border-color:var(--accent)}
+  .dow{color:var(--muted);font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;font-weight:700;text-align:center;padding:6px 0}
+  .cell{min-height:106px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:7px;cursor:pointer;overflow:hidden;transition:border-color .15s,background .15s}
+  .cell:hover{border-color:var(--line2);background:var(--panel2)}
   .cell.other{opacity:.4}
   .cell.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
-  .cell.sel{outline:2px solid var(--accent)}
-  .cell .d{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:4px}
-  .ev{font-size:11px;border-radius:5px;padding:2px 5px;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ev.callback{background:rgba(59,130,246,.18);color:#93c5fd}
-  .ev.meeting{background:rgba(34,197,94,.16);color:#86efac}
-  .ev.note{background:rgba(148,163,184,.16);color:#cbd5e1}
+  .cell.sel{outline:2px solid var(--accent);outline-offset:0}
+  .cell .d{font-size:var(--t-cap);color:var(--muted);font-weight:700;margin-bottom:5px}
+  .cell.today .d,.cell.sel .d{color:var(--accent)}
+  /* ---- event chip (month view) ---- */
+  .ev{font-size:var(--t-meta);border-radius:5px;padding:2px 6px 2px 7px;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:3px solid var(--line2)}
+  .ev .dot{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle;margin-right:1px}
+  .ev .tm{font-variant-numeric:tabular-nums;opacity:.85}
+  .ev.callback{background:rgba(91,140,255,.14);color:#a9c2ff}
+  .ev.meeting{background:rgba(74,222,128,.13);color:#8ef0b0}
+  .ev.note{background:rgba(154,166,182,.12);color:#c7d0dc}
+  .ev.rpc_retry{background:rgba(192,132,252,.13);color:#d4b6fd}
+  .ev.next_call{background:rgba(251,191,36,.12);color:#f5cf7a}
+  .ev.tier-hot{border-left-color:var(--tier-hot);box-shadow:inset 0 0 0 1px var(--tier-hot-soft)}
+  .ev.tier-warm{border-left-color:var(--tier-warm);box-shadow:inset 0 0 0 1px var(--tier-warm-soft)}
+  .ev.tier-cool{border-left-color:var(--tier-cool)}
+  .ev.tier-none{border-left-color:var(--line2)}
   .ev.done{opacity:.5;text-decoration:line-through}
-  .panel{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
-  .panel h2{font-size:13px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
-  .erow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  /* ---- day / agenda panel ---- */
+  .panel{margin-top:var(--s4);background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);padding:18px 20px}
+  .panel .over{margin-bottom:2px}
+  .panel h2{font-size:var(--t-strong);margin:0 0 4px;color:var(--txt);font-weight:700;letter-spacing:.2px}
+  .panel .sub{font-size:var(--t-cap);color:var(--muted);margin:0 0 14px}
+  .erow{display:flex;align-items:flex-start;gap:12px;padding:12px 12px 12px 13px;border-bottom:1px solid var(--line-soft);border-left:3px solid var(--line2)}
   .erow:last-child{border-bottom:none}
-  .erow .t{font-variant-numeric:tabular-nums;color:var(--muted);width:64px;font-size:13px}
-  .erow .ti{flex:1}
-  .erow .tag{font-size:11px;padding:1px 7px;border-radius:10px}
-  .erow.done .ti{opacity:.5;text-decoration:line-through}
-  .erow button{padding:4px 8px;font-size:12px}
-  .addform{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  .erow.tier-hot{border-left-color:var(--tier-hot);background:linear-gradient(90deg,var(--tier-hot-bg),transparent 42%)}
+  .erow.tier-warm{border-left-color:var(--tier-warm);background:linear-gradient(90deg,var(--tier-warm-bg),transparent 42%)}
+  .erow.tier-cool,.erow.tier-none{border-left-color:var(--line2)}
+  .erow .t{font-variant-numeric:tabular-nums;color:var(--muted);width:52px;flex:0 0 auto;font-size:var(--t-cap);padding-top:3px}
+  .erow .ti{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+  .erow.done .ti .etitle{opacity:.5;text-decoration:line-through}
+  .etype{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-eyebrow);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);background:var(--chip);border:1px solid var(--line);padding:3px 8px;border-radius:20px;white-space:nowrap}
+  .etype.meeting{color:var(--ty-meeting)}
+  .etype.callback{color:var(--ty-callback)}
+  .etype.note{color:var(--ty-note)}
+  .etype.rpc_retry{color:var(--ty-rpc)}
+  .etype.next_call{color:var(--ty-next)}
+  .etitle{font-size:var(--t-body);font-weight:600;color:var(--txt)}
+  .ebde{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-cap);color:var(--muted)}
+  .ephone{font-size:var(--t-cap);color:var(--accent);text-decoration:none;font-variant-numeric:tabular-nums}
+  .ephone:hover{text-decoration:underline}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .tchip{font-size:var(--t-eyebrow);font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:2px 8px;border-radius:20px}
+  .tchip.hot{background:var(--tier-hot-bg);color:var(--tier-hot)}
+  .tchip.warm{background:var(--tier-warm-bg);color:var(--tier-warm)}
+  .enote{flex-basis:100%;margin-top:2px;white-space:pre-wrap;color:var(--txt-dim);font-size:var(--t-cap);line-height:1.55;background:var(--panel3);border:1px solid var(--line-soft);border-radius:var(--r1);padding:9px 11px}
+  .enote-lbl{display:block;font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:800;margin-bottom:4px}
+  .erow-actions{display:flex;gap:6px;flex:0 0 auto}
+  .erow button{padding:5px 9px;font-size:var(--t-cap);background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1)}
+  .erow button:hover{border-color:var(--accent);color:var(--txt)}
+  .erow .tag{font-size:var(--t-meta);padding:1px 7px;border-radius:10px}
+  /* ---- add-event form ---- */
+  .addform{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line);align-items:center}
+  .addform::before{content:'Add event';flex-basis:100%;font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:800;margin-bottom:2px}
   .muted{color:var(--muted)}
-  .pill{font-size:11px;padding:1px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
-  .legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:0 0 14px;font-size:12px;color:var(--muted)}
-  .legend .lgh{text-transform:uppercase;letter-spacing:.5px;font-size:10px;font-weight:700;opacity:.75}
+  /* ---- legend ---- */
+  .legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin:0 0 var(--s4);padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev1);font-size:var(--t-cap);color:var(--txt-dim)}
+  .legend .lgh{text-transform:uppercase;letter-spacing:.6px;font-size:var(--t-eyebrow);font-weight:800;color:var(--faint)}
   .legend .lg{display:inline-flex;align-items:center;gap:6px}
   .legend .lg i{width:12px;height:12px;border-radius:3px;display:inline-block;flex:0 0 auto}
-  .legend .lg i.type.meeting{background:rgba(34,197,94,.55)}
-  .legend .lg i.type.callback{background:rgba(59,130,246,.55)}
-  .legend .lg i.type.note{background:rgba(148,163,184,.55)}
+  .legend .lg i.type.meeting{background:var(--ty-meeting)}
+  .legend .lg i.type.callback{background:var(--ty-callback)}
+  .legend .lg i.type.note{background:var(--ty-note)}
+  .legend .lg i.type.rpc_retry{background:var(--ty-rpc)}
+  .legend .lg i.type.next_call{background:var(--ty-next)}
   .legend .lg i.type.done{background:#475569}
-  .ev{border-left:3px solid transparent}
-  .erow{border-left:3px solid transparent;padding-left:9px}
+  .legend .lg i.tier{width:6px;height:14px;border-radius:2px}
+  .legend .lg i.tier.hot{background:var(--tier-hot)}
+  .legend .lg i.tier.warm{background:var(--tier-warm)}
+  .legend .lg i.tier.cool{background:var(--tier-cool)}
+  /* ---- responsive ---- */
+  @media(max-width:720px){
+    main{padding:14px}
+    .cell{min-height:78px;padding:5px}
+    .ev{font-size:var(--t-micro)}
+    .navrow .mlabel{min-width:0;flex:1;font-size:var(--t-strong)}
+    .erow{flex-wrap:wrap}
+    .erow-actions{margin-left:auto}
+  }
 </style>
 </head>
 <body>
@@ -69,23 +155,33 @@
 </header>
 <main>
   <div class="navrow">
-    <button onclick="move(-1)">‹</button>
+    <button onclick="move(-1)" title="Previous month" aria-label="Previous month">‹</button>
     <div class="mlabel" id="mlabel"></div>
-    <button onclick="move(1)">›</button>
-    <button onclick="goToday()">Today</button>
+    <button onclick="move(1)" title="Next month" aria-label="Next month">›</button>
+    <button class="btn-primary" onclick="goToday()">Today</button>
     <div class="spacer"></div>
   </div>
+  <p class="hint">Your callbacks, booked meetings and AI-generated next-call plans, all in one place. Events are ordered by time and colour-coded by <b>priority</b> — <span class="hot">Hot</span> means call today. Pick a day below to see its full agenda and add your own.</p>
   <div class="legend" id="legend"></div>
   <div class="grid" id="dow"></div>
   <div class="grid" id="cal"></div>
-  <div class="panel" id="dayPanel"><h2 id="dayTitle">Select a day</h2><div id="dayBody" class="muted">Click a day to see and add events.</div></div>
+  <div class="panel" id="dayPanel">
+    <div class="over">Agenda</div>
+    <h2 id="dayTitle">Select a day</h2>
+    <div class="sub">Click any day in the calendar to view its callbacks, meetings and AI next-call plans — and to add your own.</div>
+    <div id="dayBody" class="muted">No day selected yet.</div>
+  </div>
 </main>
 <script>
 const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
 const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
-const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝'};
+const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝',rpc_retry:'🔁',next_call:'⭐'};
+const TYPE_LABEL={callback:'Callback',meeting:'Meeting',note:'Note',rpc_retry:'RPC retry',next_call:'Next call'};
+// Priority tier -> css class (hot/warm/cool/none). API sends e.tier ('hot'|'warm'|'cool'|null).
+function tierClass(t){const k=(t==null?'':String(t)).trim().toLowerCase();return (k==='hot'||k==='warm'||k==='cool')?k:'none';}
+function tierChip(t){const k=tierClass(t);if(k!=='hot'&&k!=='warm')return '';return `<span class="tchip ${k}">${k==='hot'?'Hot':'Warm'}</span>`;}
 // Deterministic per-BDE colour: same name -> same hue every load, well spread on the wheel.
 function bdeColor(name){
   const s=(name||'').trim().toLowerCase();
@@ -131,16 +227,22 @@ async function load(){
 }
 
 function renderLegend(){
-  const status=`<span class="lgh">Type / status</span>`+
-    `<span class="lg"><i class="type meeting"></i>🤝 meeting</span>`+
-    `<span class="lg"><i class="type callback"></i>📞 callback</span>`+
-    `<span class="lg"><i class="type note"></i>📝 note</span>`+
-    `<span class="lg"><i class="type done"></i>done</span>`;
+  const status=`<span class="lgh">Type</span>`+
+    `<span class="lg"><i class="type meeting"></i>🤝 Meeting</span>`+
+    `<span class="lg"><i class="type callback"></i>📞 Callback</span>`+
+    `<span class="lg"><i class="type rpc_retry"></i>🔁 RPC retry</span>`+
+    `<span class="lg"><i class="type next_call"></i>⭐ Next call</span>`+
+    `<span class="lg"><i class="type note"></i>📝 Note</span>`+
+    `<span class="lg"><i class="type done"></i>Done</span>`;
+  const tiers=`<span class="lgh">Priority</span>`+
+    `<span class="lg"><i class="tier hot"></i>Hot — call today</span>`+
+    `<span class="lg"><i class="tier warm"></i>Warm</span>`+
+    `<span class="lg"><i class="tier cool"></i>Cool / normal</span>`;
   const names=[...new Set(EVENTS.map(e=>e.bde_name||'').filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   const bde = names.length
     ? `<span class="lgh">BDE</span>`+names.map(n=>`<span class="lg"><i style="background:${bdeColor(n).accent}"></i>${esc(n)}</span>`).join('')
     : '';
-  $('#legend').innerHTML = status + bde;
+  $('#legend').innerHTML = status + tiers + bde;
 }
 
 function evForDay(dstr){ return EVENTS.filter(e=>(e.start_at||'').slice(0,10)===dstr).sort((a,b)=>(a.start_at||'').localeCompare(b.start_at||'')); }
@@ -151,7 +253,7 @@ function renderGrid(gridStart){
     const d=new Date(gridStart); d.setDate(d.getDate()+i); const ds=iso(d);
     const other=d.getMonth()!==view.getMonth();
     const evs=evForDay(ds);
-    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} ${e.status==='done'?'done':''}" style="border-left-color:${bdeColor(e.bde_name).accent}">${TYPE_ICON[e.type]||''} ${(e.start_at||'').slice(11,16)} ${esc(e.title||'')}</div>`).join('');
+    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} tier-${tierClass(e.tier)} ${e.status==='done'?'done':''}" title="${esc(TYPE_LABEL[e.type]||e.type||'')}${e.bde_name?' · '+esc(e.bde_name):''}"><span class="dot" style="background:${bdeColor(e.bde_name).accent}"></span>${TYPE_ICON[e.type]||''} <span class="tm">${(e.start_at||'').slice(11,16)}</span> ${esc(e.title||'')}</div>`).join('');
     const more=evs.length>3?`<div class="muted" style="font-size:11px">+${evs.length-3} more</div>`:'';
     cells.push(`<div class="cell ${other?'other':''} ${ds===todayStr?'today':''} ${ds===selected?'sel':''}" onclick="selectDay('${ds}')"><div class="d">${d.getDate()}</div>${chips}${more}</div>`);
   }
@@ -163,19 +265,33 @@ function selectDay(ds){ selected=ds; renderGrid(monthBounds().gridStart); render
 
 function renderDay(ds){
   const evs=evForDay(ds);
-  $('#dayTitle').textContent='Events — '+ds;
+  let title='Events — '+ds;
+  try{ const d=new Date(ds+'T00:00:00'); if(!isNaN(d)) title=d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'}); }catch(_){}
+  $('#dayTitle').textContent=title;
   const canWrite = ME.role!=='kiosk';
-  const rows = evs.length ? evs.map(e=>`
-    <div class="erow ${e.status==='done'?'done':''}" style="border-left-color:${bdeColor(e.bde_name).accent}">
-      <span class="t">${(e.start_at||'').slice(11,16)||'—'}</span>
-      <span class="ti">${TYPE_ICON[e.type]||''} ${esc(e.title||'')} ${ME.role!=='bde'&&e.bde_name?`<span class="muted">· ${esc(e.bde_name)}</span>`:''} ${e.dest_number?`<a href="tel:${esc(e.dest_number)}" class="muted">${esc(e.dest_number)}</a>`:''}</span>
-      ${canWrite?`<button onclick="toggleDone(${e.id},'${e.status}')">${e.status==='done'?'↺':'✓'}</button><button onclick="editTime(${e.id})">🕑</button><button onclick="del(${e.id})">🗑</button>`:''}
-    </div>`).join('') : '<div class="muted">No events.</div>';
+  const rows = evs.length ? evs.map(e=>{
+    const tc=tierClass(e.tier);
+    const notes=(e.notes==null?'':String(e.notes)).trim();
+    const time=(e.start_at||'').slice(11,16)||'—';
+    const bde=(ME.role!=='bde'&&e.bde_name)?`<span class="ebde"><i class="dot" style="background:${bdeColor(e.bde_name).accent}"></i>${esc(e.bde_name)}</span>`:'';
+    const phone=e.dest_number?`<a href="tel:${esc(e.dest_number)}" class="ephone">${esc(e.dest_number)}</a>`:'';
+    return `
+    <div class="erow ${e.status==='done'?'done':''} tier-${tc}">
+      <span class="t">${time}</span>
+      <span class="ti">
+        <span class="etype ${e.type}">${TYPE_ICON[e.type]||''} ${esc(TYPE_LABEL[e.type]||e.type||'')}</span>
+        <span class="etitle">${esc(e.title||'')}</span>
+        ${tierChip(e.tier)}${bde}${phone}
+        ${notes?`<div class="enote"><span class="enote-lbl">Notes</span>${esc(notes)}</div>`:''}
+      </span>
+      ${canWrite?`<span class="erow-actions"><button onclick="toggleDone(${e.id},'${e.status}')" title="${e.status==='done'?'Mark as pending':'Mark as done'}">${e.status==='done'?'↺':'✓'}</button><button onclick="editTime(${e.id})" title="Change time">🕑</button><button onclick="del(${e.id})" title="Delete">🗑</button></span>`:''}
+    </div>`;
+  }).join('') : '<div class="muted">No events scheduled for this day.</div>';
   const form = canWrite ? `<div class="addform">
       <input id="naTitle" placeholder="Add event title…" style="flex:1;min-width:160px" />
-      <select id="naType"><option value="meeting">🤝 meeting</option><option value="callback">📞 callback</option><option value="note">📝 note</option></select>
+      <select id="naType"><option value="meeting">🤝 Meeting</option><option value="callback">📞 Callback</option><option value="note">📝 Note</option></select>
       <input id="naTime" type="time" value="10:00" />
-      <button onclick="addEvent('${ds}')">Add</button>
+      <button class="btn-primary" onclick="addEvent('${ds}')">Add</button>
     </div>` : '';
   $('#dayBody').innerHTML = rows + form;
 }

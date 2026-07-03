@@ -5,57 +5,132 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>User Management — Traffic Radius</title>
 <style>
-  :root{--bg:#0b0f15;--panel:#161b22;--line:#27313f;--txt:#e9eef5;--muted:#9aa6b2;--accent:#3b82f6;
-        --ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  :root{
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14);
+    --ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    /* page-specific status aliases kept for readability */
+    --ok:#4ade80;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+    --r1:8px; --r2:10px; --r3:12px; --r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+    --t-micro:10px; --t-eyebrow:10.5px; --t-meta:11px; --t-cap:12px;
+    --t-body:13px; --t-base:14px; --t-strong:16px; --t-fig:22px; --t-kpi:27px; --t-h1:30px;
+  }
   *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;background:radial-gradient(1100px 600px at 70% -10%,#13202e,#0b0f15 60%);
-    color:var(--txt);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  header{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:1px solid var(--line);
-    position:sticky;top:0;background:rgba(11,15,21,.85);backdrop-filter:blur(8px);z-index:5}
-  .logo{background:#fff;border-radius:10px;padding:7px 11px;display:inline-flex;line-height:0}
+  body{margin:0;min-height:100vh;
+    background:radial-gradient(1100px 560px at 82% -12%,#10161f 0%,#0a0d13 60%) fixed,var(--bg);
+    color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:var(--accent-soft)}
+
+  /* ---- top app bar ---- */
+  header{display:flex;align-items:center;gap:14px;padding:12px 24px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:rgba(11,15,22,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:5}
+  .logo{background:#fff;border-radius:9px;padding:6px 11px;display:inline-flex;line-height:0;box-shadow:0 1px 3px rgba(0,0,0,.4)}
   .logo img{height:24px;display:block}
-  header h1{font-size:17px;margin:0;font-weight:700}
+  .hdrttl{display:flex;flex-direction:column;line-height:1.18}
+  .hdrttl .t{font-size:var(--t-strong);font-weight:750;letter-spacing:-.2px}
+  .hdrttl .s{font-size:var(--t-meta);color:var(--muted);font-weight:500;letter-spacing:.1px}
+  header h1{font-size:var(--t-strong);margin:0;font-weight:750}
   header .spacer{flex:1}
-  a.btn,button{font:inherit;border-radius:9px;cursor:pointer;border:1px solid var(--line);
-    background:#0b0f15;color:var(--txt);padding:8px 13px;text-decoration:none;display:inline-block}
-  a.btn:hover,button:hover{border-color:var(--accent)}
-  button.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);border:none;color:#fff;font-weight:700}
-  button.danger{border-color:rgba(239,68,68,.5);color:#f87171}
-  button.small{padding:5px 9px;font-size:12px}
-  main{max-width:1180px;margin:0 auto;padding:24px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:22px}
-  .panel h2{font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 14px}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th,td{text-align:left;padding:10px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
-  th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:600}
+
+  /* ---- buttons / links ---- */
+  a.btn,button{font:inherit;border-radius:var(--r1);cursor:pointer;border:1px solid var(--line);
+    background:var(--panel2);color:var(--txt-dim);padding:8px 13px;text-decoration:none;display:inline-block;
+    transition:border-color .14s,background .14s,color .14s,box-shadow .14s}
+  a.btn:hover,button:hover{border-color:var(--line2);background:var(--panel3);color:var(--txt)}
+  a.btn:focus-visible,button:focus-visible{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+  button.primary:hover{filter:brightness(1.06);background:var(--accent);color:#fff}
+  button.danger{border-color:rgba(248,113,113,.45);color:var(--bad);background:rgba(248,113,113,.06)}
+  button.danger:hover{border-color:var(--bad);background:rgba(248,113,113,.12);color:var(--bad)}
+  button.small{padding:5px 10px;font-size:var(--t-cap)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+
+  /* ---- layout ---- */
+  main{max-width:1180px;margin:0 auto;padding:26px 24px 40px}
+
+  /* ---- cards / panels ---- */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);
+    padding:20px 22px;margin-bottom:22px;box-shadow:var(--elev2)}
+  .panelhead{margin-bottom:14px}
+  .eyebrow{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.7px;color:var(--muted);
+    font-weight:700;margin-bottom:4px}
+  .panel h2{font-size:var(--t-strong);letter-spacing:-.2px;color:var(--txt);margin:0;font-weight:700;text-transform:none}
+  .hint{font-size:var(--t-cap);color:var(--muted);margin:0 0 16px;line-height:1.55}
+  .hint b{color:var(--txt-dim);font-weight:700}
+
+  /* ---- table ---- */
+  .tablewrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:var(--t-body);min-width:720px}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  thead th{position:sticky;top:0;z-index:1;background:var(--panel3);font-size:var(--t-eyebrow);
+    text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;
+    border-bottom:1px solid var(--line2);white-space:nowrap}
+  tbody tr:hover{background:var(--panel2)}
   tr:last-child td{border-bottom:none}
-  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.3px}
-  .pill.admin{background:rgba(59,130,246,.16);color:#7cb0ff}
+  td .uname{font-weight:600;color:var(--txt)}
+
+  /* ---- pills (role) ---- */
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:var(--t-meta);font-weight:700;letter-spacing:.4px}
+  .pill.admin{background:rgba(91,140,255,.16);color:#9fbcff}
   .pill.bdm{background:rgba(168,85,247,.16);color:#c79bf7}
-  .pill.bde{background:rgba(148,163,184,.14);color:#cbd5e1}
-  .pill.manager{background:rgba(245,158,11,.16);color:#fbbf24}
-  .pill.kiosk{background:rgba(34,197,94,.14);color:#86efac}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-  .dot.on{background:var(--ok)} .dot.off{background:var(--bad)}
-  select,input{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:13px}
-  select:focus,input:focus{outline:1px solid var(--accent)}
+  .pill.bde{background:rgba(139,150,166,.16);color:#c3ccd8}
+  .pill.manager{background:rgba(251,191,36,.15);color:#fbbf24}
+  .pill.kiosk{background:rgba(74,222,128,.14);color:#86efac}
+
+  /* ---- status dot ---- */
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
+  .dot.on{background:var(--good);box-shadow:0 0 0 3px rgba(74,222,128,.14)}
+  .dot.off{background:var(--bad);box-shadow:0 0 0 3px rgba(248,113,113,.12)}
+
+  /* ---- form controls ---- */
+  select,input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);
+    padding:8px 10px;font:inherit;font-size:var(--t-body);
+    transition:border-color .14s,box-shadow .14s,background .14s}
+  select::placeholder,input::placeholder{color:var(--faint)}
+  select:hover,input:hover{border-color:var(--line2)}
+  select:focus,input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+  select:disabled,input:disabled{opacity:.5;cursor:not-allowed}
+
   .muted{color:var(--muted)} .right{text-align:right}
-  .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}
-  .formgrid label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:5px}
+
+  /* ---- add-user form grid ---- */
+  .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;align-items:end}
+  .formgrid label{display:block;font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;
+    color:var(--muted);font-weight:700;margin-bottom:6px}
   .formgrid input,.formgrid select{width:100%}
-  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#1f2937;border:1px solid var(--line);
-    padding:11px 18px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:20}
+
+  /* ---- toast ---- */
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel3);
+    border:1px solid var(--line2);color:var(--txt);padding:11px 18px;border-radius:var(--r2);
+    font-size:var(--t-body);font-weight:600;box-shadow:var(--elev2);
+    opacity:0;transition:opacity .25s;pointer-events:none;z-index:20}
   .toast.show{opacity:1}
-  .toast.err{border-color:rgba(239,68,68,.5);color:#fca5a5}
+  .toast.err{border-color:rgba(248,113,113,.5);color:#fca5a5}
+
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-  .hint{font-size:12px;color:var(--muted);margin:-6px 0 14px}
+
+  @media(max-width:640px){
+    header{padding:12px 16px;gap:10px}
+    main{padding:20px 14px 34px}
+    .panel{padding:16px 14px}
+  }
 </style>
 </head>
 <body>
 <header>
   <span class="logo"><img src="/logo.png" alt="Traffic Radius" /></span>
-  <h1>User Management</h1>
-  <span class="pill admin">Admin</span>
+  <div class="hdrttl">
+    <span class="t">User Management</span>
+    <span class="s">Traffic Radius · Sales Funnel</span>
+  </div>
+  <span class="pill admin" title="You are signed in as an administrator">Admin</span>
   <div class="spacer"></div>
   <a class="btn" href="/">← Dashboard</a>
   <a class="btn" href="/logout">Sign out</a>
@@ -63,8 +138,11 @@
 
 <main>
   <div class="panel">
-    <h2>Add a user</h2>
-    <p class="hint">Roles — <b>admin</b>: full access + user management · <b>bdm</b>: sees every BDE + manages pipeline prospects · <b>bde</b>: own data only.</p>
+    <div class="panelhead">
+      <div class="eyebrow">Provisioning</div>
+      <h2>Add a user</h2>
+    </div>
+    <p class="hint">Roles — <b>Admin</b>: full access + user management · <b>BDM</b>: sees every BDE + manages pipeline prospects · <b>BDE</b>: own data only. The temporary password must be changed by the user at first sign-in.</p>
     <form id="addForm" class="formgrid" autocomplete="off">
       <div><label>Email</label><input name="email" type="email" required placeholder="name@trafficradius.com.au" /></div>
       <div><label>Full name</label><input name="name" type="text" placeholder="Jane Smith" /></div>
@@ -81,13 +159,24 @@
   </div>
 
   <div class="panel">
-    <h2>Accounts</h2>
+    <div class="panelhead">
+      <div class="eyebrow">Team access</div>
+      <h2>Accounts</h2>
+    </div>
+    <p class="hint">Every account with dashboard access. Change a <b>Role</b> or <b>Data scope</b> inline, then press <b>Save</b>. Use <b>Reset pw</b> to issue a new temporary password, <b>Disable</b> to revoke access without deleting.</p>
+    <div class="tablewrap">
     <table>
       <thead><tr>
-        <th>User</th><th>Role</th><th>Data scope</th><th>Status</th><th>Sessions</th><th class="right">Actions</th>
+        <th>User</th>
+        <th>Role</th>
+        <th title="Which BDE's data this account can see (BDE role only)">Data scope</th>
+        <th>Status</th>
+        <th title="Currently signed-in sessions">Sessions</th>
+        <th class="right">Actions</th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
     </table>
+    </div>
   </div>
 </main>
 
@@ -126,7 +215,7 @@ async function load(){
     const status = `<span class="dot ${u.active?'on':'off'}"></span>${u.active?'Active':'Disabled'}` +
       (u.must_change?` <span class="muted" title="must change password at next login">· temp pw</span>`:``);
     return `<tr data-id="${u.id}">
-      <td><div>${esc(u.name||'')}</div><div class="muted" style="font-size:12px">${esc(u.email)}</div></td>
+      <td><div class="uname">${esc(u.name||'')}</div><div class="muted" style="font-size:12px">${esc(u.email)}</div></td>
       <td>${roleSel}</td>
       <td>${scope}</td>
       <td>${status}</td>

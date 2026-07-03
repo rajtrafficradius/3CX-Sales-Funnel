@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Next Calls — 3CX Funnel</title>
+<style>
+  :root{
+    /* Premium design system — aligned with the main dashboard (index.html) */
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14); --ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+    --r1:8px; --r2:10px; --r3:12px; --r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+    --t-micro:10px; --t-eyebrow:10.5px; --t-meta:11px; --t-cap:12px; --t-body:13px;
+    --t-base:14px; --t-strong:16px; --t-fig:22px; --t-kpi:27px; --t-h1:30px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:var(--t-base)/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;-webkit-font-smoothing:antialiased}
+
+  /* ---- top nav / header ---- */
+  header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:linear-gradient(180deg,#11161f,#0b0e14);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:var(--t-body)}
+  header a.back:hover{text-decoration:underline}
+  .hdr-titles{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .hdr-eyebrow{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700}
+  header h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .spacer{flex:1}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .brand img{height:26px;display:block}
+  .hdr-count{font-size:var(--t-cap);color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+  /* ---- layout ---- */
+  main{max-width:1320px;margin:0 auto;padding:var(--s5) 22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);padding:18px 20px;box-shadow:var(--elev2)}
+  .card + .card{margin-top:var(--s4)}
+  .overline{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:700}
+  .muted{color:var(--muted)}
+  .small{font-size:var(--t-cap);line-height:1.5}
+  a.lnk,.lnk{color:var(--accent);text-decoration:none}
+  a.lnk:hover,.lnk:hover{text-decoration:underline}
+
+  /* ---- inputs / buttons ---- */
+  select,input,button{font:inherit}
+  label.field{display:flex;flex-direction:column;gap:5px}
+  label.field .lbl{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  select,.tglbox{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r2);padding:8px 11px;min-height:38px}
+  select{cursor:pointer;color-scheme:dark}
+  select:focus,button:focus-visible{outline:none;box-shadow:var(--ring)}
+  .tglbox{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;white-space:nowrap}
+  .tglbox input{accent-color:var(--accent);width:16px;height:16px;cursor:pointer}
+  button{background:transparent;color:var(--txt);border:1px solid var(--line);border-radius:var(--r2);padding:8px 13px;cursor:pointer;transition:border-color .15s,background .15s,color .15s}
+  button:hover{border-color:var(--line2);background:var(--panel2)}
+  button.primary{background:linear-gradient(180deg,var(--accent),var(--accent2));border:none;color:#fff;font-weight:700}
+  button.primary:hover{filter:brightness(1.06)}
+  button.btn-sm{padding:5px 10px;font-size:var(--t-cap);border-radius:var(--r1)}
+
+  /* ---- controls bar ---- */
+  .controls{display:flex;align-items:flex-end;gap:var(--s4);flex-wrap:wrap}
+  .controls .grow{flex:1}
+  .controls .apply-hint{font-size:var(--t-cap);color:var(--faint)}
+
+  /* ---- how-it-works explainer ---- */
+  .explain{display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:var(--r3);padding:13px 18px;box-shadow:var(--elev2)}
+  .explain .formula{font-weight:700;color:var(--txt-dim);font-size:var(--t-body)}
+  .explain .formula b{color:var(--accent);font-weight:800}
+  .explain .leg{display:flex;gap:16px;flex-wrap:wrap;margin-left:auto}
+  .explain .leg .item{display:flex;align-items:center;gap:7px;font-size:var(--t-cap);color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .dot.hot{background:var(--bad)}.dot.warm{background:var(--warn)}.dot.cool{background:var(--muted)}
+
+  /* ---- KPI summary ---- */
+  .kpirow{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s4);margin-top:var(--s4)}
+  @media(max-width:760px){.kpirow{grid-template-columns:repeat(2,1fr)}}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);padding:16px 18px;box-shadow:var(--elev2)}
+  .kpi .l{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  .kpi .v{font-size:var(--t-kpi);font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15;margin-top:6px}
+  .kpi .sub{font-size:var(--t-cap);color:var(--faint);margin-top:3px}
+  .kpi.hot .v{color:var(--bad)}.kpi.warm .v{color:var(--warn)}.kpi.due .v{color:var(--accent)}
+
+  /* ---- board table ---- */
+  .board h2{font-size:var(--t-cap);margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;font-weight:700}
+  .board .boardhead{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .board .boardhead .sub{font-size:var(--t-cap);color:var(--faint)}
+  .tablewrap{overflow-x:auto;border-radius:var(--r2)}
+  table{width:100%;border-collapse:collapse;font-size:var(--t-body);min-width:940px}
+  thead th{position:sticky;top:0;background:var(--panel);z-index:1;text-align:left;font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700;padding:0 12px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  thead th.num,tbody td.num{text-align:right}
+  tbody td{padding:13px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--panel2)}
+  td.rank{font-variant-numeric:tabular-nums;font-weight:800;color:var(--faint);font-size:var(--t-strong);width:44px;text-align:right;padding-top:15px}
+
+  .pname{font-weight:700;color:var(--txt);font-size:var(--t-base)}
+  a.pname:hover{color:var(--accent);text-decoration:none}
+  .pmeta{font-size:var(--t-meta);color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
+
+  /* tier badge */
+  .tier{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:999px;font-size:var(--t-meta);font-weight:800;letter-spacing:.4px;white-space:nowrap;text-transform:uppercase}
+  .tier.hot{background:rgba(248,113,113,.14);color:var(--bad)}
+  .tier.warm{background:rgba(251,191,36,.16);color:var(--warn)}
+  .tier.cool{background:rgba(139,150,166,.12);color:var(--muted)}
+
+  /* score cell + meter */
+  .scorecell{width:120px}
+  .scoreval{font-size:var(--t-fig);font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  .scoreval .denom{font-size:var(--t-cap);font-weight:600;color:var(--faint);margin-left:2px}
+  .meter{height:5px;border-radius:999px;background:#0b0f15;border:1px solid var(--line);margin-top:7px;overflow:hidden}
+  .meterfill{height:100%;border-radius:999px}
+  .meterfill.hot{background:var(--bad)}.meterfill.warm{background:var(--warn)}.meterfill.cool{background:var(--muted)}
+
+  /* why-to-call */
+  .why{max-width:420px}
+  .trigger{display:inline-block;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:var(--txt-dim);background:var(--chip);border:1px solid var(--line);border-radius:var(--r1);padding:2px 8px;margin-bottom:7px}
+  .drivers{display:flex;gap:6px;flex-wrap:wrap}
+  .drv{background:var(--accent-soft);color:#93b4ff;border-radius:var(--r1);padding:3px 9px;font-size:var(--t-meta);font-weight:600;line-height:1.4}
+  .breakdown{font-size:var(--t-meta);color:var(--faint);margin-top:8px;font-variant-numeric:tabular-nums}
+  .breakdown b{color:var(--muted);font-weight:700}
+
+  /* best-time + owner */
+  .duepill{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:#93b4ff;border-radius:999px;padding:4px 11px;font-size:var(--t-meta);font-weight:700;white-space:nowrap}
+  .whenval{font-size:var(--t-cap);color:var(--txt-dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .whensub{font-size:var(--t-micro);color:var(--faint);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .owner .name{font-weight:700;color:var(--txt-dim);font-size:var(--t-cap)}
+  .pill-none{display:inline-block;background:rgba(139,150,166,.10);color:var(--muted);border-radius:999px;padding:3px 10px;font-size:var(--t-meta);font-weight:600}
+
+  td.actions{white-space:nowrap}
+  td.actions .rowbtns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+  .state{padding:44px 20px;text-align:center;color:var(--muted)}
+  .state .big{font-size:var(--t-strong);color:var(--txt-dim);font-weight:700;margin-bottom:6px}
+  .state.err .big{color:var(--bad)}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:8px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel3);border:1px solid var(--line);padding:11px 18px;border-radius:var(--r2);font-size:var(--t-base);opacity:0;transition:opacity .25s;pointer-events:none;z-index:20;box-shadow:var(--elev2)}
+  .toast.show{opacity:1}.toast.err{border-color:rgba(248,113,113,.5);color:#fca5a5}
+
+  @media(max-width:640px){
+    main{padding:var(--s4) 14px}
+    .kpirow{grid-template-columns:1fr 1fr}
+    .explain .leg{margin-left:0}
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
+  <a class="back" href="/">&larr; Dashboard</a>
+  <div class="hdr-titles">
+    <span class="hdr-eyebrow">Call Prioritisation</span>
+    <h1>Next Calls</h1>
+  </div>
+  <span class="spacer"></span>
+  <span class="hdr-count" id="hdrCount"></span>
+</header>
+
+<main>
+  <!-- How the ranking works — kills confusion about what the score/tier mean -->
+  <div class="explain" role="note">
+    <div class="formula">Ranked by <b>Priority</b> = Intent &times; Attention &times; Revenue</div>
+    <div class="small muted" style="max-width:520px">The queue puts the prospect most worth ringing right now at the top &mdash; blending how badly they want a call, how overdue the follow&#8209;up is, and the size of the account.</div>
+    <div class="leg">
+      <span class="item"><span class="dot hot"></span>Hot &mdash; call today</span>
+      <span class="item"><span class="dot warm"></span>Warm &mdash; this week</span>
+      <span class="item"><span class="dot cool"></span>Cool &mdash; when free</span>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card" style="margin-top:var(--s4)">
+    <div class="controls">
+      <label class="field">
+        <span class="lbl">Rep</span>
+        <select id="fBde"><option value="ALL">All reps</option></select>
+      </label>
+      <label class="field">
+        <span class="lbl">Priority tier</span>
+        <select id="fTier">
+          <option value="">All tiers</option>
+          <option value="hot">🔥 Hot only</option>
+          <option value="warm">⚡ Warm only</option>
+          <option value="cool">· Cool only</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="lbl">Timing</span>
+        <span class="tglbox"><input type="checkbox" id="fDue"><span id="fDueLbl">Due now only</span></span>
+      </label>
+      <span class="grow"></span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span class="apply-hint" id="applyHint"></span>
+        <button class="primary" id="syncBtn" style="display:none" title="Recompute the queue from the latest call, callback &amp; pipeline signals">Recompute queue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI summary of the CURRENT filtered queue -->
+  <div class="kpirow" id="kpirow" style="display:none">
+    <div class="kpi"><div class="l">In queue</div><div class="v" id="kTotal">—</div><div class="sub">prospects to call</div></div>
+    <div class="kpi hot"><div class="l">Hot</div><div class="v" id="kHot">—</div><div class="sub">call today</div></div>
+    <div class="kpi due"><div class="l">Due now</div><div class="v" id="kDue">—</div><div class="sub">best time has arrived</div></div>
+    <div class="kpi"><div class="l">Unassigned</div><div class="v" id="kUnassigned">—</div><div class="sub">no rep yet</div></div>
+  </div>
+
+  <!-- The ranked board -->
+  <div class="card board" style="margin-top:var(--s4)">
+    <div class="boardhead">
+      <h2>Call queue</h2>
+      <span class="sub" id="boardSub">Highest priority first</span>
+    </div>
+    <div class="tablewrap">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th class="num">#</th>
+            <th>Prospect</th>
+            <th>Tier</th>
+            <th class="num">Priority</th>
+            <th>Why call now</th>
+            <th>Best time to call</th>
+            <th>Owner</th>
+            <th class="acthead" style="display:none;text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="8"><div class="state"><span class="spin"></span>Loading the call queue…</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- helpers ----------
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDate = s => { if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); };
+function toast(m,e){ const t=document.getElementById('toast'); t.textContent=m; t.className='toast show'+(e?' err':''); setTimeout(()=>t.className='toast'+(e?' err':''),2600); }
+const num = n => (n==null||n===''?0:Math.round(Number(n)));
+
+const TIER = {
+  hot:  {icon:'🔥', label:'Hot'},
+  warm: {icon:'⚡', label:'Warm'},
+  cool: {icon:'·',  label:'Cool'},
+};
+// Human name for WHY this prospect surfaced (the trigger signal).
+const SIGNAL = {
+  callback:    'Callback requested',
+  rpc_action:  'Open next move',
+  pipeline_p1: 'Interested · Pipeline 1',
+  pipeline_p3: 'Gatekeeper callback · Pipeline 3',
+  recent_call: 'Recent call · no result yet',
+};
+
+// filter state
+const state = { bde:'ALL', tier:'', due:false };
+let CAN_ASSIGN = false;
+let ROSTER_LOADED = false;
+
+// A row is "due now" when it has no scheduled time or that time has passed.
+function isDue(r){
+  if(!r.next_best_time) return true;
+  const t = new Date(r.next_best_time);
+  return isNaN(t) ? true : (t.getTime() <= Date.now());
+}
+// Best key for the prospect page link: dialled number, else website domain.
+function prospectKey(r){ return r.dest9 || r.domain || ''; }
+
+// ---------- render ----------
+function renderKpis(rows){
+  const total = rows.length;
+  const hot = rows.filter(r => r.tier==='hot').length;
+  const due = rows.filter(isDue).length;
+  const unassigned = rows.filter(r => !r.assigned_bde).length;
+  document.getElementById('kTotal').textContent = total;
+  document.getElementById('kHot').textContent = hot;
+  document.getElementById('kDue').textContent = due;
+  document.getElementById('kUnassigned').textContent = unassigned;
+  document.getElementById('kpirow').style.display = total ? '' : 'none';
+}
+
+function rowHtml(r, i){
+  const tier = TIER[r.tier] || TIER.cool;
+  const score = num(r.score);
+  const pct = Math.max(0, Math.min(100, score));
+  const name = esc(r.business_name || r.domain || r.dest9 || 'Unknown business');
+  const key = prospectKey(r);
+  const nameCell = key
+    ? `<a class="pname" href="/prospect/${encodeURIComponent(key)}">${name}</a>`
+    : `<span class="pname">${name}</span>`;
+  const meta = [ r.domain?esc(r.domain):null, r.dest9?('☎ '+esc(r.dest9)):null ].filter(Boolean).join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+
+  // Why-to-call: trigger tag + human driver chips + the numeric signal breakdown.
+  const reason = r.reason || {};
+  const trig = SIGNAL[r.source_signal] || 'Recent activity';
+  const drivers = (reason.drivers || []).map(d => `<span class="drv">${esc(d)}</span>`).join('');
+  const bd = `<div class="breakdown"><b>Intent</b> ${num(reason.intent)} &nbsp;·&nbsp; <b>Overdue</b> ${num(reason.attention)} &nbsp;·&nbsp; <b>Revenue</b> ${num(reason.revenue)}</div>`;
+  const whyCell = `<span class="trigger">${esc(trig)}</span>`
+    + (drivers ? `<div class="drivers">${drivers}</div>` : '')
+    + bd;
+
+  // Best time to call.
+  const due = isDue(r);
+  const whenCell = due
+    ? `<span class="duepill">● Due now</span>${r.next_best_time?`<div class="whensub">was ${esc(fmtDate(r.next_best_time))}</div>`:`<div class="whensub">no time set</div>`}`
+    : `<div class="whenval">${esc(fmtDate(r.next_best_time))}</div><div class="whensub">scheduled</div>`;
+
+  // Owner.
+  const ownerCell = r.assigned_bde
+    ? `<span class="name">${esc(r.assigned_bde)}</span>${r.override_by?`<div class="whensub">manually set</div>`:''}`
+    : `<span class="pill-none">Unassigned</span>`;
+
+  // Manager actions (mirror prospect.html reassignNext / scheduleNext + Done).
+  const actions = CAN_ASSIGN
+    ? `<td class="actions"><div class="rowbtns">
+         <button class="btn-sm" onclick="reassign(${r.prospect_id})">Reassign</button>
+         <button class="btn-sm" onclick="schedule(${r.prospect_id})">Schedule</button>
+         <button class="btn-sm primary" onclick="markDone(${r.prospect_id})">Done</button>
+       </div></td>`
+    : '';
+
+  return `<tr>
+    <td class="rank num">${i+1}</td>
+    <td>${nameCell}${meta?`<div class="pmeta">${meta}</div>`:''}</td>
+    <td><span class="tier ${esc(r.tier||'cool')}">${tier.icon} ${tier.label}</span></td>
+    <td class="scorecell num">
+      <div class="scoreval">${score}<span class="denom">/100</span></div>
+      <div class="meter"><div class="meterfill ${esc(r.tier||'cool')}" style="width:${pct}%"></div></div>
+    </td>
+    <td class="why">${whyCell}</td>
+    <td>${whenCell}</td>
+    <td class="owner">${ownerCell}</td>
+    ${actions}
+  </tr>`;
+}
+
+function render(data){
+  const rows = data.rows || [];
+  const colspan = CAN_ASSIGN ? 8 : 7;
+  const tbody = document.getElementById('rows');
+  document.querySelector('.acthead').style.display = CAN_ASSIGN ? '' : 'none';
+  document.getElementById('syncBtn').style.display = CAN_ASSIGN ? '' : 'none';
+
+  renderKpis(rows);
+  const n = rows.length;
+  document.getElementById('hdrCount').textContent = n ? (n + (n===1?' prospect':' prospects') + ' queued') : '';
+  document.getElementById('boardSub').textContent = n ? 'Highest priority first' : '';
+
+  if(!n){
+    tbody.innerHTML = `<tr><td colspan="${colspan}"><div class="state">
+      <div class="big">Nothing in the queue</div>
+      No prospects match these filters right now. Try clearing the tier or “due now” filter${CAN_ASSIGN?', or recompute the queue':''}.
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(rowHtml).join('');
+}
+
+function renderError(msg){
+  const colspan = CAN_ASSIGN ? 8 : 7;
+  document.getElementById('rows').innerHTML =
+    `<tr><td colspan="${colspan}"><div class="state err"><div class="big">Couldn’t load the queue</div>${esc(msg||'Please retry.')}</div></td></tr>`;
+}
+
+// ---------- data ----------
+function query(){
+  const p = new URLSearchParams();
+  p.set('bde', state.bde || 'ALL');
+  if(state.tier) p.set('tier', state.tier);
+  if(state.due)  p.set('due_only', 'true');
+  return p.toString();
+}
+
+async function load(){
+  document.getElementById('applyHint').textContent = 'Refreshing…';
+  try{
+    const r = await fetch('/api/next-calls?' + query());
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    CAN_ASSIGN = !!data.can_assign;
+
+    // Populate the rep dropdown once (roster comes back with every response).
+    if(!ROSTER_LOADED && Array.isArray(data.roster)){
+      const sel = document.getElementById('fBde');
+      data.roster.forEach(nm => { const o=document.createElement('option'); o.value=nm; o.textContent=nm; sel.appendChild(o); });
+      sel.value = state.bde;
+      ROSTER_LOADED = true;
+    }
+    render(data);
+    document.getElementById('applyHint').textContent = '';
+  }catch(e){
+    renderError(e.message);
+    document.getElementById('applyHint').textContent = '';
+  }
+}
+
+// ---------- manager actions (match prospect.html patterns) ----------
+async function reassign(id){
+  const bde = prompt('Reassign this prospect’s next call to which rep?'); if(!bde) return;
+  const fd = new FormData(); fd.append('bde', bde);
+  try{
+    const r = await fetch('/api/next-calls/'+id+'/reassign',{method:'POST',body:fd});
+    const j = await r.json();
+    if(j.ok){ toast('Reassigned to '+bde); load(); } else toast(j.error||'Reassign failed', true);
+  }catch(e){ toast('Reassign failed', true); }
+}
+async function schedule(id){
+  const dt = prompt('Schedule next call at (YYYY-MM-DD HH:MM):'); if(!dt) return;
+  let iso; try{ iso = new Date(dt.replace(' ','T')).toISOString(); }catch(e){ toast('Bad date', true); return; }
+  const fd = new FormData(); fd.append('start_at', iso);
+  try{
+    const r = await fetch('/api/next-calls/'+id+'/schedule',{method:'POST',body:fd});
+    const j = await r.json();
+    if(j.ok){ toast('Scheduled ✓'); load(); } else toast(j.error||'Schedule failed', true);
+  }catch(e){ toast('Schedule failed', true); }
+}
+async function markDone(id){
+  if(!confirm('Mark this next call as done and remove it from the queue?')) return;
+  try{
+    const r = await fetch('/api/next-calls/'+id+'/done',{method:'POST'});
+    const j = await r.json();
+    if(j.ok){ toast('Marked done ✓'); load(); } else toast(j.error||'Could not mark done', true);
+  }catch(e){ toast('Could not mark done', true); }
+}
+async function syncQueue(){
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true; const old = btn.textContent; btn.textContent = 'Recomputing…';
+  try{
+    const r = await fetch('/api/next-calls/sync',{method:'POST'});
+    const j = await r.json();
+    if(j.ok){ toast('Queue recomputed ✓'); await load(); } else toast(j.error||'Recompute failed', true);
+  }catch(e){ toast('Recompute failed', true); }
+  finally{ btn.disabled = false; btn.textContent = old; }
+}
+
+// ---------- wire up ----------
+document.getElementById('fBde').addEventListener('change', e => { state.bde = e.target.value; load(); });
+document.getElementById('fTier').addEventListener('change', e => { state.tier = e.target.value; load(); });
+document.getElementById('fDue').addEventListener('change', e => { state.due = e.target.checked; load(); });
+document.getElementById('syncBtn').addEventListener('click', syncQueue);
+
+load();
+</script>
+</body>
+</html>

@@ -594,6 +594,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def coaching_page() -> HTMLResponse:
         return HTMLResponse(_static("coaching.html"), headers=_NOCACHE)
 
+    @app.get("/next-calls", response_class=HTMLResponse)
+    def next_calls_page() -> HTMLResponse:
+        """Ranked 'who to call next' board (A) — reads /api/next-calls."""
+        return HTMLResponse(_static("next-calls.html"), headers=_NOCACHE)
+
     @app.get("/api/rpc-monitor")
     def rpc_monitor(request: Request, bde: str = "ALL", limit: int = 300) -> JSONResponse:
         """#10b — RPC follow-up worklist + enforcement. For every dialled number NOT yet

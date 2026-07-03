@@ -5,41 +5,101 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Coaching — 3CX Funnel</title>
 <style>
-  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  :root{
+    /* Premium design system — matched to the main dashboard */
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14); --ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+    --r1:8px; --r2:10px; --r3:12px; --r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+    --t-micro:10px; --t-eyebrow:10.5px; --t-meta:11px; --t-cap:12px; --t-body:13px; --t-base:14px;
+    --t-strong:16px; --t-fig:22px; --t-kpi:27px; --t-h1:30px;
+    /* legacy aliases kept so any inline reference still resolves */
+    --ok:var(--good);
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-  header a{color:var(--accent);text-decoration:none;font-size:13px}
-  header h1{font-size:17px;margin:0;font-weight:680}
-  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0}
+  body{margin:0;background:var(--bg);color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;-webkit-font-smoothing:antialiased}
+
+  /* Header */
+  header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:linear-gradient(180deg,#0f141d,#0a0d13);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none;font-size:var(--t-body)}
+  header a.back:hover{text-decoration:underline}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0;box-shadow:var(--elev1)}
   .brand img{height:26px;display:block}
-  select{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit}
-  main{max-width:1100px;margin:0 auto;padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:900px){main{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .htitle{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .htitle .eyebrow{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.7px;color:var(--faint);font-weight:700}
+  header h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:.2px}
+  .hspacer{flex:1}
+  .ctrl{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+  .ctrl label{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);padding:7px 10px;font:inherit}
+  select:focus{outline:none;box-shadow:var(--ring);border-color:var(--accent)}
+  select:disabled{opacity:.7;cursor:not-allowed}
+
+  /* Layout */
+  main{max-width:1120px;margin:0 auto;padding:22px;display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
+  @media(max-width:900px){main{grid-template-columns:1fr;padding:16px}header{flex-wrap:wrap}}
+
+  /* Cards */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);padding:18px 20px;box-shadow:var(--elev2)}
   .card.full{grid-column:1/-1}
-  h2{font-size:12px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+
+  /* Card header pattern: tiny uppercase overline + human title */
+  .hd{display:flex;flex-direction:column;gap:2px;margin-bottom:2px}
+  .eyebrow{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  .hd-t{font-size:var(--t-strong);font-weight:700;color:var(--txt);letter-spacing:.2px;line-height:1.3}
+  .sub{font-size:var(--t-cap);color:var(--muted);line-height:1.55;margin:6px 0 14px;max-width:70ch}
+  .sub b{color:var(--txt-dim);font-weight:600}
+  .foot{font-size:var(--t-meta);color:var(--faint);line-height:1.55;margin-top:10px}
+
+  /* In-card sub-heading overline */
+  h2{font-size:var(--t-eyebrow);margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
   .muted{color:var(--muted)}
-  .bar{display:flex;align-items:center;gap:10px;margin:7px 0}
-  .bl{width:120px;font-size:12.5px}
-  .bt{flex:1;height:10px;background:#0b0f15;border:1px solid var(--line);border-radius:6px;overflow:hidden;position:relative}
-  .bt i{display:block;height:100%}
-  .bn{width:64px;text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums}
-  ul.ci{margin:6px 0;padding-left:18px;font-size:13px}ul.ci li{margin:4px 0}
-  .delta{font-size:12px;font-weight:700;margin-left:6px}.up{color:#4ade80}.down{color:#f87171}
-  .cmp{display:grid;grid-template-columns:1fr auto auto;gap:6px 14px;align-items:center;font-size:13px}
-  .cmp .h{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-  .big{font-size:22px;font-weight:760}
+
+  /* Skill bars */
+  .bar{display:flex;align-items:center;gap:10px;margin:8px 0}
+  .bl{width:132px;font-size:var(--t-cap);color:var(--txt-dim)}
+  .bt{flex:1;height:9px;background:#0b0f15;border:1px solid var(--line-soft);border-radius:999px;overflow:hidden;position:relative}
+  .bt i{display:block;height:100%;border-radius:999px}
+  .bn{width:82px;text-align:right;font-size:var(--t-cap);font-variant-numeric:tabular-nums;color:var(--txt-dim)}
+
+  /* KPI stat */
+  .kpi{display:flex;flex-direction:column;gap:3px;min-width:120px}
+  .big{font-size:var(--t-kpi);font-weight:800;font-variant-numeric:tabular-nums;line-height:1.05;color:var(--txt)}
+  .kpi .l{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
+  .kpi .s{font-size:var(--t-meta);color:var(--faint);line-height:1.4}
+
+  /* Lists */
+  ul.ci{margin:6px 0;padding-left:18px;font-size:var(--t-body)}
+  ul.ci li{margin:5px 0;line-height:1.5}
+
+  /* Deltas */
+  .delta{font-size:var(--t-meta);font-weight:700;margin-left:6px}
+  .up{color:var(--good)}.down{color:var(--bad)}
+
+  /* Booked vs not-booked comparison grid */
+  .cmp{display:grid;grid-template-columns:1fr auto auto;gap:7px 14px;align-items:center;font-size:var(--t-body)}
+  .cmp .h{color:var(--muted);font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+
+  /* Colour-scale legend */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:2px 0 12px;font-size:var(--t-meta);color:var(--muted)}
+  .legend .lg{display:inline-flex;align-items:center;gap:6px}
+  .legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
 </style>
 </head>
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a href="/">&larr; Dashboard</a>
-  <h1>Coaching &amp; development</h1>
-  <select id="bde" style="margin-left:auto"></select>
+  <a class="back" href="/">&larr; Dashboard</a>
+  <div class="htitle"><span class="eyebrow">Rep development</span><h1>Coaching &amp; development</h1></div>
+  <div class="hspacer"></div>
+  <div class="ctrl"><label for="bde">Viewing BDE</label><select id="bde"></select></div>
 </header>
-<main id="main"><div class="card full muted">Loading…</div></main>
+<main id="main"><div class="card full muted">Loading coaching insights…</div></main>
 <script>
 const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -71,20 +131,25 @@ async function load(){
   // RPC-connect feedback (read-only) — fetched alongside the coaching analysis.
   let rf={}; try{ rf=await fetch('/api/rpc-feedback?bde='+encodeURIComponent(bde)).then(r=>r.ok?r.json():{}); }catch(e){ rf={}; }
   const ov=d.overall||{}, won=d.booked||{}, lost=d.not_booked||{}, tr=d.trend||{};
-  const score=`<div class="card"><h2>Scorecard (avg over decision-maker calls)</h2>
-    <div style="display:flex;gap:24px;margin-bottom:10px"><div><div class="big">${ov.pitched||0}</div><div class="muted" style="font-size:11px">PITCHED</div></div>
-      <div><div class="big" style="color:#4ade80">${ov.booked||0}</div><div class="muted" style="font-size:11px">BOOKED</div></div></div>
+  const score=`<div class="card"><div class="hd"><div class="eyebrow">Performance</div><div class="hd-t">Call scorecard</div></div>
+    <div class="sub">Your average skill scores across calls where you reached a decision-maker. Each skill is rated <b>0–5</b> by the AI call reviewer — higher is stronger.</div>
+    <div style="display:flex;gap:32px;flex-wrap:wrap;margin:2px 0 12px">
+      <div class="kpi"><div class="big">${ov.pitched||0}</div><div class="l">Pitched</div><div class="s">Calls where you delivered a pitch</div></div>
+      <div class="kpi"><div class="big" style="color:var(--good)">${ov.booked||0}</div><div class="l">Booked</div><div class="s">Meetings booked from those calls</div></div></div>
+    <div class="legend"><span class="lg"><span class="dot" style="background:var(--good)"></span>Strong 3.5–5</span><span class="lg"><span class="dot" style="background:var(--warn)"></span>Developing 2.5–3.4</span><span class="lg"><span class="dot" style="background:var(--bad)"></span>Needs work 0–2.4</span></div>
     ${DIMS.map(k=>barRow(LBL[k],ov[k])).join('')}</div>`;
   // Winning behaviours: booked vs not-booked
-  const winning=`<div class="card"><h2>🏆 What you do differently when you BOOK</h2>
+  const winning=`<div class="card"><div class="hd"><div class="eyebrow">Booked vs not booked</div><div class="hd-t">What wins you meetings</div></div>
+    <div class="sub">Your average score on calls that <b>booked</b> a meeting vs calls that <b>didn't</b>. The value beside "Not booked" is the gap — the largest positive gaps are the behaviours that convert.</div>
     <div class="cmp"><div class="h">Skill</div><div class="h">Booked</div><div class="h">Not booked</div>
     ${DIMS.map(k=>{const w=won[k]!=null?Number(won[k]):null,l=lost[k]!=null?Number(lost[k]):null;
       const diff=(w!=null&&l!=null)?(w-l):null;
       return `<div>${LBL[k]}</div><div style="color:${col(w)};font-weight:700">${w!=null?w.toFixed(2):'—'}</div>
         <div style="color:${col(l)}">${l!=null?l.toFixed(2):'—'}${diff!=null?` <span class="delta ${diff>=0?'up':'down'}">${diff>=0?'+':''}${diff.toFixed(1)}</span>`:''}</div>`;}).join('')}</div>
-    <div class="muted" style="font-size:12.5px;margin-top:10px">The biggest gaps show the behaviours that convert. Replicate your booked-call discovery, pitch &amp; close on every call.</div></div>`;
+    <div class="foot">The biggest gaps show the behaviours that convert. Replicate your booked-call discovery, pitch &amp; close on every call.</div></div>`;
   // Trend
-  const trend=`<div class="card"><h2>📈 Trend — recent half vs earlier half</h2>
+  const trend=`<div class="card"><div class="hd"><div class="eyebrow">Trajectory</div><div class="hd-t">Skill trend over time</div></div>
+    <div class="sub">Your <b>recent</b> calls (latest half of the window) scored against your <b>earlier</b> calls. <span class="up">▲</span> means the skill is improving, <span class="down">▼</span> means it is slipping.</div>
     ${DIMS.map(k=>{const r=tr.recent&&tr.recent[k]!=null?Number(tr.recent[k]):null,e=tr.earlier&&tr.earlier[k]!=null?Number(tr.earlier[k]):null;
       const diff=(r!=null&&e!=null)?(r-e):null;
       return `<div class="bar"><span class="bl">${LBL[k]}</span><span class="bt"><i style="width:${(r||0)/5*100}%;background:${col(r)}"></i></span>
@@ -92,9 +157,11 @@ async function load(){
   // Recurring tips + objections
   const tips=(d.recurring_tips||[]);
   const objs=(d.unhandled_objections||[]);
-  const dev=`<div class="card"><h2>🎯 Recurring coaching themes</h2>
+  const dev=`<div class="card"><div class="hd"><div class="eyebrow">Development</div><div class="hd-t">Recurring coaching themes</div></div>
+    <div class="sub">The AI reviewer's most-repeated feedback across your calls. <b>×N</b> = how many calls raised the same point.</div>
     ${tips.length?`<ul class="ci">${tips.map(t=>`<li>${esc(t.tip)} <span class="muted">×${t.n}</span></li>`).join('')}</ul>`:'<div class="muted">No recurring tips.</div>'}
-    <h2 style="margin-top:16px">🛡 Objections you struggle to handle</h2>
+    <h2 style="margin-top:18px">Objections you struggle to handle</h2>
+    <div class="sub" style="margin:2px 0 8px">Objections that came up on calls but were left unresolved. <b>×N</b> = how often it happened.</div>
     ${objs.length?`<ul class="ci">${objs.map(o=>`<li>${esc(o.objection)} <span class="muted">×${o.n}</span></li>`).join('')}</ul>`:'<div class="muted">No unhandled objections — great!</div>'}</div>`;
   // Feedback intelligence: what CHANGED across the funnel + the next action (#6).
   const fn=d.funnel||{}, ins=(d.insights||[]);
@@ -104,15 +171,16 @@ async function load(){
       <div class="muted">${p!=null?'was '+p+'%':'—'}${dlt!=null?` <span class="delta ${dlt>=0?'up':'down'}">${dlt>=0?'▲':'▼'}${Math.abs(dlt).toFixed(1)}</span>`:''}</div>`;};
   const KIND={up:'#4ade80',down:'#f87171',tip:'#fbbf24'};
   const KICON={up:'✅',down:'⚠️',tip:'💡'};
-  const fb=`<div class="card full" style="border-color:#3b82f6;background:linear-gradient(180deg,#13203a,#161b22)">
-    <h2 style="color:#93c5fd">🧠 Feedback intelligence — what changed &amp; what to do next</h2>
-    <div class="cmp" style="grid-template-columns:1fr auto auto;max-width:420px;margin-bottom:14px">
+  const fb=`<div class="card full" style="border-color:rgba(91,140,255,.45);background:linear-gradient(180deg,rgba(91,140,255,.08),var(--panel))">
+    <div class="hd"><div class="eyebrow" style="color:var(--accent)">Priority focus</div><div class="hd-t">Feedback intelligence — what changed &amp; what to do next</div></div>
+    <div class="sub">How your funnel moved versus the previous equal-length period. <b>Connect %</b> = answered ÷ dialled · <b>Right-Party %</b> = reached a decision-maker ÷ connected · <b>Pitch %</b> = pitched ÷ right-party · <b>Booking %</b> = booked ÷ pitched.</div>
+    <div class="cmp" style="grid-template-columns:1fr auto auto;max-width:440px;margin-bottom:14px">
       <div class="h">Stage (this vs previous period)</div><div class="h">Now</div><div class="h">Prev</div>
       ${['connect','rpc','pitch','booked'].map(stageRow).join('')}</div>
     ${ins.length?`<ul class="ci" style="font-size:13.5px;list-style:none;padding-left:0">
       ${ins.map(i=>`<li style="margin:8px 0;padding-left:26px;position:relative"><span style="position:absolute;left:0">${KICON[i.kind]||'•'}</span><span style="color:${KIND[i.kind]||'#e6edf3'}">${esc(i.text)}</span></li>`).join('')}</ul>`
       :'<div class="muted">Not enough activity in this period to compute changes yet.</div>'}
-    <div class="muted" style="font-size:11.5px;margin-top:6px">Compares the selected window against the previous equal-length working period. Green = improving, amber = a fix to apply, red = a drop to address.</div></div>`;
+    <div class="foot">Compares the selected window against the previous equal-length working period. Green = improving, amber = a fix to apply, red = a drop to address.</div></div>`;
   // RPC-connect feedback — reaching the decision-maker vs stopping at the gatekeeper.
   const team=rf.team||{}, rrows=rf.rows||[], rtips=rf.tips||[], rex=rf.examples||{};
   const rd=rex.reached_dm||[], sg=rex.stopped_at_gatekeeper||[];
@@ -122,13 +190,14 @@ async function load(){
         <span class="bn">${r.rpc_rate!=null?r.rpc_rate+'%':'—'}</span>
         <span class="muted" style="width:96px;text-align:right;font-size:11.5px">GK ${r.gk_handled_rate!=null?r.gk_handled_rate+'%':'—'}</span></div>`;}).join('')
     :'<div class="muted">No connected calls in this window.</div>';
-  const rpcCard=`<div class="card full" style="border-color:#22c55e;background:linear-gradient(180deg,#0f2417,#161b22)">
-    <h2 style="color:#86efac">📞 RPC-connect feedback — reaching the decision-maker</h2>
-    <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:12px">
-      <div><div class="big">${team.rpc_rate!=null?team.rpc_rate+'%':'—'}</div><div class="muted" style="font-size:11px">TEAM RPC-CONNECT RATE</div></div>
-      <div><div class="big">${team.gk_handled_rate!=null?team.gk_handled_rate+'%':'—'}</div><div class="muted" style="font-size:11px">GATEKEEPER HANDLED WELL</div></div>
-      <div><div class="big" style="color:#4ade80">${team.reached_dm||0}</div><div class="muted" style="font-size:11px">REACHED DECISION-MAKER</div></div>
-      <div><div class="big" style="color:#f87171">${team.stopped_at_gatekeeper||0}</div><div class="muted" style="font-size:11px">STOPPED AT GATEKEEPER</div></div>
+  const rpcCard=`<div class="card full" style="border-color:rgba(74,222,128,.4);background:linear-gradient(180deg,rgba(74,222,128,.07),var(--panel))">
+    <div class="hd"><div class="eyebrow" style="color:var(--good)">Team benchmark</div><div class="hd-t">RPC-connect feedback — reaching the decision-maker</div></div>
+    <div class="sub"><b>RPC-connect</b> = the BDE reached the Right Party (the decision-maker) rather than stopping at a gatekeeper. This panel is read-only and shared across the team.</div>
+    <div style="display:flex;gap:32px;flex-wrap:wrap;margin:2px 0 14px">
+      <div class="kpi"><div class="big">${team.rpc_rate!=null?team.rpc_rate+'%':'—'}</div><div class="l">Team RPC-connect rate</div><div class="s">Reached a decision-maker ÷ connected</div></div>
+      <div class="kpi"><div class="big">${team.gk_handled_rate!=null?team.gk_handled_rate+'%':'—'}</div><div class="l">Gatekeeper handled well</div><div class="s">Navigated the gatekeeper cleanly</div></div>
+      <div class="kpi"><div class="big" style="color:var(--good)">${team.reached_dm||0}</div><div class="l">Reached decision-maker</div><div class="s">Calls that got to the right party</div></div>
+      <div class="kpi"><div class="big" style="color:var(--bad)">${team.stopped_at_gatekeeper||0}</div><div class="l">Stopped at gatekeeper</div><div class="s">Calls that never reached the DM</div></div>
     </div>
     ${rtips.length?`<ul class="ci" style="list-style:none;padding-left:0">${rtips.map(t=>`<li style="margin:7px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">💡</span><span style="color:#fbbf24">${esc(t)}</span></li>`).join('')}</ul>`:''}
     <h2 style="margin-top:14px">RPC-connect rate by BDE <span class="muted" style="text-transform:none;letter-spacing:0">(reached decision-maker ÷ connected)</span></h2>
@@ -137,7 +206,7 @@ async function load(){
       <div><h2>✅ Reached the decision-maker</h2>${rd.length?`<ul class="ci">${rd.map(callLink).join('')}</ul>`:'<div class="muted">No examples in this window.</div>'}</div>
       <div><h2>🚧 Stopped at the gatekeeper (handled poorly)</h2>${sg.length?`<ul class="ci">${sg.map(callLink).join('')}</ul>`:'<div class="muted">No examples in this window.</div>'}</div>
     </div>
-    <div class="muted" style="font-size:11.5px;margin-top:8px">Read-only. RPC-connect = the BDE reached the Right Party / decision-maker. Click a business to open the call.</div></div>`;
+    <div class="foot">Read-only. RPC-connect = the BDE reached the Right Party / decision-maker. Click a business to open the call.</div></div>`;
   $('#main').innerHTML = fb + rpcCard + score + winning + trend + dev;
 }
 loadBdes();

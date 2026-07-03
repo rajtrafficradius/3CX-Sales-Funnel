@@ -5,73 +5,118 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Traffic Radius — Sales Funnel (TV)</title>
 <style>
-  :root{--bg:#0b0f15;--panel:#161b22;--panel2:#1c2430;--line:#27313f;--txt:#e9eef5;--muted:#9aa6b2}
+  /* ============ PREMIUM DESIGN SYSTEM TOKENS (shared with main dashboard) ============ */
+  :root{
+    --bg:#0a0d13;--panel:#10151e;--panel2:#161c27;--panel3:#1b2230;
+    --line:#222b39;--line-soft:#1a212c;--line2:#2c3645;
+    --txt:#e8edf5;--txt-dim:#b8c2d0;--muted:#8b96a6;--faint:#697384;
+    --accent:#5b8cff;--accent2:#3b82f6;--accent-soft:rgba(91,140,255,.14);--ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80;--warn:#fbbf24;--bad:#f87171;--chip:#1a2433;
+    --r1:8px;--r2:10px;--r3:12px;--r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset,0 10px 28px -16px rgba(0,0,0,.80);
+  }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
-  body{background:radial-gradient(1400px 800px at 72% -12%,#13202e,#0b0f15 60%);color:var(--txt);
-    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;overflow:hidden;height:100vh}
-  .wrap{display:flex;flex-direction:column;height:100vh;padding:1.8vh 1.6vw;gap:1.6vh}
-  /* header */
+  body{background:radial-gradient(1300px 760px at 78% -15%,#131c2c,var(--bg) 62%);color:var(--txt);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;overflow:hidden;height:100vh;-webkit-font-smoothing:antialiased}
+  .wrap{display:flex;flex-direction:column;height:100vh;padding:1.8vh 1.6vw;gap:1.5vh}
+
+  /* ---- header ---- */
   header{display:flex;align-items:center;gap:1.4vw;flex:none}
-  .logo{background:#fff;border-radius:12px;padding:.8vh 1vw;line-height:0;box-shadow:0 2px 12px rgba(0,0,0,.45)}
+  .logo{background:#fff;border-radius:var(--r4);padding:.8vh 1vw;line-height:0;box-shadow:var(--elev2)}
   .logo img{height:5.2vh;display:block}
-  .htitle{font-size:clamp(22px,2.2vw,46px);font-weight:800;letter-spacing:.3px}
-  .htitle b{color:#fff}
-  .htitle span{color:var(--muted);font-weight:600}
+  .htitle{display:flex;flex-direction:column;gap:.2vh;line-height:1.06;min-width:0}
+  .htitle .eyebrow{font-size:clamp(9px,.7vw,15px);font-weight:800;text-transform:uppercase;letter-spacing:2.2px;color:var(--faint);white-space:nowrap}
+  .htitle .hmain{font-size:clamp(22px,2.1vw,44px);font-weight:800;letter-spacing:.3px;white-space:nowrap}
+  .htitle b{color:#fff;font-weight:900}
+  .htitle #hdate{color:var(--muted);font-weight:600}
   .spacer{flex:1}
-  .clock{font-size:clamp(20px,1.9vw,40px);font-weight:800;font-variant-numeric:tabular-nums;color:#dbe4ee}
-  .live{display:flex;align-items:center;gap:.7vw;font-size:clamp(15px,1.4vw,30px);font-weight:900;letter-spacing:1.2px;color:#4ade80;
-    background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);border-radius:999px;padding:.7vh 1.2vw;white-space:nowrap}
-  .live .d{width:1.3vh;height:1.3vh;min-width:11px;min-height:11px;border-radius:50%;background:#22c55e;animation:tvpulse 1.6s ease-out infinite}
+  .clock{font-size:clamp(20px,1.8vw,38px);font-weight:800;font-variant-numeric:tabular-nums;color:var(--txt-dim);letter-spacing:.5px}
+  .live{display:flex;align-items:center;gap:.7vw;font-size:clamp(15px,1.3vw,28px);font-weight:900;letter-spacing:1.4px;color:var(--good);
+    background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.38);border-radius:999px;padding:.7vh 1.2vw;white-space:nowrap}
+  .live .d{width:1.3vh;height:1.3vh;min-width:11px;min-height:11px;border-radius:50%;background:var(--good);animation:tvpulse 1.6s ease-out infinite}
   .live .ago{font-size:.62em;font-weight:600;color:var(--muted);letter-spacing:.3px}
-  .live.off{color:#f87171;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4)}
-  .live.off .d{background:#ef4444;animation:none}
-  @keyframes tvpulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 1.5vh rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
-  /* funnel row */
-  .funnel{flex:none;display:grid;grid-template-columns:repeat(5,1fr);gap:1vw;height:18vh}
-  .stage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1vh .9vw;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
-  .stage .nm{font-size:clamp(11px,.92vw,20px);font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
-  .stage .num{font-size:clamp(26px,3.4vw,78px);font-weight:900;line-height:.95;font-variant-numeric:tabular-nums}
-  .stage .cv{font-size:clamp(11px,.95vw,20px);color:var(--muted);font-weight:700}
-  .stage .bar{height:.9vh;border-radius:999px;background:#0b0f15;overflow:hidden;margin-top:.5vh}
+  .live.off{color:var(--bad);background:rgba(248,113,113,.10);border-color:rgba(248,113,113,.38)}
+  .live.off .d{background:var(--bad);animation:none}
+  @keyframes tvpulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.55)}70%{box-shadow:0 0 0 1.5vh rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+
+  /* ---- section header (overline that says what the block below is) ---- */
+  .sechead{flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:1vw;padding:0 .2vw}
+  .sechead .lhs{display:flex;align-items:baseline;gap:.9vw;min-width:0}
+  .sechead .ov{font-size:clamp(11px,.95vw,20px);font-weight:900;text-transform:uppercase;letter-spacing:2px;color:var(--txt-dim);white-space:nowrap}
+  .sechead .sub{font-size:clamp(10px,.8vw,16px);color:var(--faint);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sechead .hint{font-size:clamp(10px,.78vw,16px);color:var(--faint);font-weight:700;text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+
+  /* ---- funnel row ---- */
+  .funnel{flex:none;display:grid;grid-template-columns:repeat(5,1fr);gap:1vw;height:17vh}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:var(--r4);padding:1.1vh 1vw;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;box-shadow:var(--elev2)}
+  .stage .nm{font-size:clamp(11px,.9vw,19px);font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stage .num{font-size:clamp(26px,3.3vw,76px);font-weight:900;line-height:.92;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+  .stage .cv{font-size:clamp(11px,.9vw,19px);color:var(--muted);font-weight:700}
+  .stage .bar{height:.9vh;border-radius:999px;background:rgba(255,255,255,.05);overflow:hidden;margin-top:.5vh;border:1px solid var(--line-soft)}
   .stage .bar i{display:block;height:100%;border-radius:999px;transition:width .8s cubic-bezier(.22,.61,.36,1)}
-  .stage.booked{border-color:rgba(34,197,94,.55);box-shadow:inset 0 0 36px rgba(34,197,94,.16)}
-  /* leaderboard */
-  .lb{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:1.4vh 1.3vw;display:flex;flex-direction:column;min-height:0}
-  .lb h2{font-size:clamp(16px,1.4vw,32px);text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:1vh;display:flex;align-items:center;gap:1vw;flex:none}
-  .lb h2 .pg{font-size:.66em;color:var(--muted)}
+  .stage.booked{border-color:rgba(74,222,128,.5);box-shadow:var(--elev2),inset 0 0 40px rgba(74,222,128,.14)}
+
+  /* ---- leaderboard ---- */
+  .lb{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:var(--r4);padding:1.4vh 1.3vw;display:flex;flex-direction:column;min-height:0;box-shadow:var(--elev2)}
+  .lb h2{flex:none;display:flex;align-items:baseline;gap:1vw;margin-bottom:1vh}
+  .lb h2 .t{font-size:clamp(16px,1.35vw,30px);text-transform:uppercase;letter-spacing:1.4px;color:var(--txt-dim);font-weight:900;white-space:nowrap}
+  .lb h2 .sub{font-size:clamp(11px,.85vw,18px);color:var(--faint);font-weight:600;letter-spacing:.2px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lb h2 .pg{margin-left:auto;font-size:clamp(12px,.9vw,20px);color:var(--muted);font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
   .lbgridcols{display:grid;grid-template-columns:1.1fr 6fr 2.2fr 2.2fr 2.6fr 2.2fr 2.8fr;align-items:center;gap:0 1.1vw}
-  .lbhead{flex:none;border-bottom:2px solid var(--line);padding-bottom:.7vh}
-  .lbhead>div{font-size:clamp(12px,1vw,24px);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:800;text-align:right;white-space:nowrap}
+  .lbhead{flex:none;border-bottom:2px solid var(--line2);padding-bottom:.8vh}
+  .lbhead>div{font-size:clamp(12px,1vw,24px);color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:800;text-align:right;white-space:nowrap}
   .lbhead>div.l{text-align:left}
   .lbbody{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
   /* min-height:0 lets the rows shrink below their content height so ALL BDEs (incl Aircall
      Alfred/Ben) fit in the viewport with no scrolling, however many rows there are. */
-  .lbrow{flex:1;min-height:0;overflow:hidden;border-bottom:1px solid var(--line);font-size:clamp(14px,1.55vw,36px);font-weight:800}
-  .lbrow>div{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lbrow{flex:1;min-height:0;overflow:hidden;border-bottom:1px solid var(--line-soft);font-size:clamp(14px,1.5vw,34px);font-weight:800}
+  .lbrow:nth-child(even){background:rgba(255,255,255,.018)}
+  .lbrow:hover{background:var(--panel2)}
+  .lbrow>div{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--txt-dim)}
   .lbrow .rk{text-align:center;color:var(--muted);font-weight:900}
-  .lbrow .nm{text-align:left;font-weight:800;color:#fff}
-  .lbrow .bk{color:#4ade80;font-weight:900}
-  .lbrow.top{background:linear-gradient(90deg,rgba(250,204,21,.10),transparent)}
-  .lbrow.top .rk{color:#facc15}
+  .lbrow .nm{text-align:left;font-weight:800;color:#fff;font-variant-numeric:normal}
+  .lbrow .bk{color:var(--good);font-weight:900}
+  .lbrow.top{background:linear-gradient(90deg,rgba(251,191,36,.13),rgba(251,191,36,0) 62%)}
+  .lbrow.top .rk{color:var(--warn)}
   .lbrow.top .nm::after{content:" 🏆";font-size:.7em}
-  .empty{flex:1;display:flex;align-items:center;justify-content:center;font-size:2.6vw;color:var(--muted)}
-  .fsbtn{position:fixed;bottom:1.2vh;right:1.1vw;background:rgba(28,36,48,.65);color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:.6vh 1vw;font-size:15px;cursor:pointer;opacity:.45;transition:opacity .2s}
-  .fsbtn:hover{opacity:1}
+  .empty{flex:1;display:flex;align-items:center;justify-content:center;font-size:2.4vw;color:var(--muted);font-weight:700}
+
+  .fsbtn{position:fixed;bottom:1.2vh;right:1.1vw;background:rgba(22,28,39,.7);color:var(--muted);border:1px solid var(--line);border-radius:var(--r2);padding:.6vh 1vw;font-size:15px;cursor:pointer;opacity:.42;transition:opacity .2s,border-color .2s;font-weight:700}
+  .fsbtn:hover{opacity:1;border-color:var(--line2)}
+  .fsbtn:focus-visible{outline:none;box-shadow:var(--ring)}
+
+  @media (max-width:900px){
+    .htitle .eyebrow{display:none}
+    .funnel{height:15vh}
+    .sechead .sub{display:none}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <span class="logo"><img src="/logo.png" alt="Traffic Radius"/></span>
-    <div class="htitle"><b>Sales Funnel</b> <span id="hdate"></span></div>
+    <div class="htitle">
+      <span class="eyebrow">Traffic Radius · Live Sales Floor</span>
+      <span class="hmain"><b>Sales Funnel</b> <span id="hdate"></span></span>
+    </div>
     <div class="spacer"></div>
     <div class="clock" id="clock">--:--:--</div>
     <div class="live off" id="live"><span class="d"></span><span id="liveT">CONNECTING</span><span class="ago" id="liveAgo"></span></div>
   </header>
+  <div class="sechead">
+    <div class="lhs"><span class="ov">Today's Sales Funnel</span><span class="sub">Prospects moving through each stage — updates automatically</span></div>
+    <span class="hint">Volume flows left → right</span>
+  </div>
   <div class="funnel" id="funnel"></div>
   <div class="lb">
-    <h2>🏆 Leaderboard — per BDE <span class="pg" id="lbPage"></span></h2>
+    <h2>
+      <span class="t">🏆 Leaderboard — Business Development Execs</span>
+      <span class="sub">Ranked by meetings booked, then full pitches, then calls made</span>
+      <span class="pg" id="lbPage"></span>
+    </h2>
     <div class="lbgridcols lbhead">
       <div class="rk">#</div><div class="l">BDE</div><div>Calls</div><div>Conn</div><div>Right Party</div><div>Pitch</div><div>Booked</div>
     </div>

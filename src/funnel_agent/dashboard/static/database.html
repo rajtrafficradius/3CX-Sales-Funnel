@@ -5,66 +5,124 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Prospect Database — Traffic Radius</title>
 <style>
-  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6;
-        --ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  :root{
+    --bg:#0a0d13;--panel:#10151e;--panel2:#161c27;--panel3:#1b2230;
+    --line:#222b39;--line-soft:#1a212c;--line2:#2c3645;
+    --txt:#e8edf5;--txt-dim:#b8c2d0;--muted:#8b96a6;--faint:#697384;
+    --accent:#5b8cff;--accent2:#3b82f6;--accent-soft:rgba(91,140,255,.14);--ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80;--warn:#fbbf24;--bad:#f87171;--chip:#1a2433;
+    --ok:var(--good);  /* legacy alias kept for existing rules */
+    --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;
+    --r1:8px;--r2:10px;--r3:12px;--r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset,0 10px 28px -16px rgba(0,0,0,.80);
+    --t-micro:10px;--t-eyebrow:10.5px;--t-meta:11px;--t-cap:12px;--t-body:13px;--t-base:14px;--t-strong:16px;--t-fig:22px;--t-kpi:27px;--t-h1:30px;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6}
-  header a{color:var(--accent);text-decoration:none;font-size:13px}
-  header h1{font-size:17px;margin:0;font-weight:700}
-  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0}
+  body{margin:0;background:var(--bg);color:var(--txt);font:var(--t-base)/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial}
+  /* ---- top bar ---- */
+  header{display:flex;align-items:center;gap:var(--s4);padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6}
+  header a{color:var(--accent);text-decoration:none;font-size:var(--t-body)}
+  header a:hover{text-decoration:underline}
+  header h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:-.2px}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0}
   .brand img{height:24px;display:block}
   .spacer{flex:1}
-  .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
-  .live .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:pulse 2s infinite}
-  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
-  main{max-width:1480px;margin:0 auto;padding:18px 22px}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px}
-  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
-  .stat .n{font-size:22px;font-weight:760}
-  .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
-  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-  input,select{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:9px 12px;font:inherit;font-size:13px}
-  input:focus,select:focus{outline:1px solid var(--accent)}
-  #search{flex:1;min-width:240px}
-  button{font:inherit;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:8px 13px;cursor:pointer;font-size:13px}
-  button:hover{border-color:var(--accent)} button:disabled{opacity:.4;cursor:default}
-  .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto}
-  table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
-  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
-  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
-  th.sortable:hover{color:var(--txt)}
-  th.sortable::after{content:"⇅";opacity:.28;font-size:11px;margin-left:5px}
-  th.sortable.sorted::after{content:"▼";opacity:1;color:var(--accent)}
-  th.sortable.sorted.asc::after{content:"▲"}
-  th{position:sticky;top:0;background:#141b24;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);z-index:1}
-  tbody tr{cursor:pointer}
-  tbody tr:hover{background:rgba(59,130,246,.07)}
-  td.num{text-align:right;font-variant-numeric:tabular-nums}
-  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700}
-  .p1{background:rgba(59,130,246,.16);color:#7cb0ff}.p2{background:rgba(168,85,247,.16);color:#c79bf7}
-  .ok{background:rgba(34,197,94,.16);color:#86efac}.none{background:rgba(148,163,184,.14);color:#cbd5e1}
-  .muted{color:var(--muted)}
-  .dom{color:var(--accent)}
-  .pager{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin-top:12px;color:var(--muted);font-size:13px}
-  .flash{animation:flash 1.2s ease}@keyframes flash{0%{background:rgba(34,197,94,.18)}100%{background:transparent}}
-  /* coverage stat cards double as multi-select filter toggles */
-  .stat.cov{cursor:pointer;user-select:none;transition:border-color .12s,box-shadow .12s}
-  .stat.cov:hover{border-color:var(--accent)}
-  .stat.cov.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:rgba(59,130,246,.12)}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-cap);color:var(--muted)}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(74,222,128,.5);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.5)}70%{box-shadow:0 0 0 7px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+  main{max-width:1480px;margin:0 auto;padding:20px 22px}
+  /* ---- section headers: tiny uppercase overline + human sub ---- */
+  .overline{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  .sec-head{margin-bottom:var(--s3)}
+  .sec-head .overline{margin-bottom:4px}
+  .sec-sub{font-size:var(--t-cap);color:var(--faint);line-height:1.45}
+  /* ---- stat / coverage cards ---- */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--s3);margin-bottom:var(--s5)}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);padding:14px 16px;box-shadow:var(--elev2)}
+  .stat .n{font-size:var(--t-kpi);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.5px;line-height:1.1}
+  .stat .l{font-size:var(--t-eyebrow);color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-top:6px;font-weight:700;line-height:1.35}
+  .stat.cov{cursor:pointer;user-select:none;transition:border-color .12s,box-shadow .12s,background .12s}
+  .stat.cov:hover{border-color:var(--line2)}
+  .stat.cov.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset,var(--elev1);background:var(--accent-soft)}
   .stat.cov.active .l{color:#9ec3ff}
-  /* live result summary + active-filter pills */
-  .resultbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:4px 0 12px;min-height:30px}
-  .resultcount{font-size:14px;color:var(--muted)}
-  .resultcount b{font-size:21px;color:var(--txt);font-weight:820;vertical-align:-1px}
-  .fpill{display:inline-flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 8px 4px 12px;font-size:12px;color:var(--txt)}
+  /* ---- panels ---- */
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2)}
+  /* ---- filter panel ---- */
+  .filters{padding:18px 20px;margin-bottom:var(--s5)}
+  .filters-top{display:flex;gap:var(--s5);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--s4)}
+  .filters-title{flex:0 0 auto}
+  .filters-hint{font-size:var(--t-cap);color:var(--faint);margin-top:4px;max-width:340px;line-height:1.45}
+  .field{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .field>label{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  .field--search{flex:1 1 320px;min-width:240px}
+  .fgroups{display:flex;flex-direction:column;gap:var(--s4)}
+  .fgroup{border-top:1px solid var(--line-soft);padding-top:var(--s4)}
+  .fgroup:first-child{border-top:0;padding-top:0}
+  .fgroup-head{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;margin-bottom:10px}
+  .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:var(--s3)}
+  /* ---- inputs ---- */
+  input,select{background:var(--panel3);color:var(--txt);border:1px solid var(--line2);border-radius:var(--r1);padding:9px 12px;font:inherit;font-size:var(--t-body);transition:border-color .12s,box-shadow .12s}
+  input::placeholder{color:var(--faint)}
+  input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
+  .field select,.field input{width:100%}
+  #search{width:100%;min-width:0;font-size:var(--t-base);padding:11px 14px}
+  /* ---- buttons ---- */
+  button{font:inherit;background:transparent;color:var(--txt-dim);border:1px solid var(--line2);border-radius:var(--r2);padding:8px 14px;cursor:pointer;font-size:var(--t-body);transition:border-color .12s,color .12s,background .12s}
+  button:hover{border-color:var(--accent);color:var(--txt)}
+  button:disabled{opacity:.4;cursor:default}
+  button:focus-visible{outline:none;box-shadow:var(--ring)}
+  /* ---- tracking-tag chips (OR-combined) ---- */
+  .trkrow{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;margin-top:var(--s3)}
+  .trklabel{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:700}
+  .trkchips{display:flex;gap:8px;flex-wrap:wrap}
+  .trkchip{background:var(--panel3);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;font-size:var(--t-cap);color:var(--txt-dim);cursor:pointer;user-select:none;transition:border-color .12s,color .12s,background .12s}
+  .trkchip:hover{border-color:var(--accent);color:var(--txt)}
+  .trkchip.active{background:var(--accent-soft);border-color:var(--accent);color:#cfe0ff;font-weight:700}
+  /* ---- results header + active-filter pills ---- */
+  .results-head{margin:0 0 var(--s3)}
+  .results-head .overline{margin-bottom:8px}
+  .resultbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-height:30px}
+  .resultcount{font-size:var(--t-base);color:var(--muted)}
+  .resultcount b{font-size:var(--t-fig);color:var(--txt);font-weight:800;vertical-align:-1px;font-variant-numeric:tabular-nums}
+  .fpill{display:inline-flex;align-items:center;gap:7px;background:var(--chip);border:1px solid var(--line2);border-radius:999px;padding:4px 8px 4px 12px;font-size:var(--t-cap);color:var(--txt-dim)}
   .fpill button{all:unset;cursor:pointer;color:var(--muted);font-weight:800;line-height:1;padding:0 1px}
   .fpill button:hover{color:var(--bad)}
-  #clearAll{border-color:rgba(239,68,68,.5);color:#fca5a5;padding:5px 11px;font-size:12px}
-  #clearAll:hover{border-color:var(--bad);background:rgba(239,68,68,.08)}
-  .trkchip{background:#0b0f15;border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
-  .trkchip:hover{border-color:var(--accent);color:var(--txt)}
-  .trkchip.active{background:rgba(59,130,246,.16);border-color:var(--accent);color:#cfe0ff;font-weight:700}
+  #clearAll{border-color:rgba(248,113,113,.45);color:#fca5a5;padding:6px 12px;font-size:var(--t-cap)}
+  #clearAll:hover{border-color:var(--bad);background:rgba(248,113,113,.10);color:#fca5a5}
+  /* ---- table ---- */
+  .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:var(--t-body);white-space:nowrap}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line-soft)}
+  th{position:sticky;top:0;background:var(--panel3);font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--muted);z-index:1;font-weight:700;border-bottom:1px solid var(--line)}
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  th.sortable:hover{color:var(--txt-dim)}
+  th.sortable::after{content:"⇅";opacity:.3;font-size:10px;margin-left:5px}
+  th.sortable.sorted::after{content:"▼";opacity:1;color:var(--accent)}
+  th.sortable.sorted.asc::after{content:"▲"}
+  tbody tr{cursor:pointer;transition:background .1s}
+  tbody tr:hover{background:var(--panel2)}
+  tbody tr:last-child td{border-bottom:0}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td b{font-weight:700}
+  /* ---- pills / badges ---- */
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:var(--t-micro);font-weight:700;line-height:1.7}
+  .p1{background:rgba(91,140,255,.16);color:#7cb0ff}.p2{background:rgba(168,85,247,.16);color:#c79bf7}
+  .ok{background:rgba(74,222,128,.15);color:#86efac}.none{background:rgba(139,150,166,.14);color:#cbd5e1}
+  .muted{color:var(--muted)}
+  .dom{color:var(--accent)}
+  /* ---- pager ---- */
+  .pager{display:flex;align-items:center;gap:var(--s3);justify-content:flex-end;margin-top:var(--s3);color:var(--muted);font-size:var(--t-body)}
+  #rangeText{font-variant-numeric:tabular-nums}
+  .flash{animation:flash 1.2s ease}@keyframes flash{0%{background:rgba(74,222,128,.16)}100%{background:transparent}}
+  @media(max-width:640px){
+    main{padding:14px}
+    header{padding:12px 14px;gap:10px}
+    header h1{font-size:var(--t-body)}
+    .filters{padding:14px}
+    .filters-top{gap:var(--s3)}
+    .field--search{flex:1 1 100%}
+  }
 </style>
 </head>
 <body>
@@ -78,92 +136,178 @@
 </header>
 
 <main>
+  <!-- Overview: totals + coverage/paid-ads cards that double as one-click filters -->
+  <div class="sec-head">
+    <div class="overline">Database at a glance</div>
+    <div class="sec-sub">Counts update live with your filters. Click a coverage or paid-ads card to toggle it as a filter.</div>
+  </div>
   <div class="stats" id="stats"></div>
-  <!-- Row 1: who -->
-  <div class="bar">
-    <input id="search" type="search" placeholder="🔎 Search business name, website, or phone…" autocomplete="off" />
-    <select id="source">
-      <option value="">All sources</option>
-      <option value="raghav">Raghav (D&amp;B)</option>
-      <option value="raven">Raven</option>
-      <option value="3cx_calls">3CX calls</option>
-    </select>
-    <select id="revenue">
-      <option value="">All revenue</option>
-      <option value="lt1">&lt; $1M</option>
-      <option value="1-10">$1M – $10M</option>
-      <option value="10-50">$10M – $50M</option>
-      <option value="50-100">$50M – $100M</option>
-      <option value="100up">$100M+</option>
-    </select>
-    <input id="industry" type="search" placeholder="Industry…" autocomplete="off" style="max-width:150px;flex:0 1 150px" />
-    <input id="state" type="search" placeholder="State / location…" autocomplete="off" style="max-width:150px;flex:0 1 150px" />
-    <select id="enriched">
-      <option value="">All enrichment</option>
-      <option value="yes">Enriched</option>
-      <option value="no">Not enriched</option>
-    </select>
-    <select id="website">
-      <option value="">Website: any</option>
-      <option value="yes">🌐 Has website</option>
-      <option value="no">No website</option>
-    </select>
-    <select id="multiloc">
-      <option value="">Locations: any</option>
-      <option value="yes">🏢 Multi-location</option>
-      <option value="no">Single location</option>
-    </select>
-    <select id="agency">
-      <option value="">Agency: any</option>
-      <option value="yes">🤝 Has an agency</option>
-      <option value="no">No agency (yet)</option>
-    </select>
-    <select id="pipeline">
-      <option value="">Pipeline: any</option>
-      <option value="p4">🆕 P4 · Fresh worklist</option>
-      <option value="p1">📞 P1 · RPC callback</option>
-      <option value="p2">🤝 P2 · Has agency</option>
-      <option value="p3">🚪 P3 · Gatekeeper callback</option>
-      <option value="p5">📅 P5 · Meeting booked</option>
-    </select>
-    <select id="p4sub">
-      <option value="">P4 sub: any</option>
-      <option value="fresh_ads">🎯 Fresh · running ads</option>
-      <option value="fresh_unscanned">Fresh · ads unknown</option>
-      <option value="captured_3cx">📇 Captured · 3CX</option>
-      <option value="captured_aircall">📇 Captured · Aircall</option>
-      <option value="attempted">🔁 Attempted (retry)</option>
-      <option value="dead">🚫 Dead / DNC</option>
-    </select>
+
+  <!-- Filters: grouped by what they describe -->
+  <section class="panel filters">
+    <div class="filters-top">
+      <div class="filters-title">
+        <div class="overline">Filter the database</div>
+        <div class="filters-hint">Filters combine (AND). Active filters show as removable chips above the results.</div>
+      </div>
+      <div class="field field--search">
+        <label for="search">Search</label>
+        <input id="search" type="search" placeholder="🔎 Business name, website, or phone…" autocomplete="off" />
+      </div>
+    </div>
+
+    <div class="fgroups">
+      <!-- Firmographics: who the company is -->
+      <div class="fgroup">
+        <div class="fgroup-head">Firmographics</div>
+        <div class="fgrid">
+          <div class="field">
+            <label for="source">Data source</label>
+            <select id="source">
+              <option value="">All sources</option>
+              <option value="raghav">Raghav (D&amp;B)</option>
+              <option value="raven">Raven</option>
+              <option value="3cx_calls">3CX calls</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="revenue">Annual revenue</label>
+            <select id="revenue">
+              <option value="">All revenue</option>
+              <option value="lt1">&lt; $1M</option>
+              <option value="1-10">$1M – $10M</option>
+              <option value="10-50">$10M – $50M</option>
+              <option value="50-100">$50M – $100M</option>
+              <option value="100up">$100M+</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="industry">Industry</label>
+            <input id="industry" type="search" placeholder="e.g. Retail…" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="state">State / location</label>
+            <input id="state" type="search" placeholder="e.g. NSW…" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Digital footprint: online presence & marketing signals -->
+      <div class="fgroup">
+        <div class="fgroup-head">Digital footprint</div>
+        <div class="fgrid">
+          <div class="field">
+            <label for="website">Website</label>
+            <select id="website">
+              <option value="">Website: any</option>
+              <option value="yes">🌐 Has website</option>
+              <option value="no">No website</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="enriched">Enrichment</label>
+            <select id="enriched">
+              <option value="">All enrichment</option>
+              <option value="yes">Enriched</option>
+              <option value="no">Not enriched</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="multiloc">Locations</label>
+            <select id="multiloc">
+              <option value="">Locations: any</option>
+              <option value="yes">🏢 Multi-location</option>
+              <option value="no">Single location</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="agency">Marketing agency</label>
+            <select id="agency">
+              <option value="">Agency: any</option>
+              <option value="yes">🤝 Has an agency</option>
+              <option value="no">No agency (yet)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sales pipeline: where the prospect sits in the funnel -->
+      <div class="fgroup">
+        <div class="fgroup-head">Sales pipeline</div>
+        <div class="fgrid">
+          <div class="field">
+            <label for="pipeline">Pipeline stage</label>
+            <select id="pipeline">
+              <option value="">Pipeline: any</option>
+              <option value="p4">🆕 P4 · Fresh worklist</option>
+              <option value="p1">📞 P1 · RPC callback</option>
+              <option value="p2">🤝 P2 · Has agency</option>
+              <option value="p3">🚪 P3 · Gatekeeper callback</option>
+              <option value="p5">📅 P5 · Meeting booked</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="p4sub">P4 breakdown</label>
+            <select id="p4sub">
+              <option value="">P4 sub: any</option>
+              <option value="fresh_ads">🎯 Fresh · running ads</option>
+              <option value="fresh_unscanned">Fresh · ads unknown</option>
+              <option value="captured_3cx">📇 Captured · 3CX</option>
+              <option value="captured_aircall">📇 Captured · Aircall</option>
+              <option value="attempted">🔁 Attempted (retry)</option>
+              <option value="dead">🚫 Dead / DNC</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Paid advertising: Google Transparency is the primary confirmation -->
+      <div class="fgroup">
+        <div class="fgroup-head">Paid advertising</div>
+        <div class="fgrid">
+          <div class="field">
+            <label for="paidAds">Paid ads</label>
+            <select id="paidAds">
+              <option value="">All</option>
+              <option value="google">🎯 Running Google Ads (Transparency · confirmed)</option>
+              <option value="meta">📘 Has Meta pixel</option>
+              <option value="both">Google + Meta</option>
+              <option value="either">Any paid ads</option>
+              <option value="none">No paid ads (scanned)</option>
+              <option value="unscanned">Not scanned yet</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="transparency">Google Ads Transparency</label>
+            <select id="transparency">
+              <option value="">Transparency: any</option>
+              <option value="checked">Transparency checked</option>
+              <option value="running">Confirmed running Google Ads</option>
+              <option value="not_running">Checked · not running</option>
+            </select>
+          </div>
+        </div>
+        <div class="trkrow">
+          <span class="trklabel">Tracking tags on site</span>
+          <div class="trkchips">
+            <button class="trkchip" data-trk="google_ads">Google Ads</button>
+            <button class="trkchip" data-trk="meta_pixel">Meta Pixel</button>
+            <button class="trkchip" data-trk="gtm">GTM</button>
+            <button class="trkchip" data-trk="ga4">GA4</button>
+            <button class="trkchip" data-trk="bing">Bing</button>
+            <button class="trkchip" data-trk="tiktok">TikTok</button>
+            <button class="trkchip" data-trk="linkedin">LinkedIn</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <div class="results-head">
+    <div class="overline">Matching prospects</div>
+    <div class="resultbar" id="resultbar"></div>
   </div>
-  <!-- Row 2: paid ads (Transparency = primary) -->
-  <div class="bar covbar">
-    <span class="muted" style="font-size:12px;font-weight:700;letter-spacing:.3px">PAID ADS</span>
-    <select id="paidAds">
-      <option value="">All</option>
-      <option value="google">🎯 Running Google Ads (Transparency · confirmed)</option>
-      <option value="meta">📘 Has Meta pixel</option>
-      <option value="both">Google + Meta</option>
-      <option value="either">Any paid ads</option>
-      <option value="none">No paid ads (scanned)</option>
-      <option value="unscanned">Not scanned yet</option>
-    </select>
-    <select id="transparency">
-      <option value="">Transparency: any</option>
-      <option value="checked">Transparency checked</option>
-      <option value="running">Confirmed running Google Ads</option>
-      <option value="not_running">Checked · not running</option>
-    </select>
-    <span class="muted" style="font-size:12px">Tracking tags:</span>
-    <button class="trkchip" data-trk="google_ads">Google Ads</button>
-    <button class="trkchip" data-trk="meta_pixel">Meta Pixel</button>
-    <button class="trkchip" data-trk="gtm">GTM</button>
-    <button class="trkchip" data-trk="ga4">GA4</button>
-    <button class="trkchip" data-trk="bing">Bing</button>
-    <button class="trkchip" data-trk="tiktok">TikTok</button>
-    <button class="trkchip" data-trk="linkedin">LinkedIn</button>
-  </div>
-  <div class="resultbar" id="resultbar"></div>
   <div class="tablewrap">
     <table>
       <thead><tr id="dbhead">

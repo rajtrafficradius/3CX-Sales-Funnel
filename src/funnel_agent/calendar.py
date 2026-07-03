@@ -58,15 +58,20 @@ def guess_when(text: str | None, base: date) -> datetime:
 
 
 def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None = None) -> list[dict]:
-    where = ["start_at >= %(s)s::date", "start_at < (%(e)s::date + 1)"]
+    where = ["e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
     params: dict = {"s": start, "e": end}
     if bde_name:
-        where.append("bde_name = %(b)s")
+        where.append("e.bde_name = %(b)s")
         params["b"] = bde_name
     with pool.connection() as conn, conn.cursor() as cur:
+        # tier = the prospect's next-call priority tier (A), for calendar colour-coding.
         cur.execute(
-            "SELECT id, bde_name, type, title, start_at, end_at, status, call_id, dest_number, notes "
-            f"FROM calendar_events WHERE {' AND '.join(where)} ORDER BY start_at",
+            "SELECT e.id, e.bde_name, e.type, e.title, e.start_at, e.end_at, e.status, e.call_id, "
+            "       e.dest_number, e.notes, nc.tier "
+            "FROM calendar_events e "
+            "LEFT JOIN next_call_queue nc ON e.dest_number IS NOT NULL AND nc.dest9 = "
+            "  right(regexp_replace(e.dest_number,'[^0-9]','','g'),9) "
+            f"WHERE {' AND '.join(where)} ORDER BY e.start_at",
             params,
         )
         return cur.fetchall()
@@ -110,15 +115,41 @@ def delete_event(pool: ConnectionPool, eid: int, *, restrict_bde: str | None = N
     return bool(n)
 
 
+def synth_next_call_points_text(evidence: dict | None) -> str:
+    """Plain-text next-call game plan from a call's evidence — prefers the AI's
+    next_call_points (W), else synthesizes from unhandled objections / problem / buying
+    signals / next step. Used to enrich the callback event's notes so whoever picks up the
+    scheduled callback sees the ready-made talking points."""
+    ev = evidence or {}
+    pts = ev.get("next_call_points") if isinstance(ev, dict) else None
+    lines: list[str] = []
+    if isinstance(pts, list) and pts:
+        for p in pts[:5]:
+            if isinstance(p, dict) and p.get("point"):
+                lines.append("• " + str(p["point"]))
+    else:
+        for o in (ev.get("objections") or [])[:2]:
+            if isinstance(o, dict) and o.get("handled") is False and o.get("objection"):
+                lines.append('• Pre-empt: "%s"' % o["objection"])
+        if ev.get("problem_summary"):
+            lines.append("• Re-open on their problem: " + str(ev["problem_summary"]))
+        for s in (ev.get("buying_signals") or [])[:1]:
+            lines.append("• Build on their interest: " + str(s))
+        if ev.get("next_step"):
+            lines.append("• " + str(ev["next_step"]))
+    return "\n".join(lines)
+
+
 def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
     """Create a calendar 'callback' for every interested-prospect callback request on
-    `day` that doesn't already have one (idempotent via the call_id unique index)."""
+    `day` that doesn't already have one (idempotent via the call_id unique index).
+    The event notes carry the next-call game plan (W) so the caller is prepped."""
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT c.call_id, COALESCE(c.bde_name, c.bde_extension) AS bde_name, c.dest_number, "
-            "c.started_at, cl.callback_when, cl.prospect_company "
+            "c.started_at, cl.callback_when, cl.prospect_company, cl.evidence "
             "FROM calls c JOIN classifications cl ON cl.call_id = c.call_id "
             "LEFT JOIN calendar_events e ON e.call_id = c.call_id AND e.type='callback' "
             "WHERE c.in_scope AND c.started_at >= %s AND c.started_at < %s "
@@ -132,10 +163,16 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
         when = guess_when(r["callback_when"], base)
         who = r["prospect_company"] or r["dest_number"] or "prospect"
         title = f"📞 Callback: {who}" + (f" ({r['callback_when']})" if r["callback_when"] else "")
+        cbw = (r["callback_when"] or "").strip()
+        plan = synth_next_call_points_text(r.get("evidence"))
+        notes = (f"Callback: {cbw}\n" if cbw else "")
+        if plan:
+            notes += "Next-call game plan:\n" + plan
+        notes = notes.strip() or cbw
         try:
             create_event(pool, bde_name=r["bde_name"], type="callback", title=title,
                          start_at=when, end_at=when + timedelta(minutes=30),
-                         notes=(r["callback_when"] or ""), call_id=r["call_id"],
+                         notes=notes, call_id=r["call_id"],
                          dest_number=r["dest_number"], created_by="auto")
             created += 1
         except Exception as exc:  # unique index race / already exists

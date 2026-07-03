@@ -5,67 +5,133 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Call detail — 3CX Funnel</title>
 <style>
-  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2430;--line:#2a3240;--txt:#e6edf3;--muted:#8b949e;--accent:#3b82f6}
+  /* ============================================================================
+     PREMIUM DESIGN SYSTEM — matched to the main dashboard (index.html).
+     Same tokens, 8px rhythm, one accent, reconciled semantics, tabular numerals.
+     Only the <style> was reworked; every class name the JS renders is preserved.
+     ============================================================================ */
+  :root{
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14);
+    --ring:0 0 0 3px rgba(91,140,255,.30);
+    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+    --r1:8px; --r2:10px; --r3:12px; --r4:14px;
+    --elev1:0 1px 2px rgba(0,0,0,.40);
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+    --t-micro:10px; --t-eyebrow:10.5px; --t-meta:11px; --t-cap:12px; --t-body:13px;
+    --t-base:14px; --t-strong:16px; --t-fig:22px; --t-kpi:27px; --t-h1:30px;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:#11161f;border-bottom:1px solid var(--line);position:sticky;top:0}
-  header a{color:var(--accent);text-decoration:none;font-size:13px}
-  header h1{font-size:16px;margin:0;font-weight:650}
-  .brand{display:flex;align-items:center;background:#fff;border-radius:10px;padding:5px 10px;line-height:0;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  body{margin:0;background:radial-gradient(1100px 560px at 82% -12%,#10161f 0%,#0a0d13 60%) fixed,#0a0d13;
+    color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  ::selection{background:var(--accent-soft)}
+  *{scrollbar-width:thin;scrollbar-color:#2a3344 transparent}
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-thumb{background:#28313f;border:2px solid transparent;background-clip:padding-box;border-radius:8px}
+  *::-webkit-scrollbar-thumb:hover{background:#34404f;background-clip:padding-box}
+  *::-webkit-scrollbar-track{background:transparent}
+
+  /* --- top bar --- */
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 22px;
+    background:rgba(11,15,22,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  header a{color:var(--accent);text-decoration:none;font-size:var(--t-body)}
+  header h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:-.2px}
+  .brand{display:flex;align-items:center;background:#fff;border-radius:9px;padding:5px 10px;line-height:0;box-shadow:0 1px 3px rgba(0,0,0,.4)}
   .brand img{height:26px;display:block}
-  main{max-width:1100px;margin:0 auto;padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:900px){main{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .backlink{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--r1);
+    border:1px solid var(--line);background:var(--panel);font-weight:600;font-size:var(--t-cap);
+    transition:border-color .14s,background .14s,color .14s}
+  .backlink:hover{border-color:var(--line2);background:var(--panel2);color:var(--txt)}
+  .backlink:focus-visible{outline:none;box-shadow:var(--ring)}
+
+  /* --- layout --- */
+  main{max-width:1180px;margin:0 auto;padding:22px;display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
+  @media(max-width:900px){main{grid-template-columns:1fr;padding:16px}}
+
+  /* --- cards (raised tier, matches index hero cards) --- */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r4);padding:18px 20px;box-shadow:var(--elev2)}
   .card.full{grid-column:1/-1}
-  h2{font-size:12px;margin:0 0 12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
-  .kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:13px}
-  .kv div:nth-child(odd){color:var(--muted)}
-  .stage{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+  /* card heading = uppercase eyebrow overline; a .muted continuation reads normal-case */
+  h2{font-size:var(--t-cap);margin:0 0 var(--s3);color:var(--muted);font-weight:700;text-transform:uppercase;
+    letter-spacing:.7px;line-height:1.3;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  h2 .muted{font-weight:500;letter-spacing:0;text-transform:none;color:var(--faint)}
+  /* one-line plain-English explainer that sits right under a heading (kills confusion) */
+  .hint{font-size:var(--t-cap);color:var(--muted);line-height:1.55;margin:0 0 14px}
+  .hint b{color:var(--txt-dim);font-weight:700}
+
+  /* --- key / value grid --- */
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:8px 14px;font-size:var(--t-body);line-height:1.5}
+  .kv div:nth-child(odd){color:var(--muted);font-weight:500}
+  .kv div:nth-child(even){color:var(--txt-dim)}
+
+  /* --- funnel-verdict stage rows --- */
+  .stage{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:12px 0;border-bottom:1px solid var(--line-soft)}
   .stage:last-child{border-bottom:none}
-  .stage .nm{font-weight:600}
-  .stage .ev{color:var(--muted);font-size:12.5px;margin-top:3px;max-width:62ch}
-  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:700;white-space:nowrap}
-  .yes{background:rgba(34,197,94,.16);color:#4ade80}
-  .no{background:rgba(239,68,68,.14);color:#f87171}
-  .analysis{white-space:pre-wrap;font-size:13.5px;line-height:1.6}
-  .transcript{white-space:pre-wrap;background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:60vh;overflow:auto;font:13px/1.65 ui-monospace,Menlo,monospace;color:#cbd5e1}
+  .stage .nm{font-weight:700;font-size:var(--t-body);color:var(--txt);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .stage-mean{color:var(--muted);font-size:var(--t-meta);margin-top:3px;font-weight:500;line-height:1.45;max-width:64ch}
+  .stage .ev{color:var(--txt-dim);font-size:var(--t-cap);margin-top:5px;max-width:64ch;line-height:1.5}
+
+  /* --- pills (semantic soft fills, consistent everywhere) --- */
+  .pill{display:inline-block;padding:3px 10px;border-radius:7px;font-size:var(--t-meta);font-weight:700;
+    white-space:nowrap;line-height:1.55;border:1px solid transparent;vertical-align:middle}
+  .pill.yes,.yes{background:rgba(74,222,128,.14);color:#86efac;border-color:rgba(74,222,128,.26)}
+  .pill.no,.no{background:rgba(248,113,113,.13);color:#fca5a5;border-color:rgba(248,113,113,.26)}
+
+  .analysis{white-space:pre-wrap;font-size:var(--t-body);line-height:1.65;color:var(--txt-dim)}
+  .transcript{white-space:pre-wrap;background:#070a0f;border:1px solid var(--line);border-radius:var(--r1);
+    padding:14px 16px;max-height:60vh;overflow:auto;font:var(--t-body)/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c8d2de}
   .muted{color:var(--muted)}
-  .big{font-size:20px;font-weight:700}
-  /* lead qualification */
-  .bapus{display:flex;gap:8px;flex-wrap:wrap}
-  .bapu{padding:5px 13px;border-radius:8px;font-weight:700;font-size:12.5px;border:1px solid;cursor:default}
-  .bapu.on{background:rgba(34,197,94,.15);color:#4ade80;border-color:rgba(34,197,94,.4)}
-  .bapu.off{background:rgba(239,68,68,.10);color:#f87171;border-color:rgba(239,68,68,.3)}
-  .tbadge{padding:5px 14px;border-radius:20px;font-weight:800;font-size:13px;letter-spacing:.5px}
-  /* shared layout helpers */
-  .bizgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  .big{font-size:20px;font-weight:800}
+
+  /* --- lead qualification: BANT / AO flags as labelled tiles with plain-English meaning --- */
+  .bapus{display:flex;gap:var(--s2);flex-wrap:wrap}
+  .bapu{display:flex;flex-direction:column;gap:2px;padding:8px 13px;border-radius:var(--r2);border:1px solid;cursor:default;min-width:98px}
+  .bapu .bapu-t{font-weight:700;font-size:var(--t-body);white-space:nowrap}
+  .bapu .bapu-m{font-size:var(--t-micro);letter-spacing:.2px;opacity:.9;font-weight:500}
+  .bapu.on{background:rgba(74,222,128,.12);color:#86efac;border-color:rgba(74,222,128,.32)}
+  .bapu.off{background:rgba(248,113,113,.08);color:#fca5a5;border-color:rgba(248,113,113,.24)}
+  .tbadge{padding:6px 15px;border-radius:999px;font-weight:800;font-size:var(--t-body);letter-spacing:.4px}
+
+  /* --- shared layout helpers --- */
+  .bizgrid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s5)}
   @media(max-width:700px){.bizgrid{grid-template-columns:1fr}}
-  .subh{font-weight:700;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px}
+  .subh{font-weight:700;font-size:var(--t-eyebrow);color:var(--muted);text-transform:uppercase;letter-spacing:.7px;
+    margin-bottom:var(--s2);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
-  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:11.5px;color:var(--muted)}
-  ul.ci{margin:6px 0;padding-left:18px;font-size:13px}
-  ul.ci li{margin:3px 0}
-  .obj{margin:7px 0}
-  .scrow{display:flex;align-items:center;gap:10px;margin:6px 0}
-  .scl{width:140px;font-size:12.5px}
-  .sctrack{flex:1;height:8px;background:#0b0f15;border:1px solid var(--line);border-radius:6px;overflow:hidden}
-  .sctrack i{display:block;height:100%;background:linear-gradient(90deg,#3b82f6,#22c55e)}
-  .scn{width:34px;text-align:right;font-size:12px;color:var(--muted)}
-  a.lnk{color:var(--accent);text-decoration:none}
-  /* tabs */
-  .tabs{grid-column:1/-1;display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:2px;flex-wrap:wrap}
-  .tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent}
-  .tab:hover{color:var(--txt)}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1);padding:3px 9px;font-size:var(--t-meta);color:var(--txt-dim)}
+  ul.ci{margin:6px 0;padding-left:18px;font-size:var(--t-body);line-height:1.55}
+  ul.ci li{margin:4px 0}
+  .obj{margin:8px 0}
+  .scrow{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .scl{width:150px;font-size:var(--t-cap);color:var(--txt-dim)}
+  .sctrack{flex:1;height:8px;background:#070a0f;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .sctrack i{display:block;height:100%;background:linear-gradient(90deg,var(--accent2),var(--good))}
+  .scn{width:38px;text-align:right;font-size:var(--t-cap);color:var(--muted);font-variant-numeric:tabular-nums}
+  a.lnk,.lnk{color:var(--accent);text-decoration:none;font-weight:600}
+  a.lnk:hover,.lnk:hover{text-decoration:underline}
+  textarea:focus{outline:none;box-shadow:var(--ring)}
+
+  /* --- tabs --- */
+  .tabs{grid-column:1/-1;display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:var(--s2);flex-wrap:wrap}
+  .tab{padding:10px 16px;font-size:var(--t-body);font-weight:650;color:var(--muted);cursor:pointer;border:none;background:none;
+    border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .14s,border-color .14s}
+  .tab:hover{color:var(--txt-dim)}
   .tab.active{color:var(--txt);border-bottom-color:var(--accent)}
+  .tab:focus-visible{outline:none;color:var(--txt);box-shadow:var(--ring);border-radius:6px 6px 0 0}
   .tabpane{grid-column:1/-1;display:none}
-  .tabpane.active{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .tabpane.active{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
   @media(max-width:900px){.tabpane.active{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a href="/">&larr; Dashboard</a>
+  <a class="backlink" href="/">&larr; Dashboard</a>
   <h1 id="title">Call detail</h1>
   <span class="muted" id="subtitle"></span>
 </header>
@@ -82,7 +148,7 @@ const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
 // Final funnel verdict for a booking. Reschedules & confirmations are NOT counted
 // again (the booking was counted the day it was first made); tentative/cancelled
 // attempts never count.
-function banner(css,txt){return `<div style="padding:10px 12px;border-radius:8px;font-weight:700;margin:0 0 12px;line-height:1.4;${css}">${txt}</div>`;}
+function banner(css,txt){return `<div style="padding:13px 15px;border-radius:12px;font-weight:700;margin:0 0 14px;line-height:1.5;font-size:13px;border:1px solid rgba(255,255,255,.06);${css}">${txt}</div>`;}
 function bookingBanner(ev, counts, dt, o, pq, qvia){
   const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
         GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
@@ -205,10 +271,22 @@ function rpcNextMoveCard(d){
   </div>`;
 }
 
+// Plain-English meaning of each funnel stage — shown under the stage name so a user
+// never has to guess what a YES/NO verdict actually means.
+const STAGE_MEAN={
+  'Right Party Contact (decision-maker)':'Did we get the person who can say yes on the phone?',
+  'Full Pitch':'Did the BDE deliver the complete offer / pitch?',
+  'Lead (interest)':'Did the prospect show genuine interest?',
+  'Meeting Booked':'Was a strategy session booked on this call?',
+  'Rescheduled booking (re-booked an earlier meeting — still counts)':'Moved an already-counted meeting to a new time.',
+  'Meeting confirmation only (re-confirmed, no new date)':'Just re-confirmed a meeting booked earlier.',
+  'Already booked for this company (referral/hand-off — NOT a new booking)':'This company already had a meeting booked.'
+};
 function stageRow(name, v){
   if(!v) return '';
   const conf=v.confidence!=null?` · ${Math.round(v.confidence*100)}% conf`:'';
-  return `<div class="stage"><div><div class="nm">${name}</div><div class="ev">${esc(v.evidence)}</div></div>
+  const mean=STAGE_MEAN[name]?`<div class="stage-mean">${STAGE_MEAN[name]}</div>`:'';
+  return `<div class="stage"><div><div class="nm">${name}</div>${mean}<div class="ev">${esc(v.evidence)}</div></div>
     <div style="text-align:right">${pill(v.value)}<div class="muted" style="font-size:11px;margin-top:3px">${conf}</div></div></div>`;
 }
 // The "Qualified" funnel row honours a BDM override (override wins over the AI verdict, matching
@@ -221,7 +299,7 @@ function qualStageRow(v, o){
   const evTxt = hasOv
     ? `BDM override by ${esc(o.override_by)||'BDM'}: ${esc(o.reason||'')} — the AI originally said ${aiQ?'qualified':'not qualified'}.`
     : esc(v.evidence);
-  return `<div class="stage"><div><div class="nm">${nm}</div><div class="ev">${evTxt}</div></div>
+  return `<div class="stage"><div><div class="nm">${nm}</div><div class="stage-mean">Meets our bar to book — Authority + 2 of Budget / Problem / Urgency. A BDM can override.</div><div class="ev">${evTxt}</div></div>
     <div style="text-align:right">${pill(eff)}<div class="muted" style="font-size:11px;margin-top:3px">${conf}</div></div></div>`;
 }
 
@@ -229,7 +307,9 @@ const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
             warm:['🌤 WARM','#fbbf24','rgba(251,191,36,.16)'],none:['—','#8b949e','rgba(139,148,158,.12)']};
 const PIPE={pipeline1_interested:'Pipeline 1 · Interested',pipeline2_existing_agency:'Pipeline 2 · Already with an agency',none:'No pipeline'};
-function bapuChip(label,v){const on=v&&v.value;return `<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`;}
+// Plain-English meaning under each BANT / Aspiration / Open-to-listening flag.
+const BANT_MEAN={Budget:'Can afford it',Authority:'Decision-maker',Problem:'Has a real need',Urgency:'Wants to act soon',Aspiration:'Wants to grow','Open to listening':'Willing to hear us'};
+function bapuChip(label,v){const on=v&&v.value;const m=BANT_MEAN[label]||'';return `<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}"><span class="bapu-t">${on?'✓':'✕'} ${label}</span>${m?`<span class="bapu-m">${m}</span>`:''}</span>`;}
 
 // Call-recording player. Playback is available to every logged-in user; the download
 // button is shown only to BDM / admin (can_override from the API).
@@ -260,11 +340,13 @@ function leadCard(cl, ev, o){
   const autov = (ev.runs_paid_ads||ev.has_marketing_agency)
     ? `<div class="muted" style="font-size:12.5px;margin-top:10px">⚡ Auto-validated (budget + aspiration): ${[ev.runs_paid_ads?'already runs paid ads':null, ev.has_marketing_agency?'already has a marketing agency':null].filter(Boolean).join(' · ')}</div>` : '';
   const prob = ev.problem_summary ? `<div style="font-size:13px;margin-top:10px"><b>Marketing problem (prospect's words):</b> ${esc(ev.problem_summary)}</div>` : '';
-  return `<div class="card full"><h2>Lead qualification — BANT + Aspiration / Open-to-listening</h2>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+  return `<div class="card full"><h2>Lead qualification <span class="muted">— BANT + Aspiration / Open-to-listening</span></h2>
+    <div class="hint">Is this prospect worth a strategy session? <b>Qualified = Authority + at least 2 of Budget, Problem or Urgency.</b> A BDM can override the AI's call.</div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
       <span class="tbadge" style="background:${bg};color:${col}">${lbl}</span>
       <span class="muted">${PIPE[cl.pipeline]||esc(cl.pipeline)||'—'}</span>${qpill}${cb}
     </div>
+    <div class="subh">What the AI heard — each flag with its plain meaning</div>
     <div class="bapus">${bapuChip('Budget',ev.budget)}${bapuChip('Authority',ev.authority)}${bapuChip('Problem',ev.problem)}${bapuChip('Urgency',ev.urgency)}${bapuChip('Aspiration',ev.aspiration)}${bapuChip('Open to listening',ev.open_to_listening)}</div>
     ${autov}${prob}
   </div>`;
@@ -299,10 +381,10 @@ function qualOverrideCard(d){
       return `<button onclick="setQualOverride(${qarg},'${v}')" style="background:rgba(${rgb},.14);color:rgb(${rgb});border:1px solid rgba(${rgb},.45);border-radius:8px;padding:7px 11px;cursor:pointer;font-size:12.5px${sel}">${lbl}</button>`;
     }).join('');
     controls = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
-      <div class="subh">BDM override — what is this call?</div>
+      <div class="subh">Set what this call really is <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— overrides the AI &amp; updates the funnel</span></div>
       <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${obBtns}</div>
-      <div class="subh" style="margin-top:12px;font-size:11px;color:var(--muted)">…or just the qualification flag (no booking change)</div>
+      <div class="subh" style="margin-top:14px">…or just flip the qualification flag <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">(leaves the booking as-is)</span></div>
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
         <button id="qoYes" style="background:rgba(34,197,94,.16);color:#4ade80;border:1px solid rgba(34,197,94,.4);border-radius:8px;padding:8px 13px;cursor:pointer">✓ Mark Qualified</button>
         <button id="qoNo" style="background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:8px 13px;cursor:pointer">✕ Mark Not Qualified</button>
@@ -312,7 +394,8 @@ function qualOverrideCard(d){
   const OBL={counts:'✓ counts as qualified booking',rescheduled:'🔁 rescheduled',confirmation:'📞 confirmation',tentative:'🕓 tentative (not counted)',not_booking:'✕ not a booking'};
   const obPill = (o&&o.booking_outcome)?`<span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd">BDM: ${OBL[o.booking_outcome]||o.booking_outcome}</span>`:'';
   const notBooked = !booked ? `<span class="muted" style="font-size:12px;font-weight:400"> · AI: not a booked meeting</span>` : '';
-  return `<div class="card full"><h2>Qualification review (BDM) ${effPill}${obPill}${notBooked}</h2>
+  return `<div class="card full"><h2>Qualification review <span class="muted">(BDM)</span> ${effPill}${obPill}${notBooked}</h2>
+    <div class="hint">The <b>BDM's decision overrides the AI</b> and is what counts in the funnel. The pill above is the current effective status; the line below is the AI's original read.</div>
     <div>${src}${o?` · AI said ${aiQ?'qualified':'not qualified'}`:''}</div>${reason}${controls}</div>`;
 }
 async function setQualOverride(qualified, booking_outcome){
@@ -381,7 +464,7 @@ function bizCard(d){
   const techHtml=tech.length?`<div class="subh" style="margin-top:10px">Tech stack</div><div class="chips">${tech.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>`:'';
   const srcNote = e&&e.fetched_at ? `<div class="muted" style="font-size:11.5px;margin-top:8px">Live enrichment ${esc(String(e.fetched_at).slice(0,10))}. SEO base from master DB.</div>`
     : (hasMaster?`<div class="muted" style="font-size:11.5px;margin-top:8px">Showing master-DB metrics. Live SEMrush/Apollo not yet run for this domain.</div>`:'');
-  const prospectLink = d.call&&d.call.dest_number?`<a class="lnk" style="float:right;font-size:12px" href="/prospect/${encodeURIComponent(d.call.dest_number)}" target="_blank">Full prospect page ↗</a>`:'';
+  const prospectLink = d.call&&d.call.dest_number?`<a class="lnk" style="margin-left:auto;font-size:12px" href="/prospect/${encodeURIComponent(d.call.dest_number)}" target="_blank">Full prospect page ↗</a>`:'';
   // Free website tracking-pixel detection (digital marketing / paid-ads evidence).
   const w=(e&&e.website)||null;
   let trackHtml='';
@@ -472,8 +555,8 @@ function feedbackCard(ev, cl){
     || (booked?'Send the calendar invite + overview/testimonials pack and confirm the time.'
              :'Follow up to secure a firm strategy-session date/time.');
   const li=(arr,icon,color)=>arr.length?`<ul class="ci" style="list-style:none;padding-left:0;margin:0">${arr.map(x=>`<li style="margin:6px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">${icon}</span><span style="color:${color}">${esc(x)}</span></li>`).join('')}</ul>`:'<div class="muted">—</div>';
-  return `<div class="card full" style="border-color:#3b82f6;background:linear-gradient(180deg,#13203a,#161b22)">
-    <h2 style="color:#93c5fd">🧠 Feedback intelligence — this call</h2>
+  return `<div class="card full" style="border-color:var(--accent2);background:linear-gradient(180deg,#141d31,var(--panel))">
+    <h2 style="color:#93c5fd">🧠 Feedback intelligence <span class="muted" style="color:#7ea6e6">— this call</span></h2>
     <div class="bizgrid">
       <div><div class="subh">✅ What went well</div>${li(wins,'✅','#86efac')}</div>
       <div><div class="subh">⚠️ What to improve</div>${li(improves,'⚠️','#fcd34d')}</div>
@@ -492,7 +575,7 @@ async function load(){
   document.getElementById('subtitle').innerHTML = esc(c.started_at||'')+'  ·  '+esc(c.fresh_or_followup||'')
     + (c.dest_number?`  ·  <a class="lnk" href="/prospect/${encodeURIComponent(c.dest_number)}">View prospect (all calls) ↗</a>`:'');
 
-  const meta=`<div class="card"><h2>Call</h2><div class="kv">
+  const meta=`<div class="card"><h2>Call <span class="muted">details</span></h2><div class="kv">
     <div>BDE</div><div>${esc(c.bde_name)} (ext ${esc(c.bde_extension)})</div>
     <div>Number</div><div>${esc(c.dest_number)}</div>
     <div>Started</div><div>${esc(c.started_at)}</div>
@@ -506,7 +589,8 @@ async function load(){
     <div>Needs review</div><div>${cl.needs_human_review?'Yes':'No'}</div>
   </div></div>`;
 
-  const verdicts=`<div class="card"><h2>Funnel verdicts (AI)</h2>
+  const verdicts=`<div class="card"><h2>Funnel verdicts <span class="muted">(AI)</span></h2>
+    <div class="hint">Each row is one funnel stage as read by the AI — <b>YES</b> means it was met on this call. The banner below shows what actually counts.</div>
     ${d.sms_confirmed?`<div style="background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.45);color:#86efac;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:700">📱 Booking confirmed by the prospect via SMS — this firmed the meeting (see the SMS / chat tab).</div>`:''}
     ${bookingBanner(ev, d.booking_counts, cl.meeting_datetime, d.qual_override, d.prospect_qualified, d.qualified_via)}
     ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
