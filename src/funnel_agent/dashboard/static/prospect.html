@@ -588,6 +588,21 @@ async function enrichWebsite(){
 }
 
 function bapu(label,v){const on=v&&v.value;return v?`<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`:'';}
+// Prospect-specific next-call points (prefers AI next_call_points, else synthesizes from evidence).
+function nextCallPoints(ev){
+  const KIND={hook:['🪝','#93c5fd'],question:['❓','#c4b5fd'],objection:['🛡️','#fca5a5'],value:['💡','#fcd34d'],logistics:['📋','#86efac']};
+  let pts = Array.isArray(ev.next_call_points) ? ev.next_call_points.filter(p=>p&&p.point) : [];
+  if(!pts.length){
+    const syn=[];
+    (ev.objections||[]).filter(o=>o&&o.handled===false&&o.objection).slice(0,2).forEach(o=>syn.push({point:'Pre-empt: "'+o.objection+'"',kind:'objection'}));
+    if(ev.problem_summary) syn.push({point:'Re-open on: '+ev.problem_summary,kind:'hook'});
+    (ev.buying_signals||[]).slice(0,1).forEach(s=>syn.push({point:'Build on: '+s,kind:'value'}));
+    if(ev.next_step) syn.push({point:ev.next_step,kind:'logistics'});
+    pts=syn;
+  }
+  if(!pts.length) return '';
+  return '<ul style="list-style:none;padding-left:0;margin:4px 0 0">'+pts.slice(0,5).map(p=>{const k=KIND[p.kind]||KIND.hook;return '<li class="small" style="margin:3px 0;padding-left:22px;position:relative"><span style="position:absolute;left:0">'+k[0]+'</span><span style="color:'+k[1]+'">'+esc(p.point)+'</span></li>';}).join('')+'</ul>';
+}
 function callEvent(c, canDownload){
   const ev=(c.evidence&&typeof c.evidence==='object')?c.evidence:{};
   const connected = c.answered && (c.talk_seconds>=15) && c.call_outcome!=='voicemail';
@@ -607,6 +622,7 @@ function callEvent(c, canDownload){
   const sigHtml=sig.length?`<div class="small mt6"><b>Buying signals:</b><ul class="ci">${sig.map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>`:'';
   const objHtml=objs.length?`<div class="small mt6"><b>Objections:</b><ul class="ci">${objs.map(o=>`<li>${o.handled?'✅':'⚠️'} ${esc(o.objection)}</li>`).join('')}</ul></div>`:'';
   const next=ev.next_step?`<div class="small mt6"><b>Next step:</b> ${esc(ev.next_step)}</div>`:'';
+  const npts=nextCallPoints(ev); const nptsHtml=npts?`<div class="small mt6"><b>🎯 Next-call points:</b>${npts}</div>`:'';
   const contract=ev.contract_end?`<div class="small mt6"><b>📄 Contract signal:</b> ${esc(ev.contract_end)}${ev.recommended_cadence_days?` · suggest next call in ~${ev.recommended_cadence_days} days`:''}</div>`:'';
   const who=ev.who_answered?`<span class="muted small">· ${esc(ev.who_answered)}</span>`:'';
   const summ=c.transcript_summary||ev.prospect_summary||'';
@@ -623,11 +639,11 @@ function callEvent(c, canDownload){
       <a class="lnk small" style="margin-left:auto" href="/call/${encodeURIComponent(c.call_id)}" target="_blank">Open call ↗</a>
     </div>
     ${rec}
-    ${tags.length||bapus||summ||sigHtml||objHtml||next||contract?`<div class="evbody">
+    ${tags.length||bapus||summ||sigHtml||objHtml||next||nptsHtml||contract?`<div class="evbody">
       ${tags.length?`<div style="display:flex;gap:6px;flex-wrap:wrap">${tags.join('')}</div>`:''}
       ${bapus}
       ${summ?`<div class="small mt6">${esc(summ)}</div>`:''}
-      ${sigHtml}${objHtml}${next}${contract}
+      ${sigHtml}${objHtml}${next}${nptsHtml}${contract}
     </div>`:''}
   </div>`;
 }

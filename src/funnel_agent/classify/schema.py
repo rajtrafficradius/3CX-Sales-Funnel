@@ -52,6 +52,14 @@ class Scorecard(BaseModel):
     close: int = Field(ge=0, le=5)
 
 
+class NextCallPoint(BaseModel):
+    # One concrete, PROSPECT-SPECIFIC thing to say/ask on the NEXT call (not generic BDE
+    # coaching — that goes in coaching_tips). Grounded in what THIS prospect revealed.
+    point: str
+    kind: Literal["hook", "question", "objection", "value", "logistics"] = "hook"
+    why: str = ""  # short reason it matters for this prospect (optional)
+
+
 class CallClassification(BaseModel):
     # `analysis` is generated FIRST so the model reasons through the transcript
     # (who answered, was it the decision-maker, what was pitched, any commitment)
@@ -161,7 +169,11 @@ class CallClassification(BaseModel):
     engagement: Literal["dismissive", "neutral", "engaged", "keen"]
     prospect_sentiment: Literal["negative", "neutral", "positive"]
     next_step: str            # the concrete agreed next step, "" if none
-    coaching_tips: list[str]  # what the BDE could do better next time
+    coaching_tips: list[str]  # what the BDE could do better next time (generic manager coaching)
+    # 2-4 concrete, PROSPECT-SPECIFIC talking points for the NEXT call (hooks, discovery
+    # questions, objections to pre-empt, tailored value, logistics). Distinct from coaching_tips.
+    # Auto-persists inside classifications.evidence (v.model_dump()); no DB migration.
+    next_call_points: list[NextCallPoint] = Field(default_factory=list)
     scorecard: Scorecard
 
     call_outcome: Literal["voicemail", "gatekeeper", "wrong_number", "conversation", "other"]

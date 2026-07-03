@@ -430,6 +430,23 @@ function ciCard(ev){
 
 // Per-call feedback intelligence — synthesises THIS call's AI analysis into what went well,
 // what to improve, and the next action (the call-level twin of the coaching page's panel).
+// Prospect-specific "next-call game plan": prefers the AI's next_call_points, else synthesizes
+// from existing evidence so calls that predate the field are never blank (no reclassify needed).
+function nextCallPoints(ev, cl){
+  const KIND={hook:['🪝','#93c5fd'],question:['❓','#c4b5fd'],objection:['🛡️','#fca5a5'],value:['💡','#fcd34d'],logistics:['📋','#86efac']};
+  let pts = Array.isArray(ev.next_call_points) ? ev.next_call_points.filter(p=>p&&p.point) : [];
+  if(!pts.length){
+    const syn=[];
+    (ev.objections||[]).filter(o=>o&&o.handled===false&&o.objection).slice(0,2).forEach(o=>syn.push({point:'Pre-empt their objection: "'+o.objection+'"',kind:'objection'}));
+    if(ev.problem_summary) syn.push({point:'Re-open on their problem: '+ev.problem_summary,kind:'hook'});
+    (ev.buying_signals||[]).slice(0,1).forEach(s=>syn.push({point:'Build on their interest: '+s,kind:'value'}));
+    if(ev.next_step) syn.push({point:ev.next_step,kind:'logistics'});
+    else if(cl&&cl.callback_when) syn.push({point:'Call back '+cl.callback_when,kind:'logistics'});
+    pts=syn;
+  }
+  if(!pts.length) return '';
+  return '<ul style="list-style:none;padding-left:0;margin:0">'+pts.slice(0,5).map(p=>{const k=KIND[p.kind]||KIND.hook;return '<li style="margin:7px 0;padding-left:26px;position:relative"><span style="position:absolute;left:0">'+k[0]+'</span><span style="color:'+k[1]+'">'+esc(p.point)+'</span>'+(p.why?'<span class="muted" style="font-size:12px"> — '+esc(p.why)+'</span>':'')+'</li>';}).join('')+'</ul>';
+}
 function feedbackCard(ev, cl){
   const sc=ev.scorecard||{};
   const DIMS=[['opening','Opening'],['discovery','Discovery'],['pitch','Pitch'],['objection_handling','Objection handling'],['close','Close']];
@@ -461,8 +478,8 @@ function feedbackCard(ev, cl){
       <div><div class="subh">✅ What went well</div>${li(wins,'✅','#86efac')}</div>
       <div><div class="subh">⚠️ What to improve</div>${li(improves,'⚠️','#fcd34d')}</div>
     </div>
-    <div class="subh" style="margin-top:12px">🎯 What to do next</div>
-    <div style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);border-radius:8px;padding:10px 14px;color:#bfdbfe">${esc(next)}</div>
+    <div class="subh" style="margin-top:12px">🎯 Next-call game plan</div>
+    <div style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);border-radius:8px;padding:10px 14px;color:#bfdbfe">${nextCallPoints(ev,cl)||esc(next)}</div>
   </div>`;
 }
 

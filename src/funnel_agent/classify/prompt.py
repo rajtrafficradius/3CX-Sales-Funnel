@@ -335,6 +335,15 @@ CONVERSATION INTELLIGENCE (for coaching — base strictly on the transcript):
   prospect's website (prospect_website is ""), ALWAYS include a tip telling the BDE to ask for
   and confirm the business name + website before ending the call — capturing it unlocks the
   prospect's full marketing intelligence and is a required data point.
+- next_call_points: 2–4 concrete, PROSPECT-SPECIFIC things to SAY or ASK on the NEXT call to
+  THIS prospect — a ready-made game plan for whoever calls them back. Ground each point in what
+  the prospect ACTUALLY revealed on this call: re-open on their stated problem/need, reference a
+  buying signal they gave, pre-empt an UNHANDLED objection, tailor value to their industry/goal,
+  ask the specific discovery question that's still open, or confirm logistics of an agreed step.
+  Set kind = hook | question | objection | value | logistics for each, and a short `why`.
+  These are prospect-facing TALKING POINTS, NOT the generic BDE-skill coaching in coaching_tips.
+  Return [] for wrong-number / flat "not interested" / do-not-contact / pure voicemail. For a
+  FIRM booking, give only `logistics` points (confirm + prepare the session — do NOT re-pitch).
 - scorecard: rate the BDE 0–5 on opening, discovery, pitch, objection_handling, close. Use 0 when
   a phase did not happen (e.g. no close attempted).
 """
