@@ -256,13 +256,6 @@
     <div id="dayBody" class="muted">No day selected yet.</div>
   </div>
 </main>
-<div class="modal" id="evModal" hidden>
-  <div class="modal-backdrop" onclick="closeEvent()"></div>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edTitle">
-    <button class="modal-close" onclick="closeEvent()" aria-label="Close" title="Close">✕</button>
-    <div id="evBody"><div class="ed-loading">Loading…</div></div>
-  </div>
-</div>
 <script>
 const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
