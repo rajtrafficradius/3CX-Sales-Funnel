@@ -2081,7 +2081,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   else "p3" if r0.get("p3") else "p4")
             sub = None
             if pl == "p4":
-                runs = bool(enr and (enr.get("dataforseo") or {}).get("running_google_ads") == "true")
+                # running_google_ads is stored as a JSON boolean (true), not a string — so
+                # str().lower() handles both bool True and the legacy string "true".
+                _ra = (enr.get("dataforseo") or {}).get("running_google_ads") if enr else None
+                runs = str(_ra).strip().lower() == "true"
                 sub = "attempted" if r0.get("called") else ("fresh_ads" if runs else "fresh_unscanned")
             pipeline5 = {"pipeline": pl, "p4_sub": sub}
         except Exception:
