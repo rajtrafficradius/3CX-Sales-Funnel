@@ -54,13 +54,17 @@ WITH agg AS (
          -- 'next week' / 'in 20 min' / 'after emailing Jarrod', or the DM's availability)
          (array_agg(cl.callback_when ORDER BY c.started_at DESC)
             FILTER (WHERE cl.callback_when IS NOT NULL AND cl.callback_when <> ''))[1]    AS callback_when,
+         -- availability window (holiday/leave) from the transcript — floors the next call so we
+         -- don't ring into a dead window even when no callback time was given.
+         (array_agg(cl.evidence->>'unavailable_until' ORDER BY c.started_at DESC)
+            FILTER (WHERE NULLIF(cl.evidence->>'unavailable_until','') IS NOT NULL))[1]   AS unavailable_until,
          count(*)                                                                        AS attempts
   FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id
   WHERE c.in_scope AND lower(c.direction) = 'outbound'
   GROUP BY 1
 )
 SELECT a.d9, a.dest_number, a.ever_connected, a.last_attempt, a.first_attempt, a.last_bde,
-       a.last_stage, a.company, a.callback_when, a.attempts,
+       a.last_stage, a.company, a.callback_when, a.unavailable_until, a.attempts,
        pp.pipeline AS pp_pipeline, pp.assigned_bde, pp.next_action_at, pp.cadence_days,
        pp.business_name AS pp_name,
        -- data provenance: 'master_file' = curated database (higher trust) vs 'call_capture' =
@@ -225,7 +229,14 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
                 when = _weekly_slot(now, cadence, now, best_hour)
         else:
             when = _weekly_slot(anchor, cadence, now, best_hour if not is_agency else hour)
-        if when > horizon:                        # contract-parked / too far out — schedule later
+        # AVAILABILITY FLOOR: if they told us they'll be away (holiday/leave), never call before
+        # they're back — push the next call past that window (e.g. a four-week holiday).
+        unavail = (r.get("unavailable_until") or "").strip()
+        if unavail:
+            floor = guess_when(unavail, (r.get("last_attempt") or now).date())
+            if floor > when:
+                when = floor
+        if when > horizon:                        # contract-parked / away too long — schedule later
             skipped += 1
             continue
         who = r.get("company") or r.get("pp_name") or r.get("dest_number") or "prospect"

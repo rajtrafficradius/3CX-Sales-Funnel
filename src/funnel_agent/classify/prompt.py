@@ -285,6 +285,14 @@ ends, and calling them too often makes them rude. From what the prospect actuall
     * 0 if you truly cannot tell (the engine then uses its default).
   Use whole days.
 
+AVAILABILITY WINDOW (ANY pipeline). If the prospect OR the decision-maker says they'll be AWAY for
+a stretch — on holiday / annual leave, overseas, out of office, "back in X weeks", "not until
+<month>", "on leave until <date>", "he's away till the new year" — capture it in:
+- unavailable_until: their own words for WHEN they're next reachable (e.g. "in 4 weeks", "back on
+  20 July", "after the school holidays"). "" if no such signal. This FLOORS the next call so we
+  never ring into a dead window (e.g. a four-week holiday ⇒ don't call for ~4 weeks). This is
+  separate from callback_when (a requested call time) and contract_end (agency lock-in).
+
 BUSINESS IDENTIFICATION — capture this AGGRESSIVELY. It powers ALL marketing
 intelligence (SEO, ads, company, revenue are looked up by the website), so work hard
 to fill these from any clue in the transcript — but never fabricate a wrong value:

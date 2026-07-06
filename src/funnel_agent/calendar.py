@@ -24,12 +24,18 @@ def guess_when(text: str | None, base: date) -> datetime:
     to the next business day at 10:00. The BDE can adjust it in the calendar."""
     t = (text or "").lower()
     day = base + timedelta(days=1)  # default: tomorrow
+    _mo = re.search(r"(\d+)\s*months?", t)
+    _wk = re.search(r"(\d+)\s*weeks?", t)
     if "today" in t:
         day = base
     elif "tomorrow" in t:
         day = base + timedelta(days=1)
-    elif "next week" in t:
-        day = base + timedelta(days=7)
+    elif _mo or "next month" in t:               # 'in 2 months', 'next month' (~30d/mo)
+        day = base + timedelta(days=30 * (int(_mo.group(1)) if _mo else 1))
+    elif _wk:                                     # 'in 4 weeks', '3 weeks' -> whole weeks
+        day = base + timedelta(days=7 * int(_wk.group(1)))
+    elif "next week" in t or "a week" in t or "fortnight" in t:
+        day = base + timedelta(days=14 if "fortnight" in t else 7)
     else:
         m = re.search(r"in (\d+) days?", t)
         if m:

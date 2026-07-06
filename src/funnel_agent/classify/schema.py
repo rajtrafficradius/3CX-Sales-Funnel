@@ -163,6 +163,12 @@ class CallClassification(BaseModel):
     contract_end: str                 # what they said re: contract end (e.g. "ends March", "6 months left", "just signed 12mo"), "" if none
     recommended_cadence_days: int = Field(ge=0)  # AI's days-until-next-call for P2 (0 = unknown → use default monthly)
 
+    # ---- Availability window (holiday / travel / on-leave) — feeds intelligent scheduling ----
+    # If the prospect OR the decision-maker said they'll be AWAY for a period (on holiday, annual
+    # leave, overseas, off until a date, "back in X weeks"), capture WHEN they're next reachable
+    # in their own words, so scheduling never calls into a dead window. "" if no such signal.
+    unavailable_until: str = ""       # e.g. "in 4 weeks", "back on 20 July", "after the holidays", ""
+
     # ---- Conversation intelligence (coaching + insight) ----
     objections: list[Objection]
     buying_signals: list[str]
