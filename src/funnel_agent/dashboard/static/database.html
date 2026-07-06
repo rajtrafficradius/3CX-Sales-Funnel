@@ -182,6 +182,14 @@
             </select>
           </div>
           <div class="field">
+            <label>Custom revenue range ($M)</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="revMin" type="number" min="0" step="0.1" placeholder="min" style="width:100%" />
+              <span class="muted" style="font-size:var(--t-body)">–</span>
+              <input id="revMax" type="number" min="0" step="0.1" placeholder="max" style="width:100%" />
+            </div>
+          </div>
+          <div class="field">
             <label for="industry">Industry</label>
             <input id="industry" type="search" placeholder="e.g. Retail…" autocomplete="off" />
           </div>
@@ -359,7 +367,8 @@ function curFilters(){
           tracking:[...trk].join(','), transparency:$('#transparency').value,
           industry:$('#industry').value.trim(), state:$('#state').value.trim(),
           website:$('#website').value, multilocation:$('#multiloc').value, agency:$('#agency').value,
-          pipeline:$('#pipeline').value, p4sub:$('#p4sub').value};
+          pipeline:$('#pipeline').value, p4sub:$('#p4sub').value,
+          rev_min:$('#revMin').value.trim(), rev_max:$('#revMax').value.trim()};
 }
 function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComponent(f.source)}`
   +`&enriched=${encodeURIComponent(f.enriched)}&paid_ads=${encodeURIComponent(f.paid_ads)}`
@@ -368,7 +377,8 @@ function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComp
   +`&industry=${encodeURIComponent(f.industry)}&state=${encodeURIComponent(f.state)}`
   +`&website=${encodeURIComponent(f.website)}`
   +`&multilocation=${encodeURIComponent(f.multilocation)}&agency=${encodeURIComponent(f.agency)}`
-  +`&pipeline=${encodeURIComponent(f.pipeline)}&p4sub=${encodeURIComponent(f.p4sub)}`; }
+  +`&pipeline=${encodeURIComponent(f.pipeline)}&p4sub=${encodeURIComponent(f.p4sub)}`
+  +`&rev_min=${encodeURIComponent(f.rev_min)}&rev_max=${encodeURIComponent(f.rev_max)}`; }
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
 function covCard(key,l,n){
@@ -414,6 +424,7 @@ function renderResult(){
   if(f.paid_ads) _pills.push([(PA_LBL[f.paid_ads]||f.paid_ads), ()=>{$('#paidAds').value='';}]);
   if(f.transparency) _pills.push([(TRANSP_LBL[f.transparency]||f.transparency), ()=>{$('#transparency').value='';}]);
   if(f.revenue) _pills.push([(REV_LBL[f.revenue]||f.revenue), ()=>{$('#revenue').value='';}]);
+  if(f.rev_min||f.rev_max) _pills.push(['Revenue '+(f.rev_min?'$'+f.rev_min+'M':'0')+' – '+(f.rev_max?'$'+f.rev_max+'M':'∞'), ()=>{$('#revMin').value='';$('#revMax').value='';}]);
   if(f.industry) _pills.push(['Industry: '+f.industry, ()=>{$('#industry').value='';}]);
   if(f.state) _pills.push(['Location: '+f.state, ()=>{$('#state').value='';}]);
   trk.forEach(k=>_pills.push(['tag: '+(TRK_LBL[k]||k), ()=>trk.delete(k)]));
@@ -427,7 +438,7 @@ function renderResult(){
 }
 function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; syncTrkChips(); loadRows(); loadStats(); } }
 function clearAll(){ clearTimeout(searchTimer);
-  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency','#pipeline','#p4sub'].forEach(s=>$(s).value='');
+  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency','#pipeline','#p4sub','#revMin','#revMax'].forEach(s=>$(s).value='');
   cov.clear(); trk.clear(); syncTrkChips(); offset=0; loadRows(); loadStats(); }
 
 // Revenue stored in millions USD; show as $X.XM / $X.XB.
@@ -501,6 +512,8 @@ const _deb=()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0
 $('#search').addEventListener('input',_deb);
 $('#industry').addEventListener('input',_deb);
 $('#state').addEventListener('input',_deb);
+$('#revMin').addEventListener('input',_deb);
+$('#revMax').addEventListener('input',_deb);
 ['#enriched','#paidAds','#revenue','#source','#transparency','#website','#multiloc','#agency','#pipeline','#p4sub'].forEach(s=>$(s).onchange=()=>{offset=0;loadRows();loadStats();});
 document.querySelectorAll('.trkchip').forEach(b=>b.onclick=()=>{
   const k=b.dataset.trk; trk.has(k)?trk.delete(k):trk.add(k); b.classList.toggle('active', trk.has(k));

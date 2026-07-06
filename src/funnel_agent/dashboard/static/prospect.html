@@ -147,6 +147,10 @@ const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['�
             warm:['🌤 WARM','#fbbf24','rgba(251,191,36,.16)'],none:['',' ',' ']};
 const PIPE={pipeline1_interested:['Pipeline 1 · Interested (callback)','#60a5fa'],
             pipeline2_existing_agency:['Pipeline 2 · Already with an agency','#c79bf7'],none:['No pipeline','#8b949e']};
+// Batch D 5-pipeline labels (used for the hero pipeline badge — a fresh confirmed prospect is P4).
+const PIPE5={p1:['P1 · RPC callback','#60a5fa'],p2:['P2 · Already with an agency','#c79bf7'],
+             p3:['P3 · Gatekeeper callback','#fbbf24'],p4:['P4 · Fresh worklist','#4ade80'],p5:['P5 · Meeting booked','#f472b6']};
+const P4SUB_LBL={fresh_ads:'running ads',fresh_unscanned:'ads unknown',captured_3cx:'captured · 3CX',captured_aircall:'captured · Aircall',attempted:'attempted',dead:'DND'};
 function toast(m,e){const t=document.getElementById('toast');t.textContent=m;t.className='toast show'+(e?' err':'');setTimeout(()=>t.className='toast'+(e?' err':''),2600);}
 
 function metric(n,l,src){ return `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div>${src?`<div class="src">${src}</div>`:''}</div>`; }
@@ -157,7 +161,13 @@ function heroCard(d){
   let company=null;
   for(let i=calls.length-1;i>=0;i--){ if(calls[i].prospect_company){company=calls[i].prospect_company;break;} }
   const name=company||m.business_name||d.domain||KEY;
-  const [plbl,pcol]=PIPE[ro.pipeline]||PIPE.none;
+  // Prefer the Batch D 5-pipeline (so an uncalled confirmed prospect reads P4 · Fresh, not
+  // "No pipeline"); fall back to the legacy call-derived pipeline if the new one isn't present.
+  let plbl,pcol;
+  const p5=d.pipeline5;
+  if(p5&&p5.pipeline&&PIPE5[p5.pipeline]){ const e=PIPE5[p5.pipeline];
+    plbl=e[0]+(p5.p4_sub&&P4SUB_LBL[p5.p4_sub]?' · '+P4SUB_LBL[p5.p4_sub]:''); pcol=e[1]; }
+  else { [plbl,pcol]=PIPE[ro.pipeline]||PIPE.none; }
   const [tlbl,tcol,tbg]=TEMP[ro.temperature]||TEMP.none;
   const badges=[];
   if(ro.ever_booked) badges.push(`<span class="pill yes">📅 Meeting booked</span>`);
@@ -290,7 +300,10 @@ function apolloCard(d){
   // the free fields (first name + company) so the team can one-click find them.
   const liLink=p=>{
     if(p.linkedin_url) return `<a class="lnk" href="${esc(p.linkedin_url)}" target="_blank" title="LinkedIn profile">in↗</a>`;
-    const kw=((p.name||'')+' '+(ap.name||'')).trim();
+    // Apollo often masks the last name (e.g. "Hemant Di***n Marsh") on free data, which pollutes
+    // the LinkedIn search — so search on FIRST NAME + company only for a clean, reliable match.
+    const fn=(p.name||'').trim().split(/\s+/)[0]||'';
+    const kw=(fn+' '+(ap.name||'')).trim();
     if(!kw) return '';
     const u=`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(kw)}`;
     return `<a class="lnk" href="${u}" target="_blank" title="Search LinkedIn (Apollo's exact profile URL needs a credit)">find on LinkedIn ↗</a>`;
@@ -490,6 +503,10 @@ function whoisCard(d){
     ['Registrant ID / ABN',esc(w.registrant_id)],
     ['Eligibility',esc(w.eligibility)],
     ['Owner email',esc(w.owner_email)],
+    ['🛠 Technical contact',esc(w.tech_name)],
+    ['Technical email',esc(w.tech_email)],
+    ['Technical phone',esc(w.tech_phone)],
+    ['Technical org',esc(w.tech_org)],
     ['Location',loc],
     ['Registered',dt(w.created)],['Last updated',dt(w.updated)],['Expires',dt(w.expires)],
     ['DNSSEC',esc(w.dnssec)],['Reseller',esc(w.reseller)],

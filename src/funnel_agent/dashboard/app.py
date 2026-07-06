@@ -2063,6 +2063,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             priority = None
 
+        # Batch D 5-pipeline membership for this prospect — so the hero shows P4 · Fresh for an
+        # uncalled, Google-ads-confirmed domain (like ourxplor.com) instead of "No pipeline".
+        # Resolves p5>p2>p1>p3 by domain company_key OR any dialled number; else P4 (fresh/attempted).
+        pipeline5 = None
+        try:
+            prow = q(
+                "SELECT bool_or(cl.pipeline_stage='p5') p5, "
+                "bool_or(cl.pipeline='pipeline2_existing_agency') p2, "
+                "bool_or(cl.pipeline_stage='p1') p1, bool_or(cl.pipeline_stage='p3') p3, count(*)>0 called "
+                "FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+                "WHERE c.in_scope AND ((%(dom)s<>'' AND cl.company_key='dom:'||%(dom)s) "
+                "  OR right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) = ANY(%(d9)s))",
+                {"dom": domain or "", "d9": list(d9s) if d9s else []})
+            r0 = prow[0] if prow else {}
+            pl = ("p5" if r0.get("p5") else "p2" if r0.get("p2") else "p1" if r0.get("p1")
+                  else "p3" if r0.get("p3") else "p4")
+            sub = None
+            if pl == "p4":
+                runs = bool(enr and (enr.get("dataforseo") or {}).get("running_google_ads") == "true")
+                sub = "attempted" if r0.get("called") else ("fresh_ads" if runs else "fresh_unscanned")
+            pipeline5 = {"pipeline": pl, "p4_sub": sub}
+        except Exception:
+            pipeline5 = None
+
         return JSONResponse(jsonable_encoder({
             "found": True,
             "key": key,
@@ -2074,6 +2098,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "rollup": rollup,
             "paid_ads": _paid_ads_intel(enr, calls),
             "priority": priority,
+            "pipeline5": pipeline5,
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
             "calls": calls,
             "messages": messages,
@@ -2372,7 +2397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = "",
                 tracking: str = "", transparency: str = "", industry: str = "", state: str = "",
                 website: str = "", multilocation: str = "", agency: str = "",
-                pipeline: str = "", p4sub: str = ""):
+                pipeline: str = "", p4sub: str = "", rev_min: str = "", rev_max: str = ""):
         """Shared companies+enrichment CTE for the Database browser. Returns
         (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
         into the CTE; the rest come back as `ge` conditions. Coverage filters are added by
@@ -2432,6 +2457,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             params["st"] = f"%{state.strip()}%"
         if revenue in _REV:
             conds.append(_REV[revenue])
+        # Custom revenue range (in $M USD) — min and/or max, combines with any bucket above.
+        for _rk, _op, _pk in (("rev_min", ">=", "rmin"), ("rev_max", "<=", "rmax")):
+            _rv = {"rev_min": rev_min, "rev_max": rev_max}[_rk]
+            if str(_rv).strip() != "":
+                try:
+                    params[_pk] = float(_rv)
+                    conds.append(f"ge.total_revenue {_op} %({_pk})s")
+                except (ValueError, TypeError):
+                    pass
         # Has-a-website filter: kind='domain' means the company has a domain on file.
         if website == "yes":
             conds.append("ge.kind = 'domain'")
@@ -2550,6 +2584,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            source: str = "", coverage: str = "", revenue: str = "",
                            tracking: str = "", transparency: str = "", industry: str = "",
                            state: str = "", website: str = "", multilocation: str = "", agency: str = "",
+                           rev_min: str = "", rev_max: str = "",
                            sort: str = "revenue", dir: str = "desc") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
@@ -2561,7 +2596,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
                                      tracking, transparency, industry, state, website=website,
                                      multilocation=multilocation, agency=agency,
-                                     pipeline=pipeline, p4sub=p4sub)
+                                     pipeline=pipeline, p4sub=p4sub, rev_min=rev_min, rev_max=rev_max)
         params["lim"] = limit
         params["off"] = offset
         conds += _coverage_conds(coverage)
@@ -2584,7 +2619,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        paid_ads: str = "", source: str = "", coverage: str = "",
                        revenue: str = "", tracking: str = "", transparency: str = "",
                        industry: str = "", state: str = "", website: str = "",
-                       multilocation: str = "", agency: str = "") -> JSONResponse:
+                       multilocation: str = "", agency: str = "",
+                       rev_min: str = "", rev_max: str = "") -> JSONResponse:
         _require_db_access(request)
         r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
               "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
@@ -2598,7 +2634,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # collapsing to the active filter. The result-bar total (/prospects.total) reflects
         # the FULL filter; these cards are reference + one-click shortcuts.
         cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state, website=website,
-                                     multilocation=multilocation, agency=agency)
+                                     multilocation=multilocation, agency=agency, rev_min=rev_min, rev_max=rev_max)
         base = ("WHERE " + " AND ".join(conds)) if conds else ""
         cov = q(cte + f"""SELECT
             count(*) FILTER (WHERE ge.scanned) AS scanned,

@@ -170,6 +170,12 @@ def _whois43(domain: str) -> dict:
         "eligibility": _first(text, "Eligibility Type", "Registrant Eligibility Type", "Eligibility Name"),
         "owner_email": _first(text, "Registrant Contact Email", "Registrant Email"),
         "owner_name": _first(text, "Registrant Contact Name"),
+        # Technical contact (the person/role who manages the domain's DNS/hosting — often the
+        # web/IT provider; a useful second lead when the registrant is privacy-protected).
+        "tech_name": _first(text, "Tech Contact Name", "Technical Contact Name", "Tech Name", "Admin Contact Name"),
+        "tech_email": _first(text, "Tech Contact Email", "Technical Contact Email", "Tech Email", "Admin Contact Email"),
+        "tech_phone": _first(text, "Tech Contact Phone", "Technical Contact Phone", "Tech Phone"),
+        "tech_org": _first(text, "Tech Organization", "Tech Organisation", "Technical Organization", "Tech Contact Organisation"),
         "registrant_city": _first(text, "Registrant City"),
         "registrant_state": _first(text, "Registrant State/Province", "Registrant State"),
         "registrant_country": _first(text, "Registrant Country", "Registrant Country/Economy"),
