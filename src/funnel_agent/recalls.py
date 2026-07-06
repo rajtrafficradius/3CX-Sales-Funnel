@@ -167,6 +167,27 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
                     "'[^0-9]','','g'),9) IN (SELECT dest9 FROM prospect_pipeline "
                     "WHERE pipeline='pipeline2_existing_agency')")
         cancelled += cur.rowcount
+        # SUPERSEDED: a later outbound call happened AFTER a scheduled call/callback/retry, so that
+        # scheduled call was overtaken — cancel it (stops the prospect page showing a stale PAST
+        # 'next call'). Recalls are future-dated so this never touches an active recall.
+        cur.execute(
+            "UPDATE calendar_events e SET status='cancelled' "
+            "WHERE e.status='pending' AND e.type IN ('callback','rpc_retry','recall') "
+            "AND EXISTS (SELECT 1 FROM calls c WHERE c.in_scope AND lower(c.direction)='outbound' "
+            "  AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) "
+            "    = right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) "
+            "  AND c.started_at > e.start_at + interval '2 hours')")
+        cancelled += cur.rowcount
+        # DEDUPE callbacks: each call that requested a callback made its own event — keep only the
+        # LATEST pending callback per prospect (cancel the older siblings).
+        cur.execute(
+            "UPDATE calendar_events e SET status='cancelled' "
+            "WHERE e.status='pending' AND e.type='callback' AND EXISTS (SELECT 1 FROM calendar_events e2 "
+            "  WHERE e2.status='pending' AND e2.type='callback' AND e2.id <> e.id "
+            "  AND right(regexp_replace(COALESCE(e2.dest_number,''),'[^0-9]','','g'),9) "
+            "    = right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) "
+            "  AND (e2.start_at > e.start_at OR (e2.start_at = e.start_at AND e2.id > e.id)))")
+        cancelled += cur.rowcount
         conn.commit()
         cur.execute(_GATHER)
         rows = cur.fetchall()

@@ -2084,10 +2084,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # An agency prospect's next call is owned by the contract-aware rotation, so ignore
                 # a stray rpc_retry double-tap for them; otherwise take the soonest real appointment.
                 skip_retry = bool(board and board.get("pipeline") == "pipeline2_existing_agency")
+                # Pick the soonest UPCOMING event (never a past/stale one — a prospect can have
+                # several piled-up pending events); only if none are upcoming fall back to the most
+                # recent past one (an overdue to-do). Never show a 'next call' before today.
+                _now = _dt.now(_tz.utc)
                 ev = q("SELECT type, start_at, bde_name, status FROM calendar_events "
-                       "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%s) "
-                       "  AND status='pending' AND (NOT %s OR type <> 'rpc_retry') "
-                       "ORDER BY start_at ASC LIMIT 1", (d9list, skip_retry))
+                       "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%(d9)s) "
+                       "  AND status='pending' AND (NOT %(sr)s OR type <> 'rpc_retry') "
+                       "ORDER BY (start_at >= %(now)s) DESC, "
+                       "         CASE WHEN start_at >= %(now)s THEN start_at END ASC, start_at DESC "
+                       "LIMIT 1", {"d9": d9list, "sr": skip_retry, "now": _now})
                 cal = ev[0] if ev else None
             # A far-future agency next-action = 'parked' (e.g. locked into a renewed contract):
             # show 'Re-engage ~<date> · <why>', not a normal 'call this week'.
