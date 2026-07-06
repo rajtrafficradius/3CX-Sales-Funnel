@@ -2139,7 +2139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # several piled-up pending events); only if none are upcoming fall back to the most
                 # recent past one (an overdue to-do). Never show a 'next call' before today.
                 _now = _dt.now(_tz.utc)
-                ev = q("SELECT type, start_at, bde_name, status FROM calendar_events "
+                ev = q("SELECT id, type, start_at, bde_name, status FROM calendar_events "
                        "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%(d9)s) "
                        "  AND status='pending' AND (NOT %(sr)s OR type <> 'rpc_retry') "
                        "ORDER BY (start_at >= %(now)s) DESC, "
@@ -2153,7 +2153,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 next_action = None
             elif cal:
                 next_action = {"when": cal["start_at"], "bde": cal.get("bde_name"),
-                               "source": "calendar", "type": cal.get("type")}
+                               "source": "calendar", "type": cal.get("type"),
+                               "event_id": cal.get("id")}
             elif board and board.get("next_action_at"):
                 na = board["next_action_at"]
                 parked = bool(na and na > horizon)

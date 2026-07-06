@@ -754,6 +754,21 @@ function calLink(na){
   const href = na.event_id ? '/calendar?event='+encodeURIComponent(na.event_id) : '/calendar';
   return `<a class="lnk small" href="${href}" style="margin-left:auto;color:var(--muted)" title="Open this prospect on the calendar">📅 View on calendar</a>`;
 }
+// ---- Winning next move (TOP of the page): the single best action to book the meeting ---- //
+function nextMoveCard(d){
+  const nm=d.next_move; if(!nm||!nm.move) return '';
+  const KIND={ask:'❓',confirm:'✅',do:'📌',avoid:'⚠️',open:'🎯',hook:'🪝',question:'❓',value:'💎',logistics:'📋',objection:'⚠️'};
+  const meta=[nm.decision_maker?('Decision-maker: <b>'+esc(nm.decision_maker)+(nm.dm_role?' · '+esc(nm.dm_role):'')+'</b>'):'',
+              nm.channel?('Best channel: <b>'+esc(nm.channel)+'</b>'):'',
+              nm.reason_unavailable?('Last time: '+esc(nm.reason_unavailable)):''].filter(Boolean).join(' &nbsp;·&nbsp; ');
+  const pts=(nm.points||[]).filter(p=>p&&p.point);
+  return `<div class="card full" style="border-color:var(--accent);background:var(--accent-soft)">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);font-weight:800;margin-bottom:6px">🎯 Winning next move — to book the meeting</div>
+    <div style="font-size:15px;font-weight:700;color:var(--txt);line-height:1.5">${esc(nm.move)}</div>
+    ${meta?`<div class="muted small" style="margin-top:7px">${meta}</div>`:''}
+    ${pts.length?`<div class="subh" style="margin-top:12px">💬 What to say</div><ul style="margin:4px 0 0;padding-left:2px;list-style:none">${pts.map(p=>`<li class="small" style="margin:5px 0;color:var(--txt-dim)">${KIND[p.kind]||'•'} ${esc(p.point)}${p.why?` <span class="muted">— ${esc(p.why)}</span>`:''}</li>`).join('')}</ul>`:''}
+  </div>`;
+}
 function nextActionCard(d){
   const dnd=d.dnd, na=d.next_action;
   if(dnd){
@@ -998,6 +1013,7 @@ async function load(){
   const defPane = (d.calls||[]).length ? 'calls' : 'uploaded';
   document.getElementById('main').innerHTML =
     heroCard(d)
+    + nextMoveCard(d)
     + nextActionCard(d)
     + priorityCard(d)
     + overallSummary(d)
