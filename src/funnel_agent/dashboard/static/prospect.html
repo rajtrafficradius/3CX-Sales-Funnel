@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-<script>(function(){try{var t=localStorage.getItem("tr-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+<script>(function(){try{var t=localStorage.getItem("tr-theme");document.documentElement.setAttribute("data-theme",t==="dark"?"dark":"light");}catch(e){}})();</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Prospect — 3CX Funnel</title>
@@ -78,7 +78,7 @@
   .contact .ph{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:var(--t-cap);color:var(--txt-dim)}
   /* add phone / website forms */
   .addphone{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-  .addphone input{background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);padding:9px 11px;font:inherit;font-size:var(--t-body)}
+  .addphone input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);padding:9px 11px;font:inherit;font-size:var(--t-body)}
   .addphone input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
   button,.btn{font:inherit;font-size:var(--t-body);border-radius:var(--r2);cursor:pointer;border:1px solid var(--line);background:var(--panel3);color:var(--txt);padding:9px 14px;transition:border-color .15s,filter .15s}
   button.primary{background:linear-gradient(180deg,var(--accent),var(--accent2));border:none;color:#fff;font-weight:700}
@@ -127,9 +127,9 @@
 
   /* ---- light theme (toggle) — only neutral tokens flip; accent stays ---- */
   :root[data-theme=light]{
-    --bg:#f4f7fb; --panel:#ffffff; --panel2:#f1f5fa; --panel3:#e8eef6;
-    --line:#dbe2ec; --line-soft:#e7edf4; --line2:#c8d2df; --chip:#eef3f9;
-    --txt:#1a2331; --txt-dim:#39465a; --muted:#5f6b7d; --faint:#8994a6;
+    --bg:#f7f9fc; --panel:#ffffff; --panel2:#f3f6fb; --panel3:#eaf0f7;
+    --line:#e2e8f1; --line-soft:#eef2f8; --line2:#d3dbe6; --chip:#f0f4fa;
+    --txt:#17202e; --txt-dim:#3a4658; --muted:#616d80; --faint:#93a0b2;
     --good:#15a34a; --warn:#c07806; --bad:#dc2626;
     --elev1:0 1px 2px rgba(20,30,50,.10);
     --elev2:0 1px 0 rgba(0,0,0,.02) inset,0 10px 26px -18px rgba(20,30,50,.35);
@@ -140,6 +140,16 @@
     font-size:17px;line-height:1;cursor:pointer;box-shadow:var(--elev1);display:flex;
     align-items:center;justify-content:center;transition:background .15s,border-color .15s}
   .tr-theme-btn:hover{border-color:var(--accent)}
+  /* light-mode fixes for hard-coded dark surfaces (default theme is now light) */
+  :root[data-theme=light] header{background:linear-gradient(180deg,#ffffff,var(--bg));border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(20,30,50,.03)}
+  :root[data-theme=light] header a{color:var(--accent)}
+  :root[data-theme=light] .clsbar{background:linear-gradient(180deg,#ffffff,var(--bg));border-bottom:1px solid var(--line)}
+  :root[data-theme=light] .navrow{background:transparent}
+  :root[data-theme=light] .clstrack{background:#e6ecf5;border:1px solid var(--line)}
+  :root[data-theme=light] .brand{background:#ffffff;border:1px solid var(--line);box-shadow:var(--elev1)}
+  :root[data-theme=light] input,:root[data-theme=light] select,:root[data-theme=light] textarea{color-scheme:light}
+  :root[data-theme=light] .tr-theme-btn{background:#ffffff}
+  :root[data-theme=light] .tr-theme-btn:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -365,7 +375,7 @@ function adCreatives(ads){
   return '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px">'+items.map(it=>{
     const fb=`<div style="display:none;height:150px;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;color:var(--muted);font-size:12px">${esc((it.format||'ad').toUpperCase())} (no preview)</div>`;
     const img = it.preview_image
-      ? `<img src="${esc(it.preview_image)}" loading="lazy" referrerpolicy="no-referrer" style="width:100%;height:150px;object-fit:contain;background:#0b0f15;border-radius:8px;border:1px solid var(--line)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">${fb}`
+      ? `<img src="${esc(it.preview_image)}" loading="lazy" referrerpolicy="no-referrer" style="width:100%;height:150px;object-fit:contain;background:var(--panel2);border-radius:8px;border:1px solid var(--line)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">${fb}`
       : `<div style="height:150px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:12px">${esc((it.format||'ad').toUpperCase())} ad (no image)</div>`;
     const dates=`${esc((it.first_shown||'').slice(0,10))} → ${esc((it.last_shown||'').slice(0,10))}`;
     return `<div style="width:230px">${img}
