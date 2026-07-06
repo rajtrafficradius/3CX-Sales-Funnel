@@ -23,19 +23,47 @@ def guess_when(text: str | None, base: date) -> datetime:
     """Best-effort parse of a callback phrase into a concrete datetime. Falls back
     to the next business day at 10:00. The BDE can adjust it in the calendar."""
     t = (text or "").lower()
+    # normalise worded quantities so the numeric rules below catch them
+    t = re.sub(r"\b(?:a|an|one)\s+(week|month)", r"1 \1", t)
+    t = re.sub(r"\bcouple\s+(?:of\s+)?(weeks?|months?)", r"2 \1", t)
+    t = re.sub(r"\b(?:few|several)\s+(weeks?|months?)", r"3 \1", t)
     day = base + timedelta(days=1)  # default: tomorrow
     _mo = re.search(r"(\d+)\s*months?", t)
     _wk = re.search(r"(\d+)\s*weeks?", t)
+    _MONTHS = {"january": 1, "february": 2, "march": 3, "april": 4, "june": 6, "july": 7,
+               "august": 8, "september": 9, "october": 10, "november": 11, "december": 12}
+    _mname = next((n for n in _MONTHS if n in t), None)   # 'may' handled below (too ambiguous)
+    _mnum = _MONTHS[_mname] if _mname else (5 if re.search(r"\b(in|until|till|by|early|mid|late)\s+may\b", t) else None)
+    _ord = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)\b", t)
+
+    def _safe(y, mo, d):
+        for dd in (d, 28, 1):
+            try:
+                return date(y, mo, dd)
+            except ValueError:
+                continue
+        return base + timedelta(days=1)
+
     if "today" in t:
         day = base
     elif "tomorrow" in t:
         day = base + timedelta(days=1)
+    elif _mnum:                                  # a named month e.g. 'back in August', 'until July'
+        d = int(_ord.group(1)) if _ord else 1
+        y = base.year + (1 if (_mnum, d) <= (base.month, base.day) else 0)
+        day = _safe(y, _mnum, d)
+    elif _ord:                                   # a day-of-month like 'on the 27th' (this/next month)
+        d = int(_ord.group(1))
+        cand = _safe(base.year, base.month, d)
+        day = cand if cand > base else _safe(base.year + (base.month == 12), (base.month % 12) + 1, d)
     elif _mo or "next month" in t:               # 'in 2 months', 'next month' (~30d/mo)
         day = base + timedelta(days=30 * (int(_mo.group(1)) if _mo else 1))
     elif _wk:                                     # 'in 4 weeks', '3 weeks' -> whole weeks
         day = base + timedelta(days=7 * int(_wk.group(1)))
     elif "next week" in t or "a week" in t or "fortnight" in t:
         day = base + timedelta(days=14 if "fortnight" in t else 7)
+    elif "end of the month" in t or "end of month" in t:
+        day = _safe(base.year, base.month, 28)   # ~end of the current month
     else:
         m = re.search(r"in (\d+) days?", t)
         if m:
