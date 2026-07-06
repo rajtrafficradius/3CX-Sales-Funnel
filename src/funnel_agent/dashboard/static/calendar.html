@@ -73,6 +73,7 @@
   .ev.meeting{background:rgba(74,222,128,.13);color:#8ef0b0}
   .ev.note{background:rgba(154,166,182,.12);color:#c7d0dc}
   .ev.rpc_retry{background:rgba(192,132,252,.13);color:#d4b6fd}
+  .ev.recall{background:rgba(45,212,191,.14);color:#7fe6d4}
   .ev.next_call{background:rgba(251,191,36,.12);color:#f5cf7a}
   .ev.tier-hot{border-left-color:var(--tier-hot);box-shadow:inset 0 0 0 1px var(--tier-hot-soft)}
   .ev.tier-warm{border-left-color:var(--tier-warm);box-shadow:inset 0 0 0 1px var(--tier-warm-soft)}
@@ -97,6 +98,7 @@
   .etype.callback{color:var(--ty-callback)}
   .etype.note{color:var(--ty-note)}
   .etype.rpc_retry{color:var(--ty-rpc)}
+  .etype.recall{color:#5eead4}
   .etype.next_call{color:var(--ty-next)}
   .etitle{font-size:var(--t-body);font-weight:600;color:var(--txt)}
   .ebde{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-cap);color:var(--muted)}
@@ -125,6 +127,7 @@
   .legend .lg i.type.callback{background:var(--ty-callback)}
   .legend .lg i.type.note{background:var(--ty-note)}
   .legend .lg i.type.rpc_retry{background:var(--ty-rpc)}
+  .legend .lg i.type.recall{background:#5eead4}
   .legend .lg i.type.next_call{background:var(--ty-next)}
   .legend .lg i.type.done{background:#475569}
   .legend .lg i.tier{width:6px;height:14px;border-radius:2px}
@@ -177,8 +180,8 @@ const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
 const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
-const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝',rpc_retry:'🔁',next_call:'⭐'};
-const TYPE_LABEL={callback:'Callback',meeting:'Meeting',note:'Note',rpc_retry:'RPC retry',next_call:'Next call'};
+const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝',rpc_retry:'🔁',recall:'🔁',next_call:'⭐'};
+const TYPE_LABEL={callback:'Callback',meeting:'Meeting',note:'Note',rpc_retry:'RPC retry',recall:'Weekly recall',next_call:'Next call'};
 // Priority tier -> css class (hot/warm/cool/none). API sends e.tier ('hot'|'warm'|'cool'|null).
 function tierClass(t){const k=(t==null?'':String(t)).trim().toLowerCase();return (k==='hot'||k==='warm'||k==='cool')?k:'none';}
 function tierChip(t){const k=tierClass(t);if(k!=='hot'&&k!=='warm')return '';return `<span class="tchip ${k}">${k==='hot'?'Hot':'Warm'}</span>`;}
@@ -231,6 +234,7 @@ function renderLegend(){
     `<span class="lg"><i class="type meeting"></i>🤝 Meeting</span>`+
     `<span class="lg"><i class="type callback"></i>📞 Callback</span>`+
     `<span class="lg"><i class="type rpc_retry"></i>🔁 RPC retry</span>`+
+    `<span class="lg"><i class="type recall"></i>🔁 Weekly recall</span>`+
     `<span class="lg"><i class="type next_call"></i>⭐ Next call</span>`+
     `<span class="lg"><i class="type note"></i>📝 Note</span>`+
     `<span class="lg"><i class="type done"></i>Done</span>`;
