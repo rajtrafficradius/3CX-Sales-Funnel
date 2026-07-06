@@ -84,7 +84,7 @@
   .pill.no,.no{background:rgba(248,113,113,.13);color:#fca5a5;border-color:rgba(248,113,113,.26)}
 
   .analysis{white-space:pre-wrap;font-size:var(--t-body);line-height:1.65;color:var(--txt-dim)}
-  .transcript{white-space:pre-wrap;background:#070a0f;border:1px solid var(--line);border-radius:var(--r1);
+  .transcript{white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1);
     padding:14px 16px;max-height:60vh;overflow:auto;font:var(--t-body)/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c8d2de}
   .muted{color:var(--muted)}
   .big{font-size:20px;font-weight:800}
@@ -127,7 +127,7 @@
   .obj{margin:8px 0}
   .scrow{display:flex;align-items:center;gap:10px;margin:7px 0}
   .scl{width:150px;font-size:var(--t-cap);color:var(--txt-dim)}
-  .sctrack{flex:1;height:8px;background:#070a0f;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .sctrack{flex:1;height:8px;background:var(--panel3);border:1px solid var(--line);border-radius:999px;overflow:hidden}
   .sctrack i{display:block;height:100%;background:linear-gradient(90deg,var(--accent2),var(--good))}
   .scn{width:38px;text-align:right;font-size:var(--t-cap);color:var(--muted);font-variant-numeric:tabular-nums}
   a.lnk,.lnk{color:var(--accent);text-decoration:none;font-weight:600}
@@ -426,7 +426,7 @@ function qualOverrideCard(d){
     }).join('');
     controls = `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:14px">
       <div class="subh">Set what this call really is <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">— overrides the AI &amp; updates the funnel</span></div>
-      <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:#0b0f15;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
+      <textarea id="qoReason" placeholder="Reason (required)…" style="width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:13px;min-height:54px">${o?esc(o.reason):''}</textarea>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${obBtns}</div>
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft)">
         <div class="subh" style="margin-bottom:10px">…or just flip the qualification flag <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">(leaves the booking as-is)</span></div>
@@ -601,14 +601,14 @@ function feedbackCard(ev, cl){
     || (booked?'Send the calendar invite + overview/testimonials pack and confirm the time.'
              :'Follow up to secure a firm strategy-session date/time.');
   const li=(arr,icon,color)=>arr.length?`<ul class="ci" style="list-style:none;padding-left:0;margin:0">${arr.map(x=>`<li style="margin:6px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">${icon}</span><span style="color:${color}">${esc(x)}</span></li>`).join('')}</ul>`:'<div class="muted">—</div>';
-  return `<div class="card full" style="border-color:var(--accent2);background:linear-gradient(180deg,#141d31,var(--panel))">
-    <h2 style="color:#93c5fd">🧠 Feedback intelligence <span class="muted" style="color:#7ea6e6">— this call</span></h2>
+  return `<div class="card full" style="border-color:var(--accent2)">
+    <h2 style="color:var(--accent)">🧠 Feedback intelligence <span class="muted">— this call</span></h2>
     <div class="bizgrid">
-      <div><div class="subh">✅ What went well</div>${li(wins,'✅','#86efac')}</div>
-      <div><div class="subh">⚠️ What to improve</div>${li(improves,'⚠️','#fcd34d')}</div>
+      <div><div class="subh">✅ What went well</div>${li(wins,'✅','var(--good)')}</div>
+      <div><div class="subh">⚠️ What to improve</div>${li(improves,'⚠️','var(--warn)')}</div>
     </div>
     <div class="subh" style="margin-top:12px">🎯 Next-call game plan</div>
-    <div style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);border-radius:8px;padding:10px 14px;color:#bfdbfe">${nextCallPoints(ev,cl)||esc(next)}</div>
+    <div style="background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;color:var(--txt-dim)">${nextCallPoints(ev,cl)||esc(next)}</div>
   </div>`;
 }
 
