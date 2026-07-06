@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>(function(){try{var t=localStorage.getItem("tr-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Pipeline 2 — call list & assignments</title>
@@ -141,6 +142,22 @@
     .intro{padding:16px}
     header h1{font-size:var(--t-body)}
   }
+
+  /* ---- light theme (toggle) — only neutral tokens flip; accent stays ---- */
+  :root[data-theme=light]{
+    --bg:#f4f7fb; --panel:#ffffff; --panel2:#f1f5fa; --panel3:#e8eef6;
+    --line:#dbe2ec; --line-soft:#e7edf4; --line2:#c8d2df; --chip:#eef3f9;
+    --txt:#1a2331; --txt-dim:#39465a; --muted:#5f6b7d; --faint:#8994a6;
+    --good:#15a34a; --warn:#c07806; --bad:#dc2626;
+    --elev1:0 1px 2px rgba(20,30,50,.10);
+    --elev2:0 1px 0 rgba(0,0,0,.02) inset,0 10px 26px -18px rgba(20,30,50,.35);
+  }
+  :root[data-theme=light] body{background:var(--bg);color:var(--txt)}
+  .tr-theme-btn{position:fixed;right:16px;bottom:16px;z-index:90;width:40px;height:40px;
+    border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    font-size:17px;line-height:1;cursor:pointer;box-shadow:var(--elev1);display:flex;
+    align-items:center;justify-content:center;transition:background .15s,border-color .15s}
+  .tr-theme-btn:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -284,5 +301,15 @@ $('#dueOnly').onchange = load;
 $('#bdeFilter').onchange = load;
 load();
 </script>
+<script>(function(){
+  var el=document.documentElement;
+  function cur(){return el.getAttribute("data-theme")==="light"?"light":"dark";}
+  var b=document.createElement("button");b.className="tr-theme-btn";
+  b.title="Toggle light / dark theme";b.setAttribute("aria-label","Toggle theme");
+  function paint(){b.textContent=cur()==="light"?"\u{1F319}":"\u2600\uFE0F";}
+  b.onclick=function(){var n=cur()==="light"?"dark":"light";el.setAttribute("data-theme",n);
+    try{localStorage.setItem("tr-theme",n);}catch(e){}paint();};
+  paint();(document.body||el).appendChild(b);
+})();</script>
 </body>
 </html>
