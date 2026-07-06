@@ -99,6 +99,26 @@ DO UPDATE SET bde_name = EXCLUDED.bde_name, title = EXCLUDED.title,
 """
 
 
+def _best_call_hours(pool: ConnectionPool, tz_name: str, fallback: int) -> list[int]:
+    """Data-driven best times to call: the business hours (8am-5pm local) with the highest
+    historical ANSWER rate across all outbound calls — i.e. when prospects actually pick up.
+    Used for the weekly-fallback recall slot (when the transcript gave no callback time), so we
+    stop dialling into dead hours and spread recalls across the hours that convert."""
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT extract(hour from started_at AT TIME ZONE %s)::int h, "
+                "avg(CASE WHEN answered THEN 1.0 ELSE 0.0 END) rate, count(*) n "
+                "FROM calls WHERE in_scope AND lower(direction)='outbound' "
+                "GROUP BY 1 HAVING count(*) >= 50", (tz_name,))
+            rows = cur.fetchall()
+        biz = sorted(((r["h"], r["rate"]) for r in rows if 8 <= r["h"] <= 17),
+                     key=lambda x: x[1], reverse=True)
+        return [h for h, _ in biz[:3]] or [fallback]
+    except Exception:
+        return [fallback]
+
+
 def _weekly_slot(anchor: datetime, cadence_days: int, now: datetime, hour: int) -> datetime:
     """Next cadence slot on/after today, anchored to `anchor` and stepped by whole cadence periods
     (so a missed week rolls to the NEXT week, not to today), snapped to a weekday at `hour`. If the
@@ -151,9 +171,10 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         cur.execute(_GATHER)
         rows = cur.fetchall()
 
+    best_hours = _best_call_hours(pool, getattr(settings, "tz", "Australia/Melbourne"), hour)
     params: list[dict] = []
     skipped = 0
-    for r in rows:
+    for i, r in enumerate(rows):
         is_agency = (r.get("pp_pipeline") == "pipeline2_existing_agency")
         bde = (r.get("assigned_bde") if is_agency else None) or r.get("last_bde")
         if not bde or not r.get("dest_number"):   # must land on a real BDE calendar
@@ -171,12 +192,18 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         # INTELLIGENT TIMING: if the transcript gave a 'when to call next' hint (gatekeeper said
         # 'next week' / 'in 20 min' / DM back on a date), schedule to THAT. Weekly is only the
         # fallback when there's no such signal. (Agency prospects rarely give a time -> cadence.)
+        best_hour = best_hours[i % len(best_hours)]   # data-driven pick-up hour, spread across top-3
         if not is_agency and cbw:
             when = guess_when(cbw, (r.get("last_attempt") or now).date())
+            # the signal usually gives a DAY ('Monday', 'next week') but no time-of-day; when it
+            # doesn't, call on that day at the best historical pick-up hour instead of a flat 10am.
+            if not any(m in cbw.lower() for m in ("am", "pm", "morning", "afternoon",
+                                                  "evening", "noon", "midday", ":")):
+                when = when.replace(hour=best_hour, minute=0)
             if when.date() < now.date():          # the stated time already passed -> next slot
-                when = _weekly_slot(now, cadence, now, hour)
+                when = _weekly_slot(now, cadence, now, best_hour)
         else:
-            when = _weekly_slot(anchor, cadence, now, hour)
+            when = _weekly_slot(anchor, cadence, now, best_hour if not is_agency else hour)
         if when > horizon:                        # contract-parked / too far out — schedule later
             skipped += 1
             continue
