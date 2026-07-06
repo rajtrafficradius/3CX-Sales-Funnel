@@ -24,6 +24,7 @@ from datetime import datetime, time, timedelta
 
 from psycopg_pool import ConnectionPool
 
+from .calendar import guess_when
 from .config import Settings
 from .logging import get_logger
 
@@ -49,15 +50,22 @@ WITH agg AS (
             FILTER (WHERE cl.pipeline_stage IS NOT NULL))[1]                             AS last_stage,
          (array_agg(cl.prospect_company ORDER BY c.started_at DESC)
             FILTER (WHERE cl.prospect_company IS NOT NULL))[1]                           AS company,
+         -- the most recent 'when to call next' hint from the transcript (gatekeeper said
+         -- 'next week' / 'in 20 min' / 'after emailing Jarrod', or the DM's availability)
+         (array_agg(cl.callback_when ORDER BY c.started_at DESC)
+            FILTER (WHERE cl.callback_when IS NOT NULL AND cl.callback_when <> ''))[1]    AS callback_when,
          count(*)                                                                        AS attempts
   FROM calls c LEFT JOIN classifications cl ON cl.call_id = c.call_id
   WHERE c.in_scope AND lower(c.direction) = 'outbound'
   GROUP BY 1
 )
 SELECT a.d9, a.dest_number, a.ever_connected, a.last_attempt, a.first_attempt, a.last_bde,
-       a.last_stage, a.company, a.attempts,
+       a.last_stage, a.company, a.callback_when, a.attempts,
        pp.pipeline AS pp_pipeline, pp.assigned_bde, pp.next_action_at, pp.cadence_days,
-       pp.business_name AS pp_name
+       pp.business_name AS pp_name,
+       -- data provenance: 'master_file' = curated database (higher trust) vs 'call_capture' =
+       -- a number the BDE dialled ad-hoc (lower trust, may have data-quality issues).
+       (SELECT p.source FROM prospects p WHERE a.d9 = ANY(p.phones_norm) LIMIT 1)         AS source
 FROM agg a
 LEFT JOIN prospect_pipeline pp ON pp.dest9 = a.d9
 WHERE length(a.d9) = 9
@@ -159,21 +167,36 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
                 continue
         cadence = int(r.get("cadence_days") or cadence_default) if is_agency else cadence_default
         anchor = r.get("next_action_at") if (is_agency and r.get("next_action_at")) else r.get("last_attempt")
-        when = _weekly_slot(anchor, cadence, now, hour)
+        cbw = (r.get("callback_when") or "").strip()
+        # INTELLIGENT TIMING: if the transcript gave a 'when to call next' hint (gatekeeper said
+        # 'next week' / 'in 20 min' / DM back on a date), schedule to THAT. Weekly is only the
+        # fallback when there's no such signal. (Agency prospects rarely give a time -> cadence.)
+        if not is_agency and cbw:
+            when = guess_when(cbw, (r.get("last_attempt") or now).date())
+            if when.date() < now.date():          # the stated time already passed -> next slot
+                when = _weekly_slot(now, cadence, now, hour)
+        else:
+            when = _weekly_slot(anchor, cadence, now, hour)
         if when > horizon:                        # contract-parked / too far out — schedule later
             skipped += 1
             continue
         who = r.get("company") or r.get("pp_name") or r.get("dest_number") or "prospect"
+        # source-based priority for gatekeeper/un-connected recalls (user rule): a curated-database
+        # number is higher-trust than one a BDE dialled ad-hoc (which may have data-quality issues).
+        high_trust = (r.get("source") == "master_file")
         if is_agency:
             title = f"🔁 Agency call-cycle: {who}"
             notes = (f"Existing-agency rotation (every {cadence} days). Attempt "
                      f"#{(r.get('attempts') or 0) + 1}. Assigned to {bde}.")
         else:
             stage = "RPC callback" if r.get("last_stage") == "p1" else "gatekeeper callback"
-            title = f"🔁 Weekly recall: {who}"
-            notes = (f"Weekly recall — not yet connected ({stage}). Attempt "
-                     f"#{(r.get('attempts') or 0) + 1}. Keep calling weekly until we speak "
-                     f"to them (auto-cancels once connected or marked DND).")
+            prio = "🔷 HIGH priority (database-sourced)" if high_trust else \
+                   "▫️ Lower priority (BDE-sourced — verify the number/decision-maker)"
+            timing = (f"they told us to call '{cbw}'" if cbw else "no callback time given — weekly cadence")
+            title = ("🔷 " if high_trust else "") + f"🔁 Recall: {who}"
+            notes = (f"Recall — not yet connected ({stage}). {prio}. Timing: {timing}. Attempt "
+                     f"#{(r.get('attempts') or 0) + 1}. Keep calling until we speak to them "
+                     f"(auto-cancels once connected or marked DND).")
         params.append({"bde": bde, "title": title, "start": when,
                        "end": when + timedelta(minutes=30), "notes": notes,
                        "dest": r.get("dest_number")})
