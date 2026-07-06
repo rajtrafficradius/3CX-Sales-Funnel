@@ -352,6 +352,8 @@ CONVERSATION INTELLIGENCE (for coaching — base strictly on the transcript):
   buying signal they gave, pre-empt an UNHANDLED objection, tailor value to their industry/goal,
   ask the specific discovery question that's still open, or confirm logistics of an agreed step.
   Set kind = hook | question | objection | value | logistics for each, and a short `why`.
+  ORDER them by what most moves this prospect toward BOOKING A MEETING — the strongest opener /
+  objection-flip first — and make the FIRST point the single best move for whoever calls back.
   These are prospect-facing TALKING POINTS, NOT the generic BDE-skill coaching in coaching_tips.
   Return [] for wrong-number / flat "not interested" / do-not-contact / pure voicemail. For a
   FIRM booking, give only `logistics` points (confirm + prepare the session — do NOT re-pitch).

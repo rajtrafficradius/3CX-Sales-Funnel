@@ -51,27 +51,49 @@ def _clean_time_noise(s: str | None) -> str:
 
 
 def _winning_next_move(evidence: dict | None) -> dict:
-    """The single best PROSPECT-focused action to move toward a booked meeting, plus the tailored
-    talking points — synthesised from the AI's per-call intelligence (prefer the specific
-    next-call points, then the RPC next move, then the agreed next step). Cleans our-side noise."""
+    """A senior-sales BOOKING BRIEFING for the next call — not just 'a next step', but the whole
+    play to get the meeting: the primary move, the pain to open on, the objection to pre-empt, the
+    buying signal to leverage, the BANT gaps to close, and the ask. Synthesised from the full call
+    intelligence (next-call points, RPC move, objections, buying signals, BANT, sentiment)."""
     ev = evidence or {}
     rpc = ev.get("rpc_next_move") or {}
     pts = [p for p in (ev.get("next_call_points") or []) if isinstance(p, dict) and p.get("point")]
-    move = ""
-    if pts:
-        move = pts[0].get("point") or ""
-    if not move:
-        move = rpc.get("next_move") or ev.get("next_step") or ""
+
+    def _flag(key: str) -> bool:
+        x = ev.get(key)
+        return bool(x.get("value")) if isinstance(x, dict) else bool(x)
+
+    # the primary action (prefer the tailored next-call points, then the RPC move / agreed step)
+    move = (pts[0].get("point") if pts else "") or rpc.get("next_move") or ev.get("next_step") or ""
     dm = (rpc.get("dm_name") or ev.get("prospect_contact_name") or "").strip()
+    channel = (rpc.get("next_move_channel") or "").strip()
+    # OPEN ON their pain; PRE-EMPT their live objection; LEVERAGE their strongest buying signal.
+    hook = ev.get("problem_summary") or ""
+    unhandled = [o.get("objection") for o in (ev.get("objections") or [])
+                 if isinstance(o, dict) and o.get("handled") is False and o.get("objection")]
+    preempt = unhandled[0] if unhandled else ""
+    signals = [s for s in (ev.get("buying_signals") or []) if s]
+    leverage = signals[0] if signals else ""
+    # what still has to be TRUE to book: the BANT gaps to close on the call.
+    establish = [lab for lab, key in (("budget", "budget"), ("the decision-maker", "authority"),
+                 ("a real need", "problem"), ("a timeline", "urgency")) if not _flag(key)]
     return {
         "move": _clean_time_noise(move),
+        "hook": _clean_time_noise(hook),
+        "preempt": _clean_time_noise(preempt),
+        "leverage": _clean_time_noise(leverage),
+        "establish": establish,                       # BANT gaps to close before/at the meeting
+        "ask": "Lock a short discovery meeting as the next step"
+               + (f" (offer it over {channel})" if channel else "") + ".",
         "decision_maker": dm,
         "dm_role": (rpc.get("dm_role") or "").strip(),
-        "channel": (rpc.get("next_move_channel") or "").strip(),
-        "why": _clean_time_noise(ev.get("problem_summary") or ""),
+        "channel": channel,
+        "sentiment": (ev.get("prospect_sentiment") or "").strip(),
+        "engagement": (ev.get("engagement") or "").strip(),
+        "why": _clean_time_noise(hook),
         "reason_unavailable": _clean_time_noise(rpc.get("reason_unavailable") or ""),
-        "points": [{"point": _clean_time_noise(p.get("point")), "why": (p.get("why") or "").strip()}
-                   for p in pts[:4]],
+        "points": [{"point": _clean_time_noise(p.get("point")), "why": (p.get("why") or "").strip(),
+                    "kind": (p.get("kind") or "").strip()} for p in pts[:4]],
     }
 
 
