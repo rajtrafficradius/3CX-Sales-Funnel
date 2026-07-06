@@ -2202,19 +2202,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
 
         def _do() -> dict:
-            from ..enrichment.dataforseo import DataForSEOClient, build_seo_audit
+            from ..enrichment.dataforseo import DataForSEOClient, build_seo_audit, brand_tokens
             c = DataForSEOClient(settings)
             try:
-                rk = c.ranked_keywords(domain, limit=200)
+                rk = c.ranked_keywords(domain, limit=100)   # 100 (was 200): cost scales with rows
             finally:
                 c.close()
-            kws = (rk.get("keywords") or [])[:200]
-            audit = build_seo_audit(kws)
+            kws = (rk.get("keywords") or [])[:100]
+            brands = brand_tokens(domain, (_master or {}).get("company_name")
+                                  or (_master or {}).get("name") or "")
+            audit = build_seo_audit(kws, brands=brands)
             audit["keyword_count_total"] = rk.get("count")
             audit["fetched_at"] = _dt.now().isoformat()  # audit's own run time
-            # Store ONLY the audit (it already carries the surfaced keyword subset); merge via
-            # jsonb || so ads/rank/running_google_ads are kept. Don't persist the raw 200-kw array.
-            patch = {"audit": audit}
+            # Cache the audit AND the raw ranked keywords (ranked_kw) so the competitor audit can
+            # reuse them WITHOUT a second (paid) ranked_keywords fetch. Merge via jsonb || so
+            # ads/rank/running_google_ads siblings are kept.
+            patch = {"audit": audit, "ranked_kw": kws}
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "

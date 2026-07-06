@@ -13,6 +13,7 @@ the definitive signal (a domain can have 0 paid search keywords yet many live Di
 from __future__ import annotations
 
 import base64
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -133,7 +134,7 @@ class DataForSEOClient:
             "cost": d.get("cost"),
         }
 
-    def ranked_keywords(self, domain: str, limit: int = 200) -> dict:
+    def ranked_keywords(self, domain: str, limit: int = 100) -> dict:
         """The ACTUAL organic keywords a domain ranks for (keyword + position + search volume +
         CPC + ranking URL) — the raw data for a keyword/gap audit. We take keyword DATA only and
         ESTIMATE traffic ourselves (position x volume) rather than buying DataForSEO's traffic
@@ -229,18 +230,88 @@ def _ctr(pos: float) -> float:
     return 0.001
 
 
-def build_seo_audit(keywords: list[dict]) -> dict:
-    """Turn a domain's ranked keywords into a quick-wins -> growth SEO audit.
+# ============================================================================================ #
+# RELEVANCE — "money keyword" scoring, brand stripping, mega-domain filter
+# (shared by the SEO audit here AND the competitor keyword-gap in competitor.py)
+# ============================================================================================ #
+MIN_MONEY_VOL = 150          # ignore tiny / no-volume terms — not worth a sales conversation
+TOP_MONEY_KW = 8             # how many keywords we SURFACE per list (quality over quantity)
 
-    Traffic is ESTIMATED (search_volume x an assumed position-CTR curve) — NOT a measured metric;
-    the caller/UI labels it as an assumption. Buckets each keyword:
-      * winning   — position 1-3 (already on page-1 top)
-      * quick_win — position 4-15 with real volume: one page-1 push = a big, near-term traffic gain
-      * growth    — position 16-50: longer-term opportunities
-    Also estimates total monthly organic traffic, its $ value (traffic x CPC), and the EXTRA
-    traffic available if the quick-wins reached position 3 (the actionable upside)."""
+# Corporate/geo filler stripped when deriving a brand's distinctive tokens from its legal name.
+_BRAND_STOP = {"pty", "ltd", "limited", "group", "the", "for", "trustee", "proprietary", "co",
+               "company", "australia", "australian", "holdings", "inc", "llc", "corporation",
+               "corp", "services", "service", "international", "global", "au", "com", "and",
+               "enterprises", "industries", "solutions", "trading", "brothers"}
+
+# Generic mega-sites that rank for EVERYTHING — never a meaningful "competitor" or gap source.
+# (Specialty/vertical retailers like bunnings/myer/reece ARE kept — they're real competitors.)
+MEGA_DOMAINS = {
+    "youtube.com", "facebook.com", "instagram.com", "tiktok.com", "twitter.com", "x.com",
+    "pinterest.com", "pinterest.com.au", "reddit.com", "linkedin.com", "snapchat.com",
+    "wikipedia.org", "quora.com", "medium.com", "wordpress.com", "blogspot.com", "tumblr.com",
+    "google.com", "google.com.au", "bing.com", "yahoo.com", "duckduckgo.com",
+    "amazon.com", "amazon.com.au", "ebay.com", "ebay.com.au", "aliexpress.com", "temu.com",
+    "wish.com", "etsy.com", "alibaba.com", "catch.com.au",
+    "yelp.com", "yellowpages.com.au", "whitepages.com.au", "gumtree.com.au", "tripadvisor.com",
+    "tripadvisor.com.au", "trustpilot.com", "productreview.com.au", "indeed.com", "seek.com.au",
+    "glassdoor.com", "news.com.au", "abc.net.au", "theguardian.com", "dailymail.co.uk",
+    "9news.com.au", "7news.com.au", "smh.com.au", "theage.com.au", "apple.com", "microsoft.com",
+}
+_MEGA_KW_CEILING = 1_500_000   # any domain ranking for >1.5M keywords is a generic portal, not a rival
+
+
+def is_mega_domain(host: str, organic_keywords: int | None = None) -> bool:
+    """True for generic-everything portals (explicit list OR absurd keyword footprint)."""
+    h = (host or "").lower().lstrip("www.")
+    if h in MEGA_DOMAINS or any(h == m or h.endswith("." + m) for m in MEGA_DOMAINS):
+        return True
+    return bool(organic_keywords and organic_keywords > _MEGA_KW_CEILING)
+
+
+def brand_tokens(domain: str, company_name: str = "") -> set[str]:
+    """Distinctive brand strings a domain already 'owns' (its own name) — stripped from
+    OPPORTUNITY keywords so we surface demand the prospect is NOT already capturing."""
+    toks: set[str] = set()
+    root = re.sub(r"^www\.", "", (domain or "").lower().split("/")[0]).split(".")[0]
+    if len(root) >= 4:
+        toks.add(root)
+    for w in re.split(r"[^a-z0-9]+", (company_name or "").lower()):
+        if len(w) >= 4 and w not in _BRAND_STOP:
+            toks.add(w)
+    return toks
+
+
+def is_branded(keyword: str, brands: set[str]) -> bool:
+    """True if the keyword contains a brand token (the prospect already ranks for its own name)."""
+    if not brands:
+        return False
+    joined = re.sub(r"[^a-z0-9]+", "", (keyword or "").lower())
+    return any(b in joined for b in brands if len(b) >= 4)
+
+
+def money_score(kw: dict) -> float:
+    """$-weighted value of a keyword = monthly searches x commercial value (CPC). Informational
+    terms (cpc=0) are kept but heavily discounted so commercial 'money' terms surface first."""
+    vol = kw.get("search_volume") or 0
+    cpc = kw.get("cpc") or 0
+    return vol * cpc if cpc and cpc > 0 else vol * 0.12
+
+
+def build_seo_audit(keywords: list[dict], *, brands: set[str] | None = None,
+                    top: int = TOP_MONEY_KW) -> dict:
+    """Turn a domain's ranked keywords into a MONEY-keyword SEO audit — only the handful of
+    high-value, non-branded, winnable terms that make a sales conversation, not a 200-row dump.
+
+    Headline totals (traffic/value/counts) are computed over ALL keywords; the SURFACED lists are
+    filtered to non-branded terms with real volume and ranked by $ value (searches x CPC):
+      * money_keywords — position 4-15, high $ value: one page-1 push = a near-term money win
+      * proof_winning  — position 1-3 for $ terms: proof the site CAN rank (credibility for the pitch)
+      * growth         — position 16-30: bigger, longer plays
+    Traffic is ESTIMATED (search_volume x an assumed position-CTR curve), labelled as such."""
+    brands = brands or set()
     winning, quick, growth = [], [], []
     est_traffic = est_value = quickwin_upside = 0.0
+    n_win = n_quick = n_growth = 0
     for k in keywords or []:
         vol = k.get("search_volume") or 0
         pos = k.get("position") or 999
@@ -248,7 +319,19 @@ def build_seo_audit(keywords: list[dict]) -> dict:
         et = vol * _ctr(pos)
         est_traffic += et
         est_value += et * cpc
-        row = {**k, "est_traffic": round(et)}
+        # headline counts over ALL keywords (before relevance filtering)
+        if pos <= 3:
+            n_win += 1
+        elif pos <= 15:
+            n_quick += 1
+        elif pos <= 30:
+            n_growth += 1
+        # relevance/money filter for the SURFACED lists
+        if vol < MIN_MONEY_VOL or is_branded(k.get("keyword"), brands):
+            continue
+        row = {"keyword": k.get("keyword"), "position": pos, "search_volume": vol,
+               "cpc": round(cpc, 2), "url": k.get("url"), "est_traffic": round(et),
+               "money_value": round(vol * cpc)}   # $ value of this keyword's traffic
         if pos <= 3:
             winning.append(row)
         elif pos <= 15:
@@ -257,24 +340,29 @@ def build_seo_audit(keywords: list[dict]) -> dict:
             row["upside_value"] = round(up * cpc)
             quickwin_upside += up
             quick.append(row)
-        elif pos <= 50:
+        elif pos <= 30:
             growth.append(row)
-    quick.sort(key=lambda r: r.get("upside_traffic", 0), reverse=True)
-    growth.sort(key=lambda r: r.get("search_volume", 0), reverse=True)
-    winning.sort(key=lambda r: r.get("est_traffic", 0), reverse=True)
+    quick.sort(key=lambda r: (money_score(r), r.get("upside_traffic", 0)), reverse=True)
+    winning.sort(key=lambda r: money_score(r), reverse=True)
+    growth.sort(key=lambda r: money_score(r), reverse=True)
     return {
         "assumption": ("Traffic is ESTIMATED from search volume x an industry-average "
-                       "click-through-rate by position — an assumption, not a measured metric."),
+                       "click-through-rate by position — an assumption, not a measured metric. "
+                       "We surface only high-value, non-branded keywords (ranked by search "
+                       "volume x CPC), not every term the site ranks for."),
         "totals": {
             "keywords": len(keywords or []),
             "est_organic_traffic": round(est_traffic),
             "est_traffic_value": round(est_value),
-            "winning": len(winning), "quick_wins": len(quick), "growth": len(growth),
+            "winning": n_win, "quick_wins": n_quick, "growth": n_growth,
             "quickwin_upside_traffic": round(quickwin_upside),
         },
-        "winning": winning[:15],
-        "quick_wins": quick[:20],
-        "growth": growth[:20],
+        "money_keywords": quick[:top],   # THE list — high-$ winnable terms
+        "proof_winning": winning[:5],    # they already rank top-3 for these $ terms
+        "growth": growth[:5],            # secondary, bigger plays
+        # legacy keys kept so an un-migrated UI still renders (map to the new curated lists)
+        "quick_wins": quick[:top],
+        "winning": winning[:5],
     }
 
 

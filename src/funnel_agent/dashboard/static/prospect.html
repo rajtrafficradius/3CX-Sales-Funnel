@@ -424,29 +424,32 @@ function seoAuditCard(d){
   const a=df.audit, can=d.can_download;
   const btn=can?`<button class="btn" id="seoAuditBtn" style="margin-left:8px">${a?'Refresh':'Run'} SEO keyword audit (paid)</button>`:'';
   if(!a){
-    return `<div class="card full"><h2>🔍 SEO keyword audit — quick wins → growth</h2>
-      <div class="muted small">Not run yet. Pulls the domain's ranked keywords and finds <b>quick wins</b> (page-1 pushes) and <b>growth</b> opportunities; traffic is <b>estimated</b> from position × search volume (an assumption).${btn}</div></div>`;
+    return `<div class="card full"><h2>🔍 SEO money-keyword audit</h2>
+      <div class="muted small">Not run yet. Pulls the domain's ranked keywords and surfaces the handful of <b>high-value money keywords</b> (by search volume × CPC) that sit one page-1 push away — not a 200-row dump.${btn}</div></div>`;
   }
   const t=a.totals||{};
-  const kwrow=(k,cell)=>`<tr><td>${esc(k.keyword)||'—'}</td><td style="text-align:center">#${k.position}</td><td style="text-align:right">${fmtN(k.search_volume)}</td>${cell}</tr>`;
-  const tbl=(rows,head,mapper)=>rows&&rows.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
-    <thead><tr style="color:var(--muted);text-align:left"><th>Keyword</th><th style="text-align:center">Pos</th><th style="text-align:right">Vol/mo</th><th style="text-align:right">${head}</th></tr></thead>
-    <tbody>${rows.map(mapper).join('')}</tbody></table>`:'<div class="muted small mt6">None.</div>';
-  const quick=tbl(a.quick_wins,'+traffic if →#3',k=>kwrow(k,`<td style="text-align:right;color:#3fb950">+${fmtN(k.upside_traffic)}</td>`));
-  const growth=tbl(a.growth,'est traffic /mo',k=>kwrow(k,`<td style="text-align:right">${fmtN(k.est_traffic)}</td>`));
-  const winning=tbl(a.winning,'est traffic /mo',k=>kwrow(k,`<td style="text-align:right">${fmtN(k.est_traffic)}</td>`));
-  return `<div class="card full"><h2>🔍 SEO keyword audit — quick wins → growth</h2>
+  // curated money lists (new shape) with graceful fallback to the legacy keys
+  const mk=a.money_keywords||a.quick_wins||[];
+  const pw=a.proof_winning||a.winning||[];
+  const TH='style="text-align:left;color:var(--muted);font-weight:600;padding:0 10px 4px 0;white-space:nowrap"';
+  const RH='style="text-align:right;color:var(--muted);font-weight:600;padding:0 0 4px 10px;white-space:nowrap"';
+  const TD='style="padding:5px 10px 5px 0;border-top:1px solid rgba(255,255,255,.06)"';
+  const RD='style="padding:5px 0 5px 10px;text-align:right;border-top:1px solid rgba(255,255,255,.06);white-space:nowrap"';
+  const money=k=>k.money_value!=null?'$'+fmtN(k.money_value):(k.cpc?'$'+fmtN(Math.round((k.search_volume||0)*(k.cpc||0))):'—');
+  const kwtbl=(rows,exH,exC)=>rows&&rows.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
+    <thead><tr><th ${TH}>Keyword</th><th ${RH}>Pos</th><th ${RH}>Vol/mo</th><th ${RH}>CPC</th><th ${RH}>$ value/mo</th><th ${RH}>${exH}</th></tr></thead>
+    <tbody>${rows.map(k=>`<tr><td ${TD}>${esc(k.keyword)||'—'}</td><td ${RD}>#${k.position}</td><td ${RD}>${fmtN(k.search_volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} class="mono" style="color:#3fb950">${money(k)}</td><td ${RD}>${exC(k)}</td></tr>`).join('')}</tbody></table>`:'<div class="muted small mt6">None with meaningful volume.</div>';
+  return `<div class="card full"><h2>🔍 SEO money-keyword audit</h2>
     <div class="metrics">
-      ${metric(fmtN(t.est_organic_traffic),'Est. organic traffic /mo','ASSUMPTION · top 200 kw')}
-      ${metric('$'+fmtN(t.est_traffic_value),'Est. traffic value /mo','ASSUMPTION · top 200 kw')}
+      ${metric('$'+fmtN(t.est_traffic_value),'Est. organic traffic value /mo','ASSUMPTION')}
+      ${metric(fmtN(t.est_organic_traffic),'Est. organic visits /mo','ASSUMPTION')}
       ${metric(fmtN(a.keyword_count_total!=null?a.keyword_count_total:t.keywords),'Ranked keywords','DataForSEO')}
       ${metric('+'+fmtN(t.quickwin_upside_traffic),'Quick-win upside /mo','ASSUMPTION')}
     </div>
-    <div class="muted small mt6">⚠ ${esc(a.assumption)} Estimates cover the top ${fmtN(t.keywords)} keywords by search volume.</div>
-    <div class="subh" style="margin-top:14px">⚡ Quick wins (${t.quick_wins}) — a page-1 push (currently position 4–15)</div>${quick}
-    <div class="subh" style="margin-top:14px">📈 Growth opportunities (${t.growth}) — position 16–50</div>${growth}
-    <div class="subh" style="margin-top:14px">🏆 Already winning (${t.winning}) — position 1–3</div>${winning}
-    <div class="muted small" style="margin-top:8px">Audited ${fmtDate(a.fetched_at||df.fetched_at)}.${btn}</div>
+    <div class="subh" style="margin-top:14px">💰 Top money keywords to win — one page-1 push away (currently pos 4–15), ranked by $ value</div>
+    ${kwtbl(mk,'+visits →#3',k=>`<span style="color:#3fb950">+${fmtN(k.upside_traffic)}</span>`)}
+    ${pw.length?`<div class="subh" style="margin-top:16px">🏆 Already ranking top-3 for these money terms — proof the site can rank</div>${kwtbl(pw,'visits/mo',k=>fmtN(k.est_traffic))}`:''}
+    <div class="muted small" style="margin-top:10px">⚠ ${esc(a.assumption)} Audited ${fmtDate(a.fetched_at||df.fetched_at)}.${btn}</div>
   </div>`;
 }
 async function runSeoAudit(){
@@ -759,29 +762,46 @@ async function scheduleNext(id){ const dt=prompt('Schedule next call at (YYYY-MM
 function competitorAuditCard(d){
   const ca=((d.enrichment||{}).dataforseo||{}).competitor_audit;
   const runBtn=d.can_download
-    ? `<button class="primary" id="caBtn" onclick="runCompetitorAudit()">${ca?'↻ Refresh':'▶ Run'} competitor audit</button> <span class="muted small">Paid · a few DataForSEO calls</span>`
+    ? `<button class="primary" id="caBtn" onclick="runCompetitorAudit()">${ca?'↻ Refresh':'▶ Run'} competitor audit</button> <span class="muted small">Paid · ~4 DataForSEO calls</span>`
     : '<span class="muted small">The competitor audit is run by a manager (paid).</span>';
   if(!ca) return `<div class="card full"><h2>🥊 Competitor gap audit</h2>
-    <div class="muted small mt6">Top competitors (paid + organic), keyword / content / backlink gap, GEO-AEO readiness, and a quick-wins → growth plan for this prospect.</div>
+    <div class="muted small mt6">Finds this prospect's <b>real</b> competitors (generic mega-sites filtered out), the money keywords where a competitor <b>outranks</b> them, and the on-topic keywords rivals win that they don't.</div>
     <div class="mt6">${runBtn}</div></div>`;
-  const li=arr=>arr.map(([a,b])=>`<div>${a}</div><div>${b}</div>`).join('');
-  const comp=li((ca.competitors||[]).slice(0,6).map(c=>[`${esc(c.domain)} <span class="pill" style="font-size:10px">${esc(c.type||'')}</span>`,`<span class="muted small">overlap ${c.overlap!=null?c.overlap:'—'}${c.est_traffic!=null?' · ~'+fmtN(c.est_traffic)+' traffic':''}</span>`]));
-  const kw=li((ca.keyword_gap||[]).slice(0,10).map(k=>[esc(k.keyword),`<span class="muted small">vol ${fmtN(k.volume)}${k.difficulty!=null?' · KD '+k.difficulty:''}${k.competitors_ranking?' · '+k.competitors_ranking+' rank':''}</span>`]));
-  const wins=w=>(w||[]).map(x=>`<li class="small" style="margin:4px 0"><b>${esc(x.title)}</b>${x.detail?' — '+esc(x.detail):''}${(x.effort||x.impact)?` <span class="muted">(${esc(x.effort||'')}/${esc(x.impact||'')})</span>`:''}</li>`).join('');
-  const bl=ca.backlink_gap&&ca.backlink_gap.available!==false
-    ? `<div class="subh mt6">Backlink gap</div><div class="small">Your referring domains: <b>${fmtN(ca.backlink_gap.our_refdomains)}</b> · competitor avg: <b>${fmtN(ca.backlink_gap.competitor_avg)}</b> (gap ${fmtN(ca.backlink_gap.gap)})</div>`
-    : (ca.backlink_gap&&ca.backlink_gap.note?`<div class="muted small mt6">Backlinks: ${esc(ca.backlink_gap.note)}</div>`:'');
-  const geo=ca.geo_aeo?`<div class="subh mt6">GEO / AEO readiness${ca.geo_aeo.score!=null?' — '+ca.geo_aeo.score+'/100':''}</div>${(ca.geo_aeo.checks||[]).map(c=>`<div class="small">${c.pass?'✅':'⚠️'} ${esc(c.name)}${c.note?' <span class="muted">'+esc(c.note)+'</span>':''}</div>`).join('')}`:'';
-  const assum=(ca.assumptions||[]).length?`<div class="muted small mt6" style="opacity:.8">Assumptions: ${ca.assumptions.map(esc).join(' · ')}</div>`:'';
+  const TH='style="text-align:left;color:var(--muted);font-weight:600;padding:0 10px 4px 0;white-space:nowrap"';
+  const RH='style="text-align:right;color:var(--muted);font-weight:600;padding:0 0 4px 10px;white-space:nowrap"';
+  const TD='style="padding:5px 10px 5px 0;border-top:1px solid rgba(255,255,255,.06)"';
+  const RD='style="padding:5px 0 5px 10px;text-align:right;border-top:1px solid rgba(255,255,255,.06);white-space:nowrap"';
+  const money=k=>k.money_value!=null?'$'+fmtN(k.money_value):(k.cpc?'$'+fmtN(Math.round((k.volume||0)*(k.cpc||0))):'—');
+  // 1) real competitors
+  const comps=(ca.competitors||[]).slice(0,5);
+  const compTbl=comps.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
+    <thead><tr><th ${TH}>Competitor</th><th ${RH}>Est. traffic/mo</th><th ${RH}>Ranked kw</th></tr></thead>
+    <tbody>${comps.map(c=>`<tr><td ${TD}>${esc(c.domain)} <span class="pill" style="font-size:10px">${esc(c.type||'')}</span></td><td ${RD}>${fmtN(c.est_traffic)}</td><td ${RD}>${fmtN(c.organic_keywords)}</td></tr>`).join('')}</tbody></table>`
+    :'<div class="muted small mt6">No clear organic competitors found — this is a niche/local player. Focus on the money keywords above.</div>';
+  // 2) being outranked (we rank, they rank higher) — the most actionable, on-topic view
+  const orr=(ca.outranked||[]);
+  const orrTbl=orr.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
+    <thead><tr><th ${TH}>Keyword</th><th ${RH}>Vol/mo</th><th ${RH}>You</th><th ${RH}>Them</th><th ${RH}>$ value/mo</th></tr></thead>
+    <tbody>${orr.map(k=>`<tr><td ${TD}>${esc(k.keyword)} <span class="muted" style="font-size:10px">${esc(k.competitor||'')}</span></td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>#${k.our_position}</td><td ${RD} style="color:#f0883e">#${k.competitor_position}</td><td ${RD} style="color:#3fb950">${money(k)}</td></tr>`).join('')}</tbody></table>`
+    :'<div class="muted small mt6">No overlapping keywords where a competitor beats you — you lead where you both rank. 👍</div>';
+  // 3) on-topic money gap (they rank, you don't)
+  const kg=(ca.keyword_gap||[]);
+  const kgTbl=kg.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
+    <thead><tr><th ${TH}>Keyword</th><th ${RH}>Vol/mo</th><th ${RH}>CPC</th><th ${RH}>$ value/mo</th></tr></thead>
+    <tbody>${kg.map(k=>`<tr><td ${TD}>${esc(k.keyword)}</td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} style="color:#3fb950">${money(k)}</td></tr>`).join('')}</tbody></table>`
+    :'<div class="muted small mt6">No on-topic money gaps found against this competitor.</div>';
+  const wins=w=>(w||[]).slice(0,5).map(x=>`<li class="small" style="margin:4px 0"><b>${esc(x.title)}</b>${x.detail?' — '+esc(x.detail):''}${(x.effort||x.impact)?` <span class="muted">(${esc(x.effort||'')}/${esc(x.impact||'')})</span>`:''}</li>`).join('');
+  const geo=ca.geo_aeo&&ca.geo_aeo.score!=null?`<div class="subh mt6">🤖 AI-search (GEO/AEO) readiness — ${ca.geo_aeo.score}/100</div>
+    <div class="small" style="opacity:.85">${(ca.geo_aeo.checks||[]).slice(0,6).map(c=>`${c.pass?'✅':'⚠️'} ${esc(c.name)}`).join(' · ')}</div>`:'';
   return `<div class="card full"><h2>🥊 Competitor gap audit</h2>
-    <div class="muted small">Generated ${esc((ca.generated_at||'').slice(0,16).replace('T',' '))} · ${ca.calls_made||0} API calls</div>
+    <div class="muted small">Generated ${esc((ca.generated_at||'').slice(0,16).replace('T',' '))} · ${ca.calls_made||0} API calls · real competitors only</div>
     <div class="mt6">${runBtn}</div>
-    <div class="subh mt6">Top competitors</div><div class="kv">${comp||'<div class="muted small">—</div>'}</div>
-    <div class="subh mt6">Keyword gap (they rank, you don't)</div><div class="kv">${kw||'<div class="muted small">—</div>'}</div>
-    ${bl}${geo}
+    <div class="subh mt6">🏢 Your real competitors <span class="muted small">(mega-sites like YouTube/Facebook/Amazon filtered out)</span></div>${compTbl}
+    <div class="subh mt6">🎯 You're being outranked — you rank for these, a competitor ranks higher (close the gap)</div>${orrTbl}
+    <div class="subh mt6">💡 Money keywords they win that you don't — on-topic, by $ value</div>${kgTbl}
+    ${geo}
     ${wins(ca.quick_wins).length?`<div class="subh mt6">⚡ Quick wins</div><ul style="padding-left:18px;margin:4px 0">${wins(ca.quick_wins)}</ul>`:''}
-    ${wins(ca.growth_plan).length?`<div class="subh mt6">📈 Growth plan</div><ul style="padding-left:18px;margin:4px 0">${wins(ca.growth_plan)}</ul>`:''}
-    ${assum}
+    <div class="muted small mt6" style="opacity:.75">Backlink/off-page analysis disabled to control cost — treat authority-building as a checklist item.</div>
   </div>`;
 }
 async function runCompetitorAudit(){

@@ -24,6 +24,7 @@ LABELLED as an assumption in the returned `assumptions` list.
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -33,16 +34,18 @@ from psycopg.types.json import Json
 
 from .config import Settings
 from .logging import get_logger
-from .enrichment.dataforseo import DataForSEOClient, _ctr
+from .enrichment.dataforseo import (DataForSEOClient, _ctr, is_mega_domain, is_branded,
+                                    brand_tokens, money_score, MIN_MONEY_VOL)
 
 log = get_logger(__name__)
 
 # --- Cost / scope caps (the whole point of this module) ------------------------------------ #
-MAX_DFS_CALLS = 6          # HARD ceiling on DataForSEO calls per audit
-TOP_COMPETITORS = 5        # how many SERP competitors we surface
-GAP_COMPETITORS = 2        # how many competitors we deep-fetch ranked keywords for (keeps calls low)
-OUR_KW_LIMIT = 300         # keywords pulled for OUR domain (one call)
-COMP_KW_LIMIT = 300        # keywords pulled per competitor (one call each)
+# Cost-optimised: we REUSE the domain's own keywords already fetched for the SEO audit (no
+# self-refetch), deep-fetch just ONE real competitor, and drop the flaky/pricey backlink calls.
+MAX_DFS_CALLS = 3          # HARD ceiling on DataForSEO calls per audit (was 6)
+TOP_COMPETITORS = 4        # how many REAL SERP competitors we surface (mega-sites filtered out)
+GAP_COMPETITORS = 1        # how many competitors we deep-fetch ranked keywords for (was 2)
+COMP_KW_LIMIT = 100        # keywords pulled per competitor (was 300 — cost scales with rows)
 
 _CACHE_KEY = "competitor_audit"   # enrichment.dataforseo->'competitor_audit'
 
@@ -110,6 +113,22 @@ _STOP = {
     "&", "-", "au", "australia", "services", "service",
 }
 
+# Broad commerce/geo words that recur across MANY niches — a gap keyword matching ONLY one of
+# these isn't really on the prospect's topic (e.g. a brake maker ranking for a few 'car ...' terms
+# doesn't make 'car sale' / 'toyota' an opportunity). We keep them out of the DISTINCTIVE vocab.
+_GENERIC_TOPIC = {
+    "car", "cars", "auto", "vehicle", "shop", "shops", "store", "stores", "bag", "bags",
+    "online", "sale", "sales", "deal", "deals", "price", "prices", "kids", "mens", "womens",
+    "home", "homes", "house", "review", "reviews", "news", "mail", "courier", "post", "map",
+    "maps", "near", "nearby", "melbourne", "sydney", "brisbane", "perth", "adelaide", "australia",
+    "australian", "city", "centre", "center", "shopping", "outlet", "outlets", "brand", "brands",
+    "company", "business", "phone", "number", "login", "app", "free", "new", "used", "hire",
+    # common car makes — broad-intent brand terms that rank everywhere automotive; a bare make
+    # is not a niche opportunity (a specific 'toyota brake pad' still carries its niche token).
+    "toyota", "mazda", "ford", "honda", "subaru", "hyundai", "kia", "nissan", "mitsubishi",
+    "bmw", "mercedes", "audi", "volkswagen", "vw", "holden", "byd", "tesla", "jeep", "lexus",
+}
+
 
 def _norm_kw(kw) -> str:
     return re.sub(r"\s+", " ", (kw or "").strip().lower())
@@ -148,6 +167,10 @@ def pick_competitors(items: list[dict], target: str, top: int = TOP_COMPETITORS)
         paid = fm.get("paid") or {}
         org_n = org.get("count") or 0
         paid_n = paid.get("count") or 0
+        # Skip generic mega-sites (youtube/facebook/wikipedia/amazon/directories/news) — they rank
+        # for everything and are never a meaningful competitor or keyword-gap source.
+        if is_mega_domain(host, org_n):
+            continue
         if org_n and paid_n:
             ctype = "both"
         elif paid_n:
@@ -155,30 +178,70 @@ def pick_competitors(items: list[dict], target: str, top: int = TOP_COMPETITORS)
         else:
             ctype = "organic"
         est = round((org.get("etv") or 0) + (paid.get("etv") or 0))
+        overlap = it.get("intersections") or 0
+        # Favour FOCUSED rivals over giant generic portals: a domain ranking for millions of
+        # keywords that happens to overlap on a few isn't as true a competitor as a similar-niche
+        # site. Discount overlap by the competitor's breadth (log of its keyword footprint).
+        score = overlap / (1 + math.log10(max(org_n, 10)))
         out.append({
             "domain": host,
             "type": ctype,
-            "overlap": it.get("intersections") or 0,
+            "overlap": overlap,
             "est_traffic": est,
             "organic_keywords": org_n,
             "paid_keywords": paid_n,
             "avg_position": round(it.get("avg_position") or 0, 1) or None,
+            "_score": score,
         })
-    out.sort(key=lambda r: (r["overlap"], r["est_traffic"]), reverse=True)
+    out.sort(key=lambda r: (r["_score"], r["est_traffic"]), reverse=True)
+    for r in out:
+        r.pop("_score", None)
     return out[:top]
+
+
+def _topic_vocab(our_keywords: list[dict], min_count: int = 3) -> set[str]:
+    """The prospect's DISTINCTIVE topic vocabulary — niche tokens that recur across the keywords it
+    already ranks for (brake/rotor/caliper for a brake maker; funeral/cremation for a funeral home),
+    EXCLUDING broad commerce words (car/shop/near/melbourne...). A competitor's keyword is only a
+    real GAP if it shares one of these distinctive themes; otherwise it's the (usually much bigger)
+    competitor's unrelated business, not an opportunity for us."""
+    cnt: Counter = Counter()
+    for k in our_keywords or []:
+        for t in re.split(r"[^a-z0-9]+", (k.get("keyword") or "").lower()):
+            if t and len(t) > 2 and t not in _STOP and t not in _GENERIC_TOPIC and not t.isdigit():
+                cnt[t] += 1
+    vocab = {t for t, c in cnt.items() if c >= min_count}
+    if len(vocab) < 6:                       # thin site: fall back to any recurring/prominent token
+        vocab = {t for t, c in cnt.most_common(30) if c >= 2}
+    return vocab
+
+
+def _on_topic(keyword: str, vocab: set[str]) -> bool:
+    if not vocab:
+        return True
+    toks = [t for t in re.split(r"[^a-z0-9]+", (keyword or "").lower())
+            if t and len(t) > 2 and t not in _STOP]
+    return any(t in vocab for t in toks)
 
 
 def compute_keyword_gap(our_keywords: list[dict],
                         competitor_keywords: dict[str, list[dict]],
-                        *, limit: int = 25, min_volume: int = 10,
-                        assumed_position: int = 5) -> list[dict]:
-    """Keywords competitors rank for that OUR domain does not.
+                        *, limit: int = 8, min_volume: int = MIN_MONEY_VOL,
+                        brands: set[str] | None = None, assumed_position: int = 5) -> list[dict]:
+    """MONEY keywords competitors rank for that OUR domain does not — a short, high-value, ON-TOPIC
+    gap list, not a raw dump. Drops branded terms (ours + each competitor's own name), off-topic
+    terms (the big competitor's unrelated business), and anything below `min_volume`; then ranks
+    by $ value (search volume x CPC).
 
     `competitor_keywords` = {competitor_domain: [ranked_keyword rows]}. Aggregates by keyword:
     volume = max seen, difficulty = avg `competition` x100 (competition-as-difficulty PROXY),
-    competitors_ranking = how many competitors rank for it. `est_capture_traffic` = volume x an
-    assumed-position CTR (an ESTIMATE of the upside if we ranked ~pos `assumed_position`)."""
+    `est_capture_traffic` = volume x an assumed-position CTR (upside if we ranked ~pos 5)."""
+    brands = set(brands or set())
+    # a keyword that is just a competitor's OWN brand name isn't a real opportunity for us
+    for cdom in (competitor_keywords or {}):
+        brands |= brand_tokens(cdom)
     ours = {_norm_kw(k.get("keyword")) for k in (our_keywords or [])}
+    vocab = _topic_vocab(our_keywords)   # only gaps that share the prospect's own themes
     agg: dict[str, dict] = {}
     for cdom, kws in (competitor_keywords or {}).items():
         for k in kws or []:
@@ -186,7 +249,9 @@ def compute_keyword_gap(our_keywords: list[dict],
             if not nk or nk in ours:
                 continue
             vol = k.get("search_volume") or 0
-            if vol < min_volume:
+            if vol < min_volume or is_branded(k.get("keyword"), brands):
+                continue
+            if not _on_topic(k.get("keyword"), vocab):   # skip the competitor's off-topic terms
                 continue
             a = agg.setdefault(nk, {"keyword": k.get("keyword"), "volume": 0,
                                     "comp": [], "cpc": [], "competitors": [], "positions": []})
@@ -202,6 +267,7 @@ def compute_keyword_gap(our_keywords: list[dict],
     rows: list[dict] = []
     for a in agg.values():
         diff = round(sum(a["comp"]) / len(a["comp"]) * 100) if a["comp"] else None
+        cpc = round(sum(a["cpc"]) / len(a["cpc"]), 2) if a["cpc"] else None
         rows.append({
             "keyword": a["keyword"],
             "volume": a["volume"],
@@ -209,11 +275,56 @@ def compute_keyword_gap(our_keywords: list[dict],
             "competitors_ranking": len(a["competitors"]),
             "competitor_domains": a["competitors"],
             "best_competitor_position": min(a["positions"]) if a["positions"] else None,
-            "cpc": round(sum(a["cpc"]) / len(a["cpc"]), 2) if a["cpc"] else None,
+            "cpc": cpc,
+            "money_value": round(a["volume"] * (cpc or 0)),   # $ value of this gap keyword
             "est_capture_traffic": round(a["volume"] * _ctr(assumed_position)),
         })
-    # Most-shared, highest-volume gaps first (shared by many competitors = proven demand).
-    rows.sort(key=lambda r: (r["competitors_ranking"], r["volume"]), reverse=True)
+    # Highest $-value gaps first (search volume x CPC) — the money keywords, not the long tail.
+    rows.sort(key=lambda r: money_score(r), reverse=True)
+    return rows[:limit]
+
+
+def compute_outranked(our_keywords: list[dict],
+                      competitor_keywords: dict[str, list[dict]],
+                      *, limit: int = 8, min_volume: int = MIN_MONEY_VOL,
+                      brands: set[str] | None = None) -> list[dict]:
+    """Keywords WE ALREADY RANK FOR where a competitor ranks HIGHER — on-topic by construction
+    (we rank for it) and the most actionable competitor insight ('you're #12 for X, they're #3,
+    close that gap'). Non-branded, real-volume, ranked by $ value."""
+    brands = set(brands or set())
+    for cdom in (competitor_keywords or {}):
+        brands |= brand_tokens(cdom)
+    ours: dict[str, dict] = {}
+    for k in our_keywords or []:
+        nk = _norm_kw(k.get("keyword"))
+        if nk and k.get("position") is not None:
+            ours[nk] = k
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for cdom, kws in (competitor_keywords or {}).items():
+        for k in kws or []:
+            nk = _norm_kw(k.get("keyword"))
+            if nk not in ours or nk in seen:
+                continue
+            our_pos = ours[nk].get("position")
+            comp_pos = k.get("position")
+            if comp_pos is None or our_pos is None or comp_pos >= our_pos:
+                continue                                   # competitor must rank strictly higher
+            vol = k.get("search_volume") or ours[nk].get("search_volume") or 0
+            if vol < min_volume or is_branded(nk, brands):
+                continue
+            cpc = k.get("cpc") or ours[nk].get("cpc") or 0
+            seen.add(nk)
+            rows.append({
+                "keyword": ours[nk].get("keyword") or k.get("keyword"),
+                "volume": vol,
+                "our_position": our_pos,
+                "competitor_position": comp_pos,
+                "competitor": cdom,
+                "cpc": round(cpc, 2),
+                "money_value": round(vol * (cpc or 0)),
+            })
+    rows.sort(key=lambda r: money_score(r), reverse=True)
     return rows[:limit]
 
 
@@ -464,13 +575,15 @@ def _fetch_homepage_html(domain: str, timeout: float = 8.0) -> str | None:
 # ============================================================================================ #
 # DB cache (reuse the existing enrichment.dataforseo jsonb — sub-key, NO migration)
 # ============================================================================================ #
-def _read_cache(pool, domain: str) -> tuple[dict | None, dict | None]:
-    """Return (cached_audit|None, website_enrichment|None) for a domain."""
+def _read_cache(pool, domain: str) -> tuple[dict | None, dict | None, list | None]:
+    """Return (cached_audit|None, website_enrichment|None, cached_ranked_keywords|None).
+    The ranked keywords are the SEO audit's raw fetch (dataforseo->'ranked_kw') — reused here as
+    OUR keywords so the competitor audit never re-fetches them (a full ranked_keywords call saved)."""
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT dataforseo->%s AS ca, website FROM enrichment WHERE domain=%s",
-                    (_CACHE_KEY, domain))
+        cur.execute("SELECT dataforseo->%s AS ca, dataforseo->'ranked_kw' AS rk, website "
+                    "FROM enrichment WHERE domain=%s", (_CACHE_KEY, domain))
         row = cur.fetchone() or {}
-    return row.get("ca"), row.get("website")
+    return row.get("ca"), row.get("website"), row.get("rk")
 
 
 def _write_cache(pool, domain: str, audit: dict) -> None:
@@ -499,7 +612,7 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
     if not domain:
         raise ValueError("competitor audit requires a domain")
 
-    cached, website_enr = _read_cache(pool, domain)
+    cached, website_enr, our_kw_cached = _read_cache(pool, domain)
     if cached and not force:
         cached = dict(cached)
         cached["cached"] = True
@@ -511,47 +624,47 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
 
     budget = _CallBudget(MAX_DFS_CALLS)
     client = DataForSEOClient(settings)
+    brands = brand_tokens(domain)
     assumptions = [
-        "Competitor set = DataForSEO Labs SERP competitors (top by keyword overlap); may miss "
-        "brands that don't overlap in organic search.",
+        "Competitor set = DataForSEO Labs SERP competitors, with generic mega-sites "
+        "(social/marketplaces/directories/news) filtered out; may miss rivals that don't overlap "
+        "in organic search.",
         "Competitor estimated traffic = DataForSEO ETV (an estimate, not measured analytics).",
-        "Keyword difficulty is approximated from Google 'competition' (0-1) x100 — a proxy, not "
-        "a measured Keyword Difficulty score.",
-        f"Keyword & content gap computed against only the top {GAP_COMPETITORS} competitor(s) "
-        "(to stay within the DataForSEO cost cap).",
+        f"Keyword gap computed against the top {GAP_COMPETITORS} REAL competitor, and shows only "
+        "high-value, non-branded 'money' keywords (ranked by search volume x CPC), not the long tail.",
         "'est_capture_traffic' = search volume x an assumed position-5 click-through rate — an "
         "estimate of upside, not a promise.",
+        "Backlink/off-page analysis is disabled to control cost — treat authority-building as a "
+        "checklist item.",
     ]
     try:
-        # (1) SERP competitors — one call, gives paid + organic + overlap + ETV.
+        # (1) SERP competitors — one call; mega-sites filtered inside pick_competitors.
         comps_raw = budget.run("competitors_domain", lambda: _competitors_domain(client, domain, limit=25))
         competitors = pick_competitors((comps_raw or {}).get("items") or [], domain, top=TOP_COMPETITORS)
 
-        # (2) OUR ranked keywords — one call (reuses enrichment.dataforseo wrapper).
-        our_rk = budget.run("ranked_keywords(self)", lambda: client.ranked_keywords(domain, limit=OUR_KW_LIMIT))
-        our_keywords = (our_rk or {}).get("keywords") or []
+        # (2) OUR ranked keywords — REUSE the SEO audit's cached fetch (dataforseo->'ranked_kw'):
+        #     no self-refetch. Only hit the API if nothing is cached yet.
+        our_keywords = list(our_kw_cached or [])
+        if not our_keywords:
+            our_rk = budget.run("ranked_keywords(self)", lambda: client.ranked_keywords(domain, limit=COMP_KW_LIMIT))
+            our_keywords = (our_rk or {}).get("keywords") or []
 
-        # (3) Deep-fetch ranked keywords for the top GAP_COMPETITORS — one call each.
+        # (3) Deep-fetch ranked keywords for the top REAL competitor (GAP_COMPETITORS=1) — one call.
         competitor_keywords: dict[str, list[dict]] = {}
         for c in competitors[:GAP_COMPETITORS]:
             cd = c["domain"]
             rk = budget.run(f"ranked_keywords({cd})", lambda cd=cd: client.ranked_keywords(cd, limit=COMP_KW_LIMIT))
             competitor_keywords[cd] = (rk or {}).get("keywords") or []
 
-        keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords)
+        keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands)
+        outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands)
         content_gap = compute_content_gap(our_keywords, competitor_keywords)
-
-        # (4) Backlink summaries — our domain + the #1 competitor (best-effort; plan may lack it).
-        our_bl = budget.run("backlinks_summary(self)", lambda: client.backlinks_summary(domain))
-        comp_bl: dict[str, dict] = {}
-        if competitors:
-            cd = competitors[0]["domain"]
-            bl = budget.run(f"backlinks_summary({cd})", lambda cd=cd: client.backlinks_summary(cd))
-            if bl:
-                comp_bl[cd] = bl
-        backlink_gap = compute_backlink_gap(our_bl, comp_bl)
     finally:
         client.close()
+
+    # (4) Backlink gap — DROPPED (priciest call, flaky 500s on big domains, least actionable).
+    backlink_gap = {"available": False, "note": ("Backlink/off-page analysis is disabled to "
+                    "control cost — treat authority-building as a checklist item.")}
 
     # (5) GEO/AEO — FREE homepage fetch (not a DataForSEO call) + existing website scan.
     html = _fetch_homepage_html(domain)
@@ -565,6 +678,7 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
         "domain": domain,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "competitors": competitors,
+        "outranked": outranked,          # keywords we rank for but a competitor beats us on
         "keyword_gap": keyword_gap,
         "content_gap": content_gap,
         "backlink_gap": backlink_gap,
