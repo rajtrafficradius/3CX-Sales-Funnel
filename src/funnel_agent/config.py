@@ -169,6 +169,8 @@ class Settings(BaseSettings):
     weekly_recall_cadence_days: int = 7          # days between recall attempts
     weekly_recall_max_weeks: int = 12            # stop auto-recalling an un-connected prospect after this
     weekly_recall_hour: int = 10                 # local hour to schedule the recall
+    weekly_recall_horizon_days: int = 45         # only put a recall on the calendar if due within this
+                                                 # many days (skip contract-parked far-future agency)
     # FREE website tracking-pixel scan: how many domains to scan each refresh cycle so
     # the whole DB gets paid-ads detection progressively (0 disables the in-loop scan).
     website_scan_per_cycle: int = 80

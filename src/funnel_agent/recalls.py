@@ -92,16 +92,20 @@ DO UPDATE SET bde_name = EXCLUDED.bde_name, title = EXCLUDED.title,
 
 
 def _weekly_slot(anchor: datetime, cadence_days: int, now: datetime, hour: int) -> datetime:
-    """Next cadence slot strictly on/after today, anchored to `anchor` and stepped by whole
-    cadence periods (so a missed week rolls to the NEXT week, not to today), snapped to a
-    weekday at `hour`. Naive datetime, mirroring guess_when()/the callback scheduler."""
+    """Next cadence slot on/after today, anchored to `anchor` and stepped by whole cadence periods
+    (so a missed week rolls to the NEXT week, not to today), snapped to a weekday at `hour`. If the
+    anchor is ALREADY in the future (a contract-parked agency next-action), keep that date as-is.
+    Naive datetime, mirroring guess_when()/the callback scheduler."""
     a = (anchor or now).date()
-    days = (now.date() - a).days
-    k = max(1, math.ceil((days + 1) / cadence_days))
-    slot = a + timedelta(days=k * cadence_days)
-    while slot < now.date():
-        slot += timedelta(days=cadence_days)
-    if slot.weekday() >= 5:                       # Sat/Sun -> Monday
+    if a > now.date():                            # already scheduled ahead — don't push it further
+        slot = a
+    else:
+        days = (now.date() - a).days
+        k = max(1, math.ceil((days + 1) / cadence_days))
+        slot = a + timedelta(days=k * cadence_days)
+        while slot < now.date():
+            slot += timedelta(days=cadence_days)
+    if slot.weekday() >= 5:                        # Sat/Sun -> Monday
         slot += timedelta(days=7 - slot.weekday())
     return datetime.combine(slot, time(hour=min(max(hour, 0), 23)))
 
@@ -114,13 +118,20 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
     cadence_default = int(getattr(settings, "weekly_recall_cadence_days", 7) or 7)
     max_weeks = int(getattr(settings, "weekly_recall_max_weeks", 12) or 12)
     hour = int(getattr(settings, "weekly_recall_hour", 10) or 10)
+    horizon_days = int(getattr(settings, "weekly_recall_horizon_days", 45) or 45)
     now = datetime.now()
+    horizon = now + timedelta(days=horizon_days)
 
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(_ENSURE_INDEX)
         conn.commit()
         cur.execute(_CANCEL_RESOLVED)
         cancelled = cur.rowcount
+        # also drop far-future recalls (e.g. contract-parked agency) — they'll be re-created when
+        # they come within the horizon; keeps the calendar to actionable near-term calls.
+        cur.execute("UPDATE calendar_events SET status='cancelled' WHERE type='recall' "
+                    "AND status='pending' AND start_at > %s", (horizon,))
+        cancelled += cur.rowcount
         conn.commit()
         cur.execute(_GATHER)
         rows = cur.fetchall()
@@ -142,6 +153,9 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         cadence = int(r.get("cadence_days") or cadence_default) if is_agency else cadence_default
         anchor = r.get("next_action_at") if (is_agency and r.get("next_action_at")) else r.get("last_attempt")
         when = _weekly_slot(anchor, cadence, now, hour)
+        if when > horizon:                        # contract-parked / too far out — schedule later
+            skipped += 1
+            continue
         who = r.get("company") or r.get("pp_name") or r.get("dest_number") or "prospect"
         if is_agency:
             title = f"🔁 Agency call-cycle: {who}"
