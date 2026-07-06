@@ -741,8 +741,19 @@ function nextActionCard(d){
       </div></div>`;
   }
   if(na && na.when){
-    const src=na.source==='pipeline2'?'🔁 agency weekly rotation':(na.source==='calendar'?'📇 booked on BDE calendar':'⚡ priority queue');
     const assigned=na.bde?`Assigned: <b>${esc(na.bde)}</b>`:'<span style="color:#fb923c;font-weight:600">⚠ Unassigned — not on any BDE calendar</span>';
+    // 'parked' = a deliberately far-out re-engage (e.g. locked into a renewed contract) —
+    // NOT a call-this-week. Show it amber with the reason, not a green next-call.
+    if(na.parked){
+      return `<div class="card full" style="border-color:#d4a72c;background:rgba(212,167,44,.09)">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="font-weight:800;color:#e3b341;font-size:15px">⏳ Re-engage: ${esc(fmtDate(na.when))}</span>
+          <span class="muted">${assigned}</span>
+          ${na.reason?`<span class="pill" style="font-size:10px">📄 ${esc(na.reason)}</span>`:''}
+          <span class="muted small">parked — don't call before then (no value in nagging a locked-in client)</span>
+        </div></div>`;
+    }
+    const src=na.source==='pipeline2'?'🔁 agency weekly rotation':(na.source==='calendar'?'📇 booked on BDE calendar':'⚡ priority queue');
     return `<div class="card full" style="border-color:#3fb950;background:rgba(63,185,80,.08)">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <span style="font-weight:800;color:#3fb950;font-size:15px">📅 Next call: ${esc(fmtDate(na.when))}</span>

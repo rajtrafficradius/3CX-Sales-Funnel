@@ -434,7 +434,10 @@ def _schedule_retries(pool: ConnectionPool, settings: Settings) -> int:
         cur.execute(
             "SELECT dest9, dest_number, last_bde, last_call_id, business_name, "
             "next_move, dm_available_when, last_attempt_at, action_code "
-            "FROM rpc_actions WHERE status='open' AND event_id IS NULL AND action_code = ANY(%(codes)s)",
+            "FROM rpc_actions WHERE status='open' AND event_id IS NULL AND action_code = ANY(%(codes)s) "
+            # Don't fire a next-day RPC double-tap on a prospect we've already identified as being
+            # WITH AN AGENCY — that's the P2 rotation's job (a contract-aware cadence), not a retry.
+            "AND dest9 NOT IN (SELECT dest9 FROM prospect_pipeline WHERE pipeline='pipeline2_existing_agency')",
             {"codes": list(_RETRY_ACTIONS)},
         )
         todo = cur.fetchall()

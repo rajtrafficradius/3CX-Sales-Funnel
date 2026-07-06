@@ -6,7 +6,7 @@ import asyncio
 import re
 import threading
 from contextlib import asynccontextmanager
-from datetime import date as _date, datetime as _dt, time as _time, timedelta
+from datetime import date as _date, datetime as _dt, time as _time, timedelta, timezone as _tz
 from zoneinfo import ZoneInfo
 from importlib import resources
 
@@ -2074,26 +2074,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             board = None
             if d9list:
                 bd = q("SELECT pipeline, assigned_bde, next_action_at, cadence_days, attempts, "
-                       "dnd, dnd_reason, dnd_at FROM prospect_pipeline "
+                       "contract_end, dnd, dnd_reason, dnd_at FROM prospect_pipeline "
                        "WHERE dest9 = ANY(%s) ORDER BY updated_at DESC NULLS LAST LIMIT 1", (d9list,))
                 board = bd[0] if bd else None
             if board and board.get("dnd"):
                 dnd = {"reason": board.get("dnd_reason"), "at": board.get("dnd_at")}
             cal = None
             if d9list and not dnd:
+                # An agency prospect's next call is owned by the contract-aware rotation, so ignore
+                # a stray rpc_retry double-tap for them; otherwise take the soonest real appointment.
+                skip_retry = bool(board and board.get("pipeline") == "pipeline2_existing_agency")
                 ev = q("SELECT type, start_at, bde_name, status FROM calendar_events "
                        "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%s) "
-                       "  AND status='pending' ORDER BY start_at ASC LIMIT 1", (d9list,))
+                       "  AND status='pending' AND (NOT %s OR type <> 'rpc_retry') "
+                       "ORDER BY start_at ASC LIMIT 1", (d9list, skip_retry))
                 cal = ev[0] if ev else None
+            # A far-future agency next-action = 'parked' (e.g. locked into a renewed contract):
+            # show 'Re-engage ~<date> · <why>', not a normal 'call this week'.
+            horizon = _dt.now(_tz.utc) + timedelta(days=45)
             if dnd:
                 next_action = None
             elif cal:
                 next_action = {"when": cal["start_at"], "bde": cal.get("bde_name"),
                                "source": "calendar", "type": cal.get("type")}
             elif board and board.get("next_action_at"):
-                next_action = {"when": board["next_action_at"], "bde": board.get("assigned_bde"),
+                na = board["next_action_at"]
+                parked = bool(na and na > horizon)
+                next_action = {"when": na, "bde": board.get("assigned_bde"),
                                "source": "pipeline2", "type": "agency_cadence",
-                               "attempts": board.get("attempts")}
+                               "attempts": board.get("attempts"), "parked": parked,
+                               "reason": board.get("contract_end")}
             elif priority and priority.get("next_best_time"):
                 next_action = {"when": priority["next_best_time"], "bde": priority.get("assigned_bde"),
                                "source": "queue", "type": "priority"}

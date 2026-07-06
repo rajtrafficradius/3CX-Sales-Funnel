@@ -132,6 +132,13 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         cur.execute("UPDATE calendar_events SET status='cancelled' WHERE type='recall' "
                     "AND status='pending' AND start_at > %s", (horizon,))
         cancelled += cur.rowcount
+        # cancel stray next-day RPC retries on prospects we've identified as WITH AN AGENCY — the
+        # agency rotation (contract-aware cadence) owns their next call, not a double-tap retry.
+        cur.execute("UPDATE calendar_events SET status='cancelled' WHERE type='rpc_retry' "
+                    "AND status='pending' AND right(regexp_replace(COALESCE(dest_number,''),"
+                    "'[^0-9]','','g'),9) IN (SELECT dest9 FROM prospect_pipeline "
+                    "WHERE pipeline='pipeline2_existing_agency')")
+        cancelled += cur.rowcount
         conn.commit()
         cur.execute(_GATHER)
         rows = cur.fetchall()
