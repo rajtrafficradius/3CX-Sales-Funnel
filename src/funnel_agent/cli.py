@@ -688,6 +688,14 @@ def refresh(
         except Exception as exc:
             nc = {"error": str(exc)[:80]}
             log.warning("sync_next_call_scores_failed", error=str(exc)[:160])
+        # Weekly recall — put a dated 'call this week' event on the assigned BDE's calendar for
+        # every un-connected P1/P3 prospect + the P2 agency rotation; roll forward until connected.
+        try:
+            from .recalls import sync_weekly_recalls
+            wr = sync_weekly_recalls(ana, settings)
+        except Exception as exc:
+            wr = {"error": str(exc)[:80]}
+            log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}
         if settings.website_scan_per_cycle > 0:
@@ -729,7 +737,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()

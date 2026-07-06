@@ -162,6 +162,13 @@ class Settings(BaseSettings):
     # contract-end signal from the AI still overrides this per-prospect (don't pester
     # someone locked into a long contract). Env: PIPELINE2_DEFAULT_CADENCE_DAYS.
     pipeline2_default_cadence_days: int = 7
+    # Weekly recall — 'call every week until we actually connect'. Covers un-connected prospects
+    # in the active callback pipelines (P1 RPC-callback / P3 gatekeeper-callback) plus the P2
+    # agency rotation, landing a dated event on the assigned BDE's calendar each week.
+    weekly_recall_enabled: bool = True
+    weekly_recall_cadence_days: int = 7          # days between recall attempts
+    weekly_recall_max_weeks: int = 12            # stop auto-recalling an un-connected prospect after this
+    weekly_recall_hour: int = 10                 # local hour to schedule the recall
     # FREE website tracking-pixel scan: how many domains to scan each refresh cycle so
     # the whole DB gets paid-ads detection progressively (0 disables the in-loop scan).
     website_scan_per_cycle: int = 80

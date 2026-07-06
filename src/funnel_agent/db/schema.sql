@@ -489,6 +489,10 @@ CREATE INDEX IF NOT EXISTS idx_rpc_actions_company ON rpc_actions (company_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_rpc_retry
   ON calendar_events (dest_number) WHERE type = 'rpc_retry';
 
+-- One open weekly 'recall' per number (idempotent for the scheduler in recalls.py).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_recall
+  ON calendar_events (dest_number) WHERE type = 'recall' AND status = 'pending';
+
 -- Smart next-call priority queue (next_call.py). One row per ACTIONABLE prospect, rebuilt
 -- idempotently by sync_next_call_scores (INTENT x ATTENTION x REVENUE). Reads calls/
 -- classifications/companies/rpc_actions read-only; this is the only table that engine writes.
