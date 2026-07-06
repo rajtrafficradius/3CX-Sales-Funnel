@@ -1587,11 +1587,12 @@ pollProgress();
   <a href="/" data-nav="/"><span class="i">📊</span> Dashboard</a>
   <a href="/calendar" data-nav="/calendar"><span class="i">📅</span> Calendar</a>
   <a href="/next-calls" data-nav="/next-calls"><span class="i">⭐</span> Next calls</a>
+  <a href="/pipeline/p1" data-nav="/pipeline"><span class="i">🚦</span> Call pipelines</a>
   <a href="/database" data-nav="/database"><span class="i">🗄️</span> Prospect database</a>
   <a href="/pipeline2" data-nav="/pipeline2"><span class="i">🔁</span> Agency pipeline</a>
   <a href="/coaching" data-nav="/coaching"><span class="i">🎯</span> Coaching</a>
   <a href="/admin" data-nav="/admin" class="tr-admin" style="display:none"><span class="i">⚙️</span> Admin</a>
 </nav>
-<script>(function(){document.querySelectorAll('.tr-drawer a').forEach(function(a){if(a.getAttribute('data-nav')===location.pathname)a.classList.add('active')});fetch('/api/me').then(function(r){return r.json()}).then(function(m){if(m&&m.role==='admin'){var el=document.querySelector('.tr-drawer a.tr-admin');if(el)el.style.display=''}}).catch(function(){});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var d=document.querySelector('.tr-drawer'),b=document.querySelector('.tr-drawer-backdrop');if(d)d.classList.remove('open');if(b)b.classList.remove('open')}})})();</script>
+<script>(function(){document.querySelectorAll('.tr-drawer a').forEach(function(a){var dn=a.getAttribute('data-nav'),p=location.pathname;if(dn===p||(dn!=='/'&&p.indexOf(dn+'/')===0))a.classList.add('active')});fetch('/api/me').then(function(r){return r.json()}).then(function(m){if(m&&m.role==='admin'){var el=document.querySelector('.tr-drawer a.tr-admin');if(el)el.style.display=''}}).catch(function(){});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var d=document.querySelector('.tr-drawer'),b=document.querySelector('.tr-drawer-backdrop');if(d)d.classList.remove('open');if(b)b.classList.remove('open')}})})();</script>
 </body>
 </html>

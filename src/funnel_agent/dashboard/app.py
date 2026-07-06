@@ -1125,11 +1125,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
                              "rows": out_rows, "pools": pools})
 
+    # LATERAL: the soonest UPCOMING pending calendar event for a prospect (else the latest past),
+    # so a pipeline board can show each prospect's next scheduled call like the P2 board does.
+    _NEXT_CALL_LATERAL = (
+        "LEFT JOIN LATERAL (SELECT ce.start_at, ce.bde_name, ce.type FROM calendar_events ce "
+        "  WHERE right(regexp_replace(COALESCE(ce.dest_number,''),'[^0-9]','','g'),9) = %(d9col)s "
+        "    AND ce.status='pending' ORDER BY (ce.start_at >= now()) DESC, "
+        "    CASE WHEN ce.start_at >= now() THEN ce.start_at END ASC, ce.start_at DESC LIMIT 1) nc ON true")
+
     @app.get("/api/pipeline5-prospects")
     def pipeline5_prospects(request: Request, pipeline: str, window: str = "d30",
-                            bde: str = "ALL") -> JSONResponse:
-        """Distinct prospects behind a P1/P2/P3/P5 board cell (prospect-level precedence)."""
+                            bde: str = "ALL", limit: int = 300) -> JSONResponse:
+        """Distinct prospects behind a pipeline board — P1/P2/P3/P5 (from calls, prospect-level
+        precedence) or P4 (the standing DB worklist). Each row carries the next scheduled call so
+        the board is a full call-list like Pipeline 2."""
         bde = _scoped_bde(request, bde)
+        limit = max(10, min(int(limit or 300), 1000))
+        # ---- P4: the fresh worklist pool lives in the prospects table, not per-call ----
+        if pipeline == "p4":
+            where = ["pipeline_stage='p4'", "COALESCE(p4_subpipeline,'') NOT IN ('dead','')"]
+            if bde and bde != "ALL":
+                where.append("assigned_bde=%(bde)s")
+            rows = q(
+                "SELECT pr.business_name, pr.domain, pr.assigned_bde AS bde, pr.p4_subpipeline, "
+                "  pr.last_called_at AS started_at, (pr.phones_norm)[1] AS dest_number, "
+                "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
+                "FROM prospects pr "
+                + _NEXT_CALL_LATERAL.replace("%(d9col)s", "(pr.phones_norm)[1]")
+                + f" WHERE {' AND '.join(where)} "
+                "ORDER BY (pr.p4_subpipeline='fresh_ads') DESC, pr.updated_at DESC NULLS LAST LIMIT %(lim)s",
+                {"bde": bde, "lim": limit})
+            for r in rows:
+                r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
+                r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
+            return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
+                                 "rows": jsonable_encoder(rows)})
         today = _pipe_anchor()
         off = dict((k, o) for k, _l, o in _PIPE_WINDOWS).get(window, 29)
         if not today or pipeline not in _STAGE_RANK:
@@ -1137,7 +1167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
                  "cl.pipeline_stage IN ('p1','p2','p3','p5')",
                  "c.started_at >= (%(today)s::date - %(off)s)", "c.started_at < (%(today)s::date + 1)"]
-        params: dict = {"today": today, "off": off, "want": _STAGE_RANK[pipeline]}
+        params: dict = {"today": today, "off": off, "want": _STAGE_RANK[pipeline], "lim": limit}
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
@@ -1150,14 +1180,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "latest AS (SELECT DISTINCT ON (dest9) dest9, dest_number, started_at, bde, "
             "  prospect_company, lead_temperature FROM base ORDER BY dest9, started_at DESC) "
             "SELECT l.dest_number, l.started_at, l.bde, l.prospect_company, l.lead_temperature, "
-            "  w.ncalls, pr.business_name, pr.domain "
+            "  w.ncalls, pr.business_name, pr.domain, "
+            "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
             "FROM win w JOIN latest l ON l.dest9 = w.dest9 "
             "LEFT JOIN prospects pr ON w.dest9 = ANY(pr.phones_norm) "
-            "WHERE w.wr = %(want)s ORDER BY l.started_at DESC",
+            + _NEXT_CALL_LATERAL.replace("%(d9col)s", "l.dest9")
+            + " WHERE w.wr = %(want)s ORDER BY l.started_at DESC LIMIT %(lim)s",
             params,
         )
         for r in rows:
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
+            r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
         return JSONResponse({"pipeline": pipeline, "window": window,
                              "count": len(rows), "rows": jsonable_encoder(rows)})
 
@@ -2818,6 +2851,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/pipeline2", response_class=HTMLResponse)
     def pipeline2_page() -> str:
         return _static("pipeline2.html")
+
+    @app.get("/pipeline/{stage}", response_class=HTMLResponse)
+    def pipeline_page(stage: str) -> HTMLResponse:
+        # generic detailed board for P1/P3/P4/P5 (stage read client-side); P2 keeps its own page.
+        return HTMLResponse(_static("pipeline.html"), headers=_NOCACHE)
 
     @app.get("/api/pipeline2")
     def pipeline2_list(request: Request, bde: str = "ALL", due_only: bool = False) -> JSONResponse:
