@@ -170,6 +170,20 @@
   :root[data-theme=light] input,:root[data-theme=light] select,:root[data-theme=light] textarea{color-scheme:light}
   :root[data-theme=light] .tr-theme-btn{background:#ffffff}
   :root[data-theme=light] .tr-theme-btn:hover{border-color:var(--accent)}
+
+  /* ---- slide-in navigation drawer (sidebar) ---- */
+  .tr-nav-btn{position:fixed;top:11px;left:12px;z-index:96;width:36px;height:36px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:17px;line-height:1;box-shadow:var(--elev1)}
+  .tr-nav-btn:hover{border-color:var(--accent)}
+  body>header{padding-left:58px}
+  .tr-drawer{position:fixed;top:0;left:0;bottom:0;width:250px;background:var(--panel);border-right:1px solid var(--line);box-shadow:0 24px 60px -24px rgba(8,12,20,.55);transform:translateX(-102%);transition:transform .22s cubic-bezier(.4,0,.2,1);z-index:101;padding:14px 12px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+  .tr-drawer.open{transform:none}
+  .tr-drawer-hd{display:flex;align-items:center;gap:8px;padding:6px 10px 12px;font-weight:800;font-size:14px;color:var(--txt);letter-spacing:.3px;text-transform:uppercase;font-size:11px;color:var(--faint)}
+  .tr-drawer a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;color:var(--txt-dim);text-decoration:none;font-weight:600;font-size:13.5px;transition:background .12s,color .12s}
+  .tr-drawer a:hover{background:var(--panel2);color:var(--txt)}
+  .tr-drawer a.active{background:var(--accent-soft);color:var(--accent)}
+  .tr-drawer a .i{width:20px;text-align:center;font-size:15px}
+  .tr-drawer-backdrop{position:fixed;inset:0;background:rgba(8,12,20,.42);opacity:0;pointer-events:none;transition:opacity .2s;z-index:100}
+  .tr-drawer-backdrop.open{opacity:1;pointer-events:auto}
 </style>
 </head>
 <body>
@@ -704,5 +718,17 @@ load();
     try{localStorage.setItem("tr-theme",n);}catch(e){}paint();};
   paint();(document.body||el).appendChild(b);
 })();</script>
+<button class="tr-nav-btn" aria-label="Open navigation menu" onclick="var d=document.querySelector('.tr-drawer'),b=document.querySelector('.tr-drawer-backdrop');d.classList.toggle('open');b.classList.toggle('open')">☰</button>
+<div class="tr-drawer-backdrop" onclick="document.querySelector('.tr-drawer').classList.remove('open');this.classList.remove('open')"></div>
+<nav class="tr-drawer" aria-label="Main navigation">
+  <div class="tr-drawer-hd">Navigate</div>
+  <a href="/" data-nav="/"><span class="i">📊</span> Dashboard</a>
+  <a href="/calendar" data-nav="/calendar"><span class="i">📅</span> Calendar</a>
+  <a href="/next-calls" data-nav="/next-calls"><span class="i">⭐</span> Next calls</a>
+  <a href="/database" data-nav="/database"><span class="i">🗄️</span> Prospect database</a>
+  <a href="/pipeline2" data-nav="/pipeline2"><span class="i">🔁</span> Agency pipeline</a>
+  <a href="/coaching" data-nav="/coaching"><span class="i">🎯</span> Coaching</a>
+</nav>
+<script>(function(){document.querySelectorAll('.tr-drawer a').forEach(function(a){if(a.getAttribute('data-nav')===location.pathname)a.classList.add('active')});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var d=document.querySelector('.tr-drawer'),b=document.querySelector('.tr-drawer-backdrop');if(d)d.classList.remove('open');if(b)b.classList.remove('open')}})})();</script>
 </body>
 </html>
