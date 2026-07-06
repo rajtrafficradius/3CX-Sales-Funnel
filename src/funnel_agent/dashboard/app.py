@@ -24,6 +24,57 @@ from ..auth import (can_manage_pipeline, create_session, create_user,
 from ..config import Settings, get_settings
 from ..db.analytics import make_analytics_pool
 
+# ---- Pipeline terminology (human, sales-manager language) + the "winning next move" -------- #
+# One shared vocabulary so the calendar, the event drill-down and the prospect page all read
+# the same, instead of raw stage codes (p1/p3) that mean nothing to a BDE.
+_PIPELINE_META = {
+    "p1": ("RPC callback", "We reached the decision-maker; they asked us to call back."),
+    "p2": ("Existing agency", "Already with an agency — nurture until their contract is up."),
+    "p3": ("Gatekeeper callback", "We got a gatekeeper, not the decision-maker yet — get through."),
+    "p4": ("Fresh worklist", "Not yet worked — first contact."),
+    "p5": ("Booked", "Meeting secured."),
+}
+
+
+def _pipeline_meta(stage: str | None) -> dict:
+    label, blurb = _PIPELINE_META.get((stage or "").lower(), (stage or "—", ""))
+    return {"stage": stage, "label": label, "blurb": blurb}
+
+
+def _clean_time_noise(s: str | None) -> str:
+    """Strip our-side noise from a prospect-facing phrase — e.g. '(Richard's time)' where Richard
+    is a BDE alias, or '(their time)'. A parenthetical mentioning 'time' is a timezone aside we
+    operate in one zone anyway, so it adds nothing."""
+    if not s:
+        return ""
+    return re.sub(r"\s*\([^)]*\btime\b[^)]*\)", "", s).strip(" .,-") or ""
+
+
+def _winning_next_move(evidence: dict | None) -> dict:
+    """The single best PROSPECT-focused action to move toward a booked meeting, plus the tailored
+    talking points — synthesised from the AI's per-call intelligence (prefer the specific
+    next-call points, then the RPC next move, then the agreed next step). Cleans our-side noise."""
+    ev = evidence or {}
+    rpc = ev.get("rpc_next_move") or {}
+    pts = [p for p in (ev.get("next_call_points") or []) if isinstance(p, dict) and p.get("point")]
+    move = ""
+    if pts:
+        move = pts[0].get("point") or ""
+    if not move:
+        move = rpc.get("next_move") or ev.get("next_step") or ""
+    dm = (rpc.get("dm_name") or ev.get("prospect_contact_name") or "").strip()
+    return {
+        "move": _clean_time_noise(move),
+        "decision_maker": dm,
+        "dm_role": (rpc.get("dm_role") or "").strip(),
+        "channel": (rpc.get("next_move_channel") or "").strip(),
+        "why": _clean_time_noise(ev.get("problem_summary") or ""),
+        "reason_unavailable": _clean_time_noise(rpc.get("reason_unavailable") or ""),
+        "points": [{"point": _clean_time_noise(p.get("point")), "why": (p.get("why") or "").strip()}
+                   for p in pts[:4]],
+    }
+
+
 # Funnel stages in order, with the daily_funnel column each maps to.
 STAGES = [
     ("Calls Made", "calls_made"),
@@ -2117,6 +2168,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             next_action = None
             dnd = None
 
+        # Winning next move (shown at the TOP of the prospect page) — the single best action to
+        # move this prospect toward a booked meeting, from its most substantive call.
+        next_move = None
+        try:
+            if d9list:
+                nm = q("SELECT cl.evidence FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+                       "WHERE c.in_scope AND right(regexp_replace(COALESCE(c.dest_number,''),"
+                       "'[^0-9]','','g'),9) = ANY(%s) ORDER BY c.talk_seconds DESC NULLS LAST, "
+                       "c.started_at DESC LIMIT 1", (d9list,))
+                if nm and nm[0].get("evidence"):
+                    mv = _winning_next_move(nm[0]["evidence"])
+                    next_move = mv if mv.get("move") else None
+        except Exception:
+            next_move = None
+
         # Batch D 5-pipeline membership for this prospect — so the hero shows P4 · Fresh for an
         # uncalled, Google-ads-confirmed domain (like ourxplor.com) instead of "No pipeline".
         # Resolves p5>p2>p1>p3 by domain company_key OR any dialled number; else P4 (fresh/attempted).
@@ -2156,6 +2222,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "paid_ads": _paid_ads_intel(enr, calls),
             "priority": priority,
             "next_action": next_action,
+            "next_move": next_move,
             "dnd": dnd,
             "pipeline5": pipeline5,
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
@@ -2864,15 +2931,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    "AND NULLIF(prospect_company,'') IS NOT NULL", (ev["call_id"],))
             if cn:
                 business_name = cn[0]["prospect_company"]
-        # evidence (game plan / next_call_points) from the linked call, if any.
+        # evidence + pipeline + winning next move: prefer the linked call, else this prospect's
+        # most substantive recent call — so the drill-down always has real sales intelligence.
         evidence = None
+        industry = contact_name = None
+        stage = None
         if ev.get("call_id"):
-            er = q("SELECT evidence FROM classifications WHERE call_id = %s", (ev["call_id"],))
+            er = q("SELECT evidence, pipeline_stage, prospect_industry, prospect_contact_name "
+                   "FROM classifications WHERE call_id = %s", (ev["call_id"],))
             if er:
                 evidence = er[0].get("evidence")
+                stage = er[0].get("pipeline_stage")
+                industry = er[0].get("prospect_industry")
+                contact_name = er[0].get("prospect_contact_name")
+        if (evidence is None or not stage) and dest9:
+            er = q("SELECT cl.evidence, cl.pipeline_stage, cl.prospect_industry, cl.prospect_contact_name "
+                   "FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+                   "WHERE c.in_scope AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%s "
+                   "  AND cl.pipeline_stage IS NOT NULL ORDER BY c.talk_seconds DESC NULLS LAST, "
+                   "  c.started_at DESC LIMIT 1", (dest9,))
+            if er:
+                evidence = evidence or er[0].get("evidence")
+                stage = stage or er[0].get("pipeline_stage")
+                industry = industry or er[0].get("prospect_industry")
+                contact_name = contact_name or er[0].get("prospect_contact_name")
         return JSONResponse(jsonable_encoder({
             "event": ev, "prospect_key": prospect_key,
             "business_name": business_name, "evidence": evidence,
+            "pipeline": _pipeline_meta(stage),
+            "next_move": _winning_next_move(evidence),
+            "industry": industry, "contact_name": contact_name,
         }))
 
     @app.post("/api/calendar")

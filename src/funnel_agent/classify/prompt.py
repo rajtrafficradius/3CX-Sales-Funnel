@@ -327,8 +327,11 @@ record what was actually said.
 
 CALLBACK:
 - callback_requested: TRUE if the prospect asked to be called back / agreed to a specific
-  follow-up call time. callback_when: the time they mentioned in their words (e.g. "next Tuesday
-  afternoon", "after 5pm Friday"); "" if none.
+  follow-up call time. callback_when: the time to call back in the PROSPECT's terms (e.g. "next
+  Tuesday afternoon", "after 5pm Friday"); "" if none. Capture ONLY the timing — never our own
+  agent/BDE's name or timezone (our BDE may introduce himself with an alias like "Richard"; a
+  phrase like "10am Richard's time" refers to US, so record just "around 10am"). Keep it clean
+  and about WHEN to call, not who.
 
 CONVERSATION INTELLIGENCE (for coaching — base strictly on the transcript):
 - objections: each meaningful objection the prospect raised, with how the BDE responded and

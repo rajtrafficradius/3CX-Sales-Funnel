@@ -19,6 +19,14 @@ log = get_logger(__name__)
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
+def _clean_time_noise(s: str | None) -> str:
+    """Strip our-side noise from a prospect-facing phrase — e.g. '(Richard's time)' (a BDE alias)
+    or '(their time)': a parenthetical mentioning 'time' is a timezone aside worth nothing here."""
+    if not s:
+        return ""
+    return re.sub(r"\s*\([^)]*\btime\b[^)]*\)", "", s).strip(" .,-")
+
+
 def guess_when(text: str | None, base: date) -> datetime:
     """Best-effort parse of a callback phrase into a concrete datetime. Falls back
     to the next business day at 10:00. The BDE can adjust it in the calendar."""
@@ -196,12 +204,13 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
         base = (r["started_at"].date() if r["started_at"] else day)
         when = guess_when(r["callback_when"], base)
         who = r["prospect_company"] or r["dest_number"] or "prospect"
-        title = f"📞 Callback: {who}" + (f" ({r['callback_when']})" if r["callback_when"] else "")
-        cbw = (r["callback_when"] or "").strip()
+        # strip our-side noise like '(Richard's time)' (Richard = a BDE alias) from the display.
+        cbw = _clean_time_noise(r["callback_when"])
+        title = f"📞 Callback: {who}" + (f" ({cbw})" if cbw else "")
         plan = synth_next_call_points_text(r.get("evidence"))
-        notes = (f"Callback: {cbw}\n" if cbw else "")
-        if plan:
-            notes += "Next-call game plan:\n" + plan
+        # lead with the game plan (the winning next move), then the requested time.
+        notes = ("Next-call game plan:\n" + plan + "\n\n") if plan else ""
+        notes += (f"They asked us to call back: {cbw}" if cbw else "")
         notes = notes.strip() or cbw
         try:
             create_event(pool, bde_name=r["bde_name"], type="callback", title=title,
