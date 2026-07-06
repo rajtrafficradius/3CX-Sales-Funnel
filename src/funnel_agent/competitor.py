@@ -132,6 +132,45 @@ _GENERIC_TOPIC = {
     "bmw", "mercedes", "audi", "volkswagen", "vw", "holden", "byd", "tesla", "jeep", "lexus",
 }
 
+# Big third-party brand / navigational terms (AU media, airlines, OTAs, major retail) that
+# surface as 'gaps' but aren't winnable SEO opportunities — you can't rank for someone else's
+# brand. Each competitor's OWN name is stripped separately (brand_tokens over the competitor
+# list); this set is only for the big brands that leak WITHOUT being in the list. Matched as
+# concatenated substrings (spaces removed) so 'sydney morning herald' -> one token. Only
+# unambiguous multi-char names — nothing that doubles as a generic word ('coach','legacy').
+_BRANDY = {
+    "sydneymorningherald", "couriermail", "westaustralian", "heraldsun", "dailytelegraph",
+    "adelaideadvertiser", "ballaratcourier", "geelongadvertiser", "canberratimes", "ntnews",
+    "theguardian", "perthnow", "goldcoastbulletin", "thewestaustralian",
+    "jetstar", "qantas", "virginaustralia", "webjet", "expedia", "trivago", "airbnb", "contiki",
+    "cottonon", "countryroad", "rebelsport", "pandora", "supercheapauto",
+}
+
+
+def _dedup_sig(keyword: str) -> str:
+    """Signature that collapses trivial keyword variants — word order, plurals, repeats and
+    stop-words — so 'death notices wa' / 'wa death notices', 'pipe maker' / 'pipe makers' and
+    'bali holiday package' / 'bali holiday packages' all count as one."""
+    toks = set()
+    for t in re.split(r"[^a-z0-9]+", (keyword or "").lower()):
+        if not t or len(t) < 2 or t in _STOP:
+            continue
+        toks.add(re.sub(r"s$", "", t))     # crude singular: strip a single trailing 's' only
+    return " ".join(sorted(toks))
+
+
+def _dedup_rows(rows: list[dict], field: str = "keyword") -> list[dict]:
+    """Keep one row per dedup-signature (the first — callers sort by $ value beforehand)."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in rows:
+        s = _dedup_sig(r.get(field))
+        if s and s in seen:
+            continue
+        seen.add(s)
+        out.append(r)
+    return out
+
 
 def _norm_kw(kw) -> str:
     return re.sub(r"\s+", " ", (kw or "").strip().lower())
@@ -282,9 +321,10 @@ def compute_keyword_gap(our_keywords: list[dict],
             "money_value": round(a["volume"] * (cpc or 0)),   # $ value of this gap keyword
             "est_capture_traffic": round(a["volume"] * _ctr(assumed_position)),
         })
-    # Highest $-value gaps first (search volume x CPC) — the money keywords, not the long tail.
+    # Highest $-value gaps first (search volume x CPC) — the money keywords, not the long tail;
+    # then collapse trivial word-order / plural variants so the list isn't padded with near-dupes.
     rows.sort(key=lambda r: money_score(r), reverse=True)
-    return rows[:limit]
+    return _dedup_rows(rows)[:limit]
 
 
 def compute_outranked(our_keywords: list[dict],
@@ -328,7 +368,7 @@ def compute_outranked(our_keywords: list[dict],
                 "money_value": round(vol * (cpc or 0)),
             })
     rows.sort(key=lambda r: money_score(r), reverse=True)
-    return rows[:limit]
+    return _dedup_rows(rows)[:limit]
 
 
 def compute_content_gap(our_keywords: list[dict],
@@ -652,6 +692,11 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
         # (1) SERP competitors — one call; mega-sites filtered inside pick_competitors.
         comps_raw = budget.run("competitors_domain", lambda: _competitors_domain(client, domain, limit=25))
         competitors = pick_competitors((comps_raw or {}).get("items") or [], domain, top=TOP_COMPETITORS)
+        # brand-strip EVERY competitor's own name (not just the deep-fetched one) + common
+        # media/travel/retail brands, so no competitor/brand navigational term shows as a 'gap'.
+        for c in competitors:
+            brands |= brand_tokens(c["domain"])
+        brands |= _BRANDY
 
         # (2) OUR ranked keywords — REUSE the SEO audit's cached fetch (dataforseo->'ranked_kw'):
         #     no self-refetch. Only hit the API if nothing is cached yet.

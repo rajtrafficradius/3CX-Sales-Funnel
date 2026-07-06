@@ -270,11 +270,17 @@ def is_mega_domain(host: str, organic_keywords: int | None = None) -> bool:
 
 def brand_tokens(domain: str, company_name: str = "") -> set[str]:
     """Distinctive brand strings a domain already 'owns' (its own name) — stripped from
-    OPPORTUNITY keywords so we surface demand the prospect is NOT already capturing."""
+    OPPORTUNITY keywords so we surface demand the prospect is NOT already capturing.
+    Emits the concatenated domain root (e.g. 'tripadeal', 'intrepidtravel' — matches 'trip a
+    deal', 'intrepid travel' once spaces are removed) plus a prefix-stripped variant so
+    'theiconic' also yields 'iconic'."""
     toks: set[str] = set()
     root = re.sub(r"^www\.", "", (domain or "").lower().split("/")[0]).split(".")[0]
     if len(root) >= 4:
         toks.add(root)
+        for pre in ("the", "my", "go", "get", "shop", "buy"):   # brand often searched sans prefix
+            if root.startswith(pre) and len(root) - len(pre) >= 4:
+                toks.add(root[len(pre):])
     for w in re.split(r"[^a-z0-9]+", (company_name or "").lower()):
         if len(w) >= 4 and w not in _BRAND_STOP:
             toks.add(w)
