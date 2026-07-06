@@ -66,7 +66,8 @@
   .cell .d{font-size:var(--t-cap);color:var(--muted);font-weight:700;margin-bottom:5px}
   .cell.today .d,.cell.sel .d{color:var(--accent)}
   /* ---- event chip (month view) ---- */
-  .ev{font-size:var(--t-meta);border-radius:5px;padding:2px 6px 2px 7px;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:3px solid var(--line2)}
+  .ev{font-size:var(--t-meta);border-radius:5px;padding:2px 6px 2px 7px;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:3px solid var(--line2);cursor:pointer;transition:filter .12s,box-shadow .12s}
+  .ev:hover{filter:brightness(1.18)}
   .ev .dot{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle;margin-right:1px}
   .ev .tm{font-variant-numeric:tabular-nums;opacity:.85}
   .ev.callback{background:rgba(91,140,255,.14);color:#a9c2ff}
@@ -85,8 +86,15 @@
   .panel .over{margin-bottom:2px}
   .panel h2{font-size:var(--t-strong);margin:0 0 4px;color:var(--txt);font-weight:700;letter-spacing:.2px}
   .panel .sub{font-size:var(--t-cap);color:var(--muted);margin:0 0 14px}
-  .erow{display:flex;align-items:flex-start;gap:12px;padding:12px 12px 12px 13px;border-bottom:1px solid var(--line-soft);border-left:3px solid var(--line2)}
+  .erow{display:flex;align-items:flex-start;gap:12px;padding:12px 12px 12px 13px;border-bottom:1px solid var(--line-soft);border-left:3px solid var(--line2);cursor:pointer;transition:background .12s}
+  .erow:hover{background:var(--panel2)}
+  .erow.tier-hot:hover{background:linear-gradient(90deg,var(--tier-hot-bg),var(--panel2) 60%)}
+  .erow.tier-warm:hover{background:linear-gradient(90deg,var(--tier-warm-bg),var(--panel2) 60%)}
   .erow:last-child{border-bottom:none}
+  .erow .chev{flex:0 0 auto;align-self:center;color:var(--faint);font-size:15px;transition:color .12s,transform .12s}
+  .erow:hover .chev{color:var(--accent);transform:translateX(2px)}
+  .ewhy{flex-basis:100%;margin-top:1px;color:var(--muted);font-size:var(--t-cap);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .ewhy::before{content:'Why ';font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;color:var(--faint);font-weight:800;margin-right:5px}
   .erow.tier-hot{border-left-color:var(--tier-hot);background:linear-gradient(90deg,var(--tier-hot-bg),transparent 42%)}
   .erow.tier-warm{border-left-color:var(--tier-warm);background:linear-gradient(90deg,var(--tier-warm-bg),transparent 42%)}
   .erow.tier-cool,.erow.tier-none{border-left-color:var(--line2)}
@@ -134,15 +142,71 @@
   .legend .lg i.tier.hot{background:var(--tier-hot)}
   .legend .lg i.tier.warm{background:var(--tier-warm)}
   .legend .lg i.tier.cool{background:var(--tier-cool)}
+  /* ---- event detail modal ---- */
+  .modal{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px 20px}
+  .modal[hidden]{display:none}
+  .modal-backdrop{position:absolute;inset:0;background:rgba(6,9,14,.66);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+  .modal-card{position:relative;z-index:1;width:min(580px,100%);max-height:88vh;overflow:auto;background:var(--panel);border:1px solid var(--line2);border-radius:var(--r4);box-shadow:var(--elev2);padding:22px 24px;animation:pop .16s ease-out}
+  @keyframes pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
+  .modal-close{position:absolute;top:12px;right:12px;width:32px;height:32px;padding:0;font-size:19px;line-height:1;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:50%}
+  .modal-close:hover{color:var(--txt);border-color:var(--line2)}
+  .ed-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:4px;padding-right:36px}
+  .ed-icon{font-size:24px;line-height:1;flex:0 0 auto;width:46px;height:46px;display:flex;align-items:center;justify-content:center;background:var(--panel3);border:1px solid var(--line);border-radius:var(--r3)}
+  .ed-htext{min-width:0;flex:1}
+  .ed-type{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;font-weight:800;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ed-type.done-tag{color:var(--good)}
+  .ed-title{font-size:var(--t-strong);font-weight:700;color:var(--txt);margin-top:4px;line-height:1.35;word-break:break-word}
+  .ed-title.done{text-decoration:line-through;opacity:.6}
+  .ed-sec{margin-top:18px}
+  .ed-lbl{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:800;margin-bottom:7px;display:flex;align-items:center;gap:7px}
+  .ed-when{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:var(--t-body);color:var(--txt-dim)}
+  .ed-when .w{display:inline-flex;align-items:center;gap:7px}
+  .ed-when b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+  .ed-why{white-space:pre-wrap;color:var(--txt-dim);font-size:var(--t-cap);line-height:1.6;background:var(--panel3);border:1px solid var(--line-soft);border-radius:var(--r2);padding:11px 13px}
+  .ed-plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .ed-plan li{display:flex;gap:11px;background:var(--panel2);border:1px solid var(--line-soft);border-radius:var(--r2);padding:10px 12px}
+  .ed-plan .ck{flex:0 0 auto;width:18px;height:18px;border-radius:5px;border:1.5px solid var(--line2);margin-top:1px;color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+  .ed-plan .pt{min-width:0;flex:1}
+  .ed-plan .pt .p{color:var(--txt);font-size:var(--t-body);line-height:1.45}
+  .ed-plan .pt .w{color:var(--muted);font-size:var(--t-meta);margin-top:3px;line-height:1.45}
+  .ed-kind{font-size:9px;text-transform:uppercase;letter-spacing:.5px;font-weight:800;padding:2px 6px;border-radius:20px;white-space:nowrap;margin-left:7px;background:var(--chip);border:1px solid var(--line);color:var(--muted);vertical-align:middle}
+  .ed-kind.hook{color:#f5cf7a}.ed-kind.question{color:#a9c2ff}.ed-kind.objection{color:#f4a3a3}.ed-kind.value{color:#8ef0b0}.ed-kind.logistics{color:#d4b6fd}
+  .ed-empty{color:var(--muted);font-size:var(--t-cap);line-height:1.55}
+  .ed-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+  .ed-actions .sp{flex:1}
+  .ed-actions a.ed-open,.ed-actions button{padding:8px 13px;font-size:var(--t-cap);border-radius:var(--r1)}
+  .ed-open{background:var(--accent);border:1px solid var(--accent);color:#fff;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+  .ed-open:hover{background:var(--accent2);border-color:var(--accent2);text-decoration:none}
+  .ed-loading{color:var(--muted);padding:14px 2px}
   /* ---- responsive ---- */
   @media(max-width:720px){
+    .modal{padding:0}
+    .modal-card{width:100%;max-height:100vh;height:100%;border-radius:0;border:none}
     main{padding:14px}
     .cell{min-height:78px;padding:5px}
     .ev{font-size:var(--t-micro)}
     .navrow .mlabel{min-width:0;flex:1;font-size:var(--t-strong)}
     .erow{flex-wrap:wrap}
     .erow-actions{margin-left:auto}
+    .evcard{padding:16px 16px}
   }
+  /* ---- event detail modal ---- */
+  .evmodal{display:none;position:fixed;inset:0;background:rgba(3,6,12,.62);z-index:60;align-items:flex-start;justify-content:center;padding:44px 16px;overflow:auto}
+  .evmodal.show{display:flex}
+  .evcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);max-width:580px;width:100%;padding:20px 24px;animation:evpop .13s ease-out}
+  @keyframes evpop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  .evhead{display:flex;align-items:center;gap:10px}
+  .evx{margin-left:auto;background:transparent;border:none;color:var(--muted);font-size:15px;padding:2px 8px;line-height:1}
+  .evx:hover{color:var(--txt);border-color:transparent}
+  .evcard h2{font-size:var(--t-strong);font-weight:700;letter-spacing:.2px}
+  .evmeta{display:flex;gap:28px;flex-wrap:wrap;margin:10px 0 2px}
+  .evmeta .k{display:block;font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;color:var(--faint);font-weight:800;margin-bottom:2px}
+  .subh{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;color:var(--faint);font-weight:800;margin:15px 0 6px}
+  .evnotes{color:var(--txt-dim);font-size:var(--t-cap);line-height:1.6;background:var(--panel2);border:1px solid var(--line-soft);border-radius:var(--r1);padding:10px 12px}
+  .evplan{margin:2px 0 0;padding-left:0;list-style:none}
+  .evplan li{font-size:var(--t-cap);line-height:1.55;margin:6px 0;color:var(--txt-dim)}
+  .evactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+  .evactions a,.evactions button{font-size:var(--t-cap)}
 </style>
 </head>
 <body>
@@ -175,6 +239,13 @@
     <div id="dayBody" class="muted">No day selected yet.</div>
   </div>
 </main>
+<div class="modal" id="evModal" hidden>
+  <div class="modal-backdrop" onclick="closeEvent()"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+    <button class="modal-close" onclick="closeEvent()" aria-label="Close" title="Close">✕</button>
+    <div id="evBody"><div class="ed-loading">Loading…</div></div>
+  </div>
+</div>
 <script>
 const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
@@ -182,6 +253,8 @@ const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝',rpc_retry:'🔁',recall:'🔁',next_call:'⭐'};
 const TYPE_LABEL={callback:'Callback',meeting:'Meeting',note:'Note',rpc_retry:'RPC retry',recall:'Weekly recall',next_call:'Next call'};
+// evidence.next_call_points[].kind -> short badge label
+const KIND_LABEL={hook:'Hook',question:'Ask',objection:'Objection',value:'Value',logistics:'Logistics'};
 // Priority tier -> css class (hot/warm/cool/none). API sends e.tier ('hot'|'warm'|'cool'|null).
 function tierClass(t){const k=(t==null?'':String(t)).trim().toLowerCase();return (k==='hot'||k==='warm'||k==='cool')?k:'none';}
 function tierChip(t){const k=tierClass(t);if(k!=='hot'&&k!=='warm')return '';return `<span class="tchip ${k}">${k==='hot'?'Hot':'Warm'}</span>`;}
@@ -208,6 +281,9 @@ async function boot(){
   }
   $('#dow').innerHTML=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<div class="dow">${d}</div>`).join('');
   await load();
+  // deep-link: /calendar?event=<id> opens that event's detail (from the prospect page link).
+  const ev=new URLSearchParams(location.search).get('event');
+  if(ev) openEvent(ev);
 }
 
 function monthBounds(){
@@ -257,7 +333,7 @@ function renderGrid(gridStart){
     const d=new Date(gridStart); d.setDate(d.getDate()+i); const ds=iso(d);
     const other=d.getMonth()!==view.getMonth();
     const evs=evForDay(ds);
-    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} tier-${tierClass(e.tier)} ${e.status==='done'?'done':''}" title="${esc(TYPE_LABEL[e.type]||e.type||'')}${e.bde_name?' · '+esc(e.bde_name):''}"><span class="dot" style="background:${bdeColor(e.bde_name).accent}"></span>${TYPE_ICON[e.type]||''} <span class="tm">${(e.start_at||'').slice(11,16)}</span> ${esc(e.title||'')}</div>`).join('');
+    const chips=evs.slice(0,3).map(e=>`<div class="ev ${e.type} tier-${tierClass(e.tier)} ${e.status==='done'?'done':''}" onclick="event.stopPropagation();openEvent(${e.id})" title="Click to view · ${esc(TYPE_LABEL[e.type]||e.type||'')}${e.bde_name?' · '+esc(e.bde_name):''}"><span class="dot" style="background:${bdeColor(e.bde_name).accent}"></span>${TYPE_ICON[e.type]||''} <span class="tm">${(e.start_at||'').slice(11,16)}</span> ${esc(e.title||'')}</div>`).join('');
     const more=evs.length>3?`<div class="muted" style="font-size:11px">+${evs.length-3} more</div>`:'';
     cells.push(`<div class="cell ${other?'other':''} ${ds===todayStr?'today':''} ${ds===selected?'sel':''}" onclick="selectDay('${ds}')"><div class="d">${d.getDate()}</div>${chips}${more}</div>`);
   }
@@ -276,19 +352,21 @@ function renderDay(ds){
   const rows = evs.length ? evs.map(e=>{
     const tc=tierClass(e.tier);
     const notes=(e.notes==null?'':String(e.notes)).trim();
+    // one-line "why" = first non-empty line of the notes (the reason it's scheduled).
+    const why=notes.split('\n').map(s=>s.trim()).filter(Boolean)[0]||'';
     const time=(e.start_at||'').slice(11,16)||'—';
     const bde=(ME.role!=='bde'&&e.bde_name)?`<span class="ebde"><i class="dot" style="background:${bdeColor(e.bde_name).accent}"></i>${esc(e.bde_name)}</span>`:'';
-    const phone=e.dest_number?`<a href="tel:${esc(e.dest_number)}" class="ephone">${esc(e.dest_number)}</a>`:'';
     return `
-    <div class="erow ${e.status==='done'?'done':''} tier-${tc}">
+    <div class="erow ${e.status==='done'?'done':''} tier-${tc}" onclick="openEvent(${e.id})" title="Click for full detail">
       <span class="t">${time}</span>
       <span class="ti">
         <span class="etype ${e.type}">${TYPE_ICON[e.type]||''} ${esc(TYPE_LABEL[e.type]||e.type||'')}</span>
         <span class="etitle">${esc(e.title||'')}</span>
-        ${tierChip(e.tier)}${bde}${phone}
-        ${notes?`<div class="enote"><span class="enote-lbl">Notes</span>${esc(notes)}</div>`:''}
+        ${tierChip(e.tier)}${bde}
+        ${why?`<div class="ewhy">${esc(why)}</div>`:''}
       </span>
-      ${canWrite?`<span class="erow-actions"><button onclick="toggleDone(${e.id},'${e.status}')" title="${e.status==='done'?'Mark as pending':'Mark as done'}">${e.status==='done'?'↺':'✓'}</button><button onclick="editTime(${e.id})" title="Change time">🕑</button><button onclick="del(${e.id})" title="Delete">🗑</button></span>`:''}
+      ${canWrite?`<span class="erow-actions" onclick="event.stopPropagation()"><button onclick="toggleDone(${e.id},'${e.status}')" title="${e.status==='done'?'Mark as pending':'Mark as done'}">${e.status==='done'?'↺':'✓'}</button><button onclick="editTime(${e.id})" title="Change time">🕑</button><button onclick="del(${e.id})" title="Delete">🗑</button></span>`:''}
+      <span class="chev" aria-hidden="true">›</span>
     </div>`;
   }).join('') : '<div class="muted">No events scheduled for this day.</div>';
   const form = canWrite ? `<div class="addform">
@@ -312,7 +390,46 @@ async function editTime(id){ const t=prompt('New time (HH:MM)'); if(!t) return; 
 function move(n){ view=new Date(view.getFullYear(),view.getMonth()+n,1); load(); }
 function goToday(){ view=new Date(); selectDay(iso(new Date())); }
 
+// ---- Event detail panel: why the call is scheduled + what to talk about + jump to prospect ----
+async function openEvent(id){
+  const modal=$('#evModal'), card=$('#evCard');
+  card.innerHTML='<div class="muted" style="padding:26px">Loading…</div>'; modal.classList.add('show');
+  try{
+    const d=await jget('/api/event/'+id); const e=d.event||{};
+    const when=e.start_at||''; const time=when.slice(11,16);
+    let dstr=when.slice(0,10);
+    try{ const dt=new Date(when); if(!isNaN(dt)) dstr=dt.toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}); }catch(_){}
+    const notes=(e.notes==null?'':String(e.notes)).trim();
+    const pts=(d.evidence&&Array.isArray(d.evidence.next_call_points))?d.evidence.next_call_points:[];
+    const KIND={ask:'❓',confirm:'✅',do:'📌',avoid:'⚠️',open:'🎯'};
+    const plan = pts.length ? `<div class="subh">🎯 What to talk about</div><ul class="evplan">${pts.slice(0,6).map(p=>`<li>${KIND[p.kind]||'•'} ${esc(p.point||'')}${p.why?` <span class="muted">— ${esc(p.why)}</span>`:''}</li>`).join('')}</ul>` : '';
+    const canWrite = ME.role!=='kiosk' && !(ME.role==='bde' && e.bde_name && e.bde_name!==ME.bde_name);
+    const openBtn = d.prospect_key ? `<a class="btn-primary" href="/prospect/${encodeURIComponent(d.prospect_key)}" style="text-decoration:none">Open prospect page →</a>` : '';
+    const acts = canWrite ? `<button onclick="toggleDone(${id},'${e.status}');closeEvent()">${e.status==='done'?'↺ Reopen':'✓ Mark done'}</button><button onclick="closeEvent();editTime(${id})">🕑 Reschedule</button><button onclick="closeEvent();del(${id})">🗑 Delete</button>` : '';
+    card.innerHTML=`
+      <div class="evhead">
+        <span class="etype ${e.type}">${TYPE_ICON[e.type]||''} ${esc(TYPE_LABEL[e.type]||e.type||'')}</span>
+        ${e.status?`<span class="pill">${esc(e.status)}</span>`:''}
+        <button class="evx" onclick="closeEvent()" aria-label="Close">✕</button>
+      </div>
+      <h2 style="margin:8px 0 2px">${esc(d.business_name||e.title||'Event')}</h2>
+      ${e.title&&d.business_name?`<div class="muted" style="margin-bottom:6px">${esc(e.title)}</div>`:''}
+      <div class="evmeta">
+        <div><span class="k">When</span><b>${esc(dstr)}${time?' · '+time:''}</b></div>
+        ${e.bde_name?`<div><span class="k">Assigned to</span><b>${esc(e.bde_name)}</b></div>`:''}
+      </div>
+      ${notes?`<div class="subh">Why this call is scheduled</div><div class="evnotes">${esc(notes).replace(/\n/g,'<br>')}</div>`:''}
+      ${plan}
+      <div class="evactions">${openBtn}${acts}</div>`;
+  }catch(err){ card.innerHTML=`<div style="padding:24px">Couldn't load this event (${esc(String(err.message||err))}). <button onclick="closeEvent()">Close</button></div>`; }
+}
+function closeEvent(){ $('#evModal').classList.remove('show'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeEvent(); });
+
 boot().catch(e=>{document.querySelector('main').innerHTML='<div class="muted" style="padding:20px">Could not load calendar ('+e.message+'). <a href="/login">Sign in</a></div>';});
 </script>
+<div id="evModal" class="evmodal" onclick="if(event.target===this)closeEvent()">
+  <div id="evCard" class="evcard"></div>
+</div>
 </body>
 </html>

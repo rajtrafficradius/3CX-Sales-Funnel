@@ -2826,6 +2826,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             r["start_at"] = str(r["start_at"]) if r.get("start_at") else None
         return JSONResponse(jsonable_encoder({"today": today_n, "overdue": overdue_n, "rows": rows}))
 
+    @app.get("/api/event/{eid}")
+    def event_detail(request: Request, eid: int) -> JSONResponse:
+        """Full detail for one calendar_events row so the calendar UI can render a rich
+        event panel: the event itself, a resolved prospect_key + business_name (drives the
+        'Open prospect page' link) and — when the event came from a call — that call's
+        evidence JSON (game plan / next_call_points)."""
+        rows = q("SELECT id, type, title, start_at, end_at, bde_name, status, notes, "
+                 "dest_number, call_id FROM calendar_events WHERE id = %s", (eid,))
+        if not rows:
+            raise HTTPException(404, "event not found")
+        ev = rows[0]
+        # A BDE may only open their own events; managers/kiosk see all.
+        if _is_bde(request) and ev.get("bde_name") and ev["bde_name"] != _scoped_bde(request, None):
+            raise HTTPException(403, "not your event")
+        # prospect_key = the dialled number's digits → drives /prospect/<key>. dest9
+        # (trailing 9) is the distinct-prospect key the pipeline board / call rows use.
+        import re as _re
+        prospect_key = _re.sub(r"\D", "", ev.get("dest_number") or "") or None
+        dest9 = prospect_key[-9:] if prospect_key else None
+        # business_name: prefer the pipeline board (master-file name), else the source
+        # call's AI-extracted company, else leave null.
+        business_name = None
+        if dest9:
+            pn = q("SELECT business_name FROM prospect_pipeline WHERE dest9 = %s "
+                   "AND NULLIF(business_name,'') IS NOT NULL LIMIT 1", (dest9,))
+            if pn:
+                business_name = pn[0]["business_name"]
+        if not business_name and ev.get("call_id"):
+            cn = q("SELECT prospect_company FROM classifications WHERE call_id = %s "
+                   "AND NULLIF(prospect_company,'') IS NOT NULL", (ev["call_id"],))
+            if cn:
+                business_name = cn[0]["prospect_company"]
+        # evidence (game plan / next_call_points) from the linked call, if any.
+        evidence = None
+        if ev.get("call_id"):
+            er = q("SELECT evidence FROM classifications WHERE call_id = %s", (ev["call_id"],))
+            if er:
+                evidence = er[0].get("evidence")
+        return JSONResponse(jsonable_encoder({
+            "event": ev, "prospect_key": prospect_key,
+            "business_name": business_name, "evidence": evidence,
+        }))
+
     @app.post("/api/calendar")
     async def calendar_create(request: Request) -> JSONResponse:
         u = getattr(request.state, "user", None) or {}

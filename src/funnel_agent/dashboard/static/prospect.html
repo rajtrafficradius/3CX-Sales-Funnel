@@ -730,6 +730,13 @@ async function addPhone(){
 
 // ---- Next scheduled call / Do-Not-Contact — shown for EVERY prospect (all pipelines),
 //      consolidating the calendar appointment, the P2 agency rotation, and the priority queue. ----
+// Subtle deep-link to the calendar: to the exact event when we have an event_id (calendar
+// appointment), else the plain calendar (P2 rotation / parked re-engage have no event yet).
+function calLink(na){
+  if(!na) return '';
+  const href = na.event_id ? '/calendar?event='+encodeURIComponent(na.event_id) : '/calendar';
+  return `<a class="lnk small" href="${href}" style="margin-left:auto;color:var(--muted)" title="Open this prospect on the calendar">📅 View on calendar</a>`;
+}
 function nextActionCard(d){
   const dnd=d.dnd, na=d.next_action;
   if(dnd){
@@ -751,6 +758,7 @@ function nextActionCard(d){
           <span class="muted">${assigned}</span>
           ${na.reason?`<span class="pill" style="font-size:10px">📄 ${esc(na.reason)}</span>`:''}
           <span class="muted small">parked — don't call before then (no value in nagging a locked-in client)</span>
+          ${calLink(na)}
         </div></div>`;
     }
     const src=na.source==='pipeline2'?'🔁 agency weekly rotation':(na.source==='calendar'?'📇 booked on BDE calendar':'⚡ priority queue');
@@ -760,6 +768,7 @@ function nextActionCard(d){
         <span class="muted">${assigned}</span>
         <span class="pill" style="font-size:10px">${esc(src)}</span>
         ${na.attempts!=null?`<span class="muted small">${na.attempts} attempt${na.attempts==1?'':'s'} so far</span>`:''}
+        ${calLink(na)}
       </div></div>`;
   }
   return `<div class="card full"><div class="muted small">📅 No next call scheduled for this prospect yet.</div></div>`;
@@ -780,6 +789,86 @@ function priorityCard(d){
       <span style="margin-left:auto">${ctrls}</span>
     </div>
     ${drivers?`<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${drivers}</div>`:''}
+  </div>`;
+}
+// ---- OVERALL call-intelligence summary — synthesizes ALL calls into a one-glance manager view
+//      so a manager understands the prospect without reading every call. Rule-based (no API),
+//      derived from d.calls + d.rollup + d.pipeline5. Rendered at the TOP, above the tabs. ----
+function overallSummary(d){
+  const calls=d.calls||[], ro=d.rollup||{}, m=d.master||{}, p5=d.pipeline5||{};
+  if(!calls.length) return '';           // nothing to synthesize
+  const PIPELBL={p1:'RPC callback',p2:'Already with an agency',p3:'Gatekeeper callback',p4:'Fresh worklist',p5:'Booked'};
+  // "connected" = a real two-way conversation (same predicate the timeline uses).
+  const isConn=c=>c.answered && (c.talk_seconds>=15) && c.call_outcome!=='voicemail';
+  const connectedYet = calls.some(c=>c.rpc_connect) || ro.ever_rpc;
+  const plbl = (p5.pipeline&&PIPELBL[p5.pipeline])||null;
+  const bde = m.assigned_bde || (ro.bdes&&ro.bdes[0]) || null;
+
+  // ---- headline status line ----
+  const head=[
+    `<b>${calls.length}</b> call${calls.length>1?'s':''}`,
+    connectedYet?'<span style="color:#3fb950">✓ reached decision-maker</span>':'<span class="muted">not connected yet</span>',
+    plbl?`<span style="color:var(--txt-dim)">${esc(plbl)}</span>`:null,
+    bde?`<span class="muted">assigned ${esc(bde)}</span>`:'<span style="color:#fb923c">unassigned</span>',
+  ].filter(Boolean).join('<span class="muted"> · </span>');
+
+  // ---- KEY FACTS chips (derived across all calls) ----
+  const chips=[];
+  const hasAgency = calls.some(c=>(c.evidence||{}).has_marketing_agency) || p5.pipeline==='p2';
+  if(hasAgency) chips.push('<span class="chip">🏢 Has an agency</span>');
+  let contract=null; for(let i=calls.length-1;i>=0;i--){const ce=(calls[i].evidence||{}).contract_end; if(ce){contract=ce;break;}}
+  if(contract) chips.push(`<span class="chip">📄 Contract: ${esc(contract)}</span>`);
+  let dm=null; for(let i=calls.length-1;i>=0;i--){ if(calls[i].prospect_contact_name){dm=calls[i].prospect_contact_name;break;} }
+  if(dm) chips.push(`<span class="chip">👤 Decision-maker: ${esc(dm)}</span>`);
+  const runningAds = (d.paid_ads&&['running','likely'].includes(d.paid_ads.verdict))
+    || calls.some(c=>(c.evidence||{}).runs_paid_ads)
+    || (((d.enrichment||{}).dataforseo||{}).running_google_ads)
+    || (p5.p4_sub==='fresh_ads');
+  if(runningAds) chips.push('<span class="chip">🎯 Running ads</span>');
+  const BANT=[['budget','Budget'],['authority','Authority'],['problem','Problem'],['urgency','Urgency'],['aspiration','Aspiration'],['open_to_listening','Open']];
+  const bantSeen=BANT.filter(([k])=>calls.some(c=>{const f=(c.evidence||{})[k]; return f&&f.value;})).map(x=>x[1]);
+  if(bantSeen.length) chips.push(`<span class="chip">📊 BANT: ${esc(bantSeen.join(' · '))}</span>`);
+  if(ro.callback_requested) chips.push('<span class="chip">📞 Callback requested</span>');
+  const chipsHtml = chips.length?`<div class="chips">${chips.join('')}</div>`:'<div class="muted small">No hard facts captured across calls yet.</div>';
+
+  // ---- NARRATIVE — the most substantive call (longest-talk connected; fallback longest overall) ----
+  let best=null;
+  calls.forEach(c=>{ if(isConn(c)&&(!best||(c.talk_seconds||0)>(best.talk_seconds||0))) best=c; });
+  if(!best) calls.forEach(c=>{ if(!best||(c.talk_seconds||0)>(best.talk_seconds||0)) best=c; });
+  const bev=(best&&best.evidence)||{};
+  const narrative = bev.problem_summary || (best&&best.transcript_summary) || bev.prospect_summary || '';
+  const narrHtml = narrative
+    ? `<div class="subh">Where things stand</div><div class="small">${esc(narrative)}</div>
+       <div class="muted" style="font-size:11px;margin-top:4px">— from the ${best&&isConn(best)?'longest connected call':'most substantive call'}, ${esc(best.bde_name||best.bde_extension||'?')} · ${fmtDate(best.started_at)}</div>`
+    : '';
+
+  // ---- TOP UNHANDLED OBJECTIONS across calls (evidence.objections where handled===false) ----
+  const seen=new Set(), unhandled=[];
+  calls.forEach(c=>((c.evidence||{}).objections||[]).forEach(o=>{ if(o&&o.handled===false&&o.objection){const k=String(o.objection).trim().toLowerCase(); if(!seen.has(k)){seen.add(k);unhandled.push(o.objection);}} }));
+  const objHtml = unhandled.length
+    ? `<div class="subh">Top unhandled objections</div><ul class="ci">${unhandled.slice(0,4).map(o=>`<li>⚠️ ${esc(o)}</li>`).join('')}</ul>`
+    : '';
+
+  // ---- RECOMMENDED NEXT MOVE — latest call's next_step / next_call_points[0] + next_action timing ----
+  let move=null;
+  for(let i=calls.length-1;i>=0;i--){ const ev=calls[i].evidence||{};
+    if(ev.next_step){move=ev.next_step;break;}
+    if(Array.isArray(ev.next_call_points)&&ev.next_call_points[0]&&ev.next_call_points[0].point){move=ev.next_call_points[0].point;break;} }
+  const na=d.next_action;
+  const timing = (na&&na.when)
+    ? (na.parked?'Re-engage '+fmtDate(na.when):'Next call '+fmtDate(na.when))+(na.bde?' · '+esc(na.bde):'')
+    : null;
+  const moveHtml = (move||timing)
+    ? `<div class="subh">Recommended next move</div>
+       ${move?`<div class="small">🎯 ${esc(move)}</div>`:''}
+       ${timing?`<div class="muted small" style="margin-top:4px">📅 ${timing}</div>`:''}`
+    : '';
+
+  return `<div class="card full">
+    <h2>🧭 Call intelligence — overall</h2>
+    <div class="small" style="margin-bottom:2px">${head}</div>
+    <div class="subh">Key facts</div>${chipsHtml}
+    ${narrHtml}${objHtml}${moveHtml}
   </div>`;
 }
 async function reassignNext(id){ const bde=prompt('Reassign this prospect\'s next call to which BDE?'); if(!bde) return;
@@ -894,6 +983,7 @@ async function load(){
     heroCard(d)
     + nextActionCard(d)
     + priorityCard(d)
+    + overallSummary(d)
     + `<div class="tabs">${tabs.map(t=>`<button class="tab${t[0]===defPane?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
     + tabs.map(t=>`<div class="tabpane${t[0]===defPane?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');
   document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
