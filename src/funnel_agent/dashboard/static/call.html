@@ -80,12 +80,12 @@
   /* --- pills (semantic soft fills, consistent everywhere) --- */
   .pill{display:inline-block;padding:3px 10px;border-radius:7px;font-size:var(--t-meta);font-weight:700;
     white-space:nowrap;line-height:1.55;border:1px solid transparent;vertical-align:middle}
-  .pill.yes,.yes{background:rgba(74,222,128,.14);color:#86efac;border-color:rgba(74,222,128,.26)}
-  .pill.no,.no{background:rgba(248,113,113,.13);color:#fca5a5;border-color:rgba(248,113,113,.26)}
+  .pill.yes,.yes{background:rgba(74,222,128,.14);color:var(--good);border-color:rgba(74,222,128,.26)}
+  .pill.no,.no{background:rgba(248,113,113,.13);color:var(--bad);border-color:rgba(248,113,113,.26)}
 
   .analysis{white-space:pre-wrap;font-size:var(--t-body);line-height:1.65;color:var(--txt-dim)}
   .transcript{white-space:pre-wrap;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1);
-    padding:14px 16px;max-height:60vh;overflow:auto;font:var(--t-body)/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c8d2de}
+    padding:14px 16px;max-height:60vh;overflow:auto;font:var(--t-body)/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--txt-dim)}
   .muted{color:var(--muted)}
   .big{font-size:20px;font-weight:800}
 
@@ -94,8 +94,8 @@
   .bapu{display:flex;flex-direction:column;gap:2px;padding:8px 13px;border-radius:var(--r2);border:1px solid;cursor:default;min-width:98px}
   .bapu .bapu-t{font-weight:700;font-size:var(--t-body);white-space:nowrap}
   .bapu .bapu-m{font-size:var(--t-micro);letter-spacing:.2px;opacity:.9;font-weight:500}
-  .bapu.on{background:rgba(74,222,128,.12);color:#86efac;border-color:rgba(74,222,128,.32)}
-  .bapu.off{background:rgba(248,113,113,.08);color:#fca5a5;border-color:rgba(248,113,113,.24)}
+  .bapu.on{background:rgba(74,222,128,.12);color:var(--good);border-color:rgba(74,222,128,.32)}
+  .bapu.off{background:rgba(248,113,113,.08);color:var(--bad);border-color:rgba(248,113,113,.24)}
   .tbadge{padding:6px 15px;border-radius:999px;font-weight:800;font-size:var(--t-body);letter-spacing:.4px}
 
   /* --- shared layout helpers --- */
@@ -189,7 +189,6 @@
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a class="backlink" href="/">&larr; Dashboard</a>
   <h1 id="title">Call detail</h1>
   <span class="muted" id="subtitle"></span>
 </header>
@@ -206,10 +205,10 @@ const id=decodeURIComponent(location.pathname.split('/call/')[1]||'');
 // Final funnel verdict for a booking. Reschedules & confirmations are NOT counted
 // again (the booking was counted the day it was first made); tentative/cancelled
 // attempts never count.
-function banner(css,txt){return `<div style="padding:13px 15px;border-radius:12px;font-weight:700;margin:0 0 14px;line-height:1.5;font-size:13px;border:1px solid rgba(255,255,255,.06);${css}">${txt}</div>`;}
+function banner(css,txt){return `<div style="padding:13px 15px;border-radius:var(--r3);font-weight:700;margin:0 0 14px;line-height:1.5;font-size:13px;border:1px solid var(--line-soft);${css}">${txt}</div>`;}
 function bookingBanner(ev, counts, dt, o, pq, qvia){
-  const AMBER='background:rgba(251,191,36,.16);color:#fbbf24', GREY='background:rgba(139,148,158,.14);color:#9aa4af',
-        GREEN='background:rgba(34,197,94,.16);color:#4ade80', BLUE='background:rgba(59,130,246,.16);color:#60a5fa';
+  const AMBER='background:rgba(251,191,36,.16);color:var(--warn)', GREY='background:rgba(139,148,158,.14);color:var(--muted)',
+        GREEN='background:rgba(34,197,94,.16);color:var(--good)', BLUE='background:rgba(59,130,246,.16);color:var(--accent)';
   const bs=ev.booking_status;
   // A booking = firm OR a TENTATIVE meeting WITH a SPECIFIC agreed time (clock time / am-pm /
   // noon). A tentative with only a vague day or range ("next Thursday or Friday", "next week")
@@ -275,14 +274,14 @@ function rpcNextMoveCard(d){
     dmWhen?'Available: '+esc(dmWhen):null,
   ].filter(Boolean);
   const why=`<div class="subh">Why not reached</div>
-    <div style="margin-bottom:8px"><span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">${esc(reasonLbl)}</span></div>
+    <div style="margin-bottom:8px"><span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)">${esc(reasonLbl)}</span></div>
     ${whyLines.length?`<div class="muted" style="font-size:12.5px;line-height:1.7">${whyLines.join('<br>')}</div>`:'<div class="muted">No further detail captured.</div>'}`;
   // (2) DID THE BDE DO IT — tri-state (✓ / ✗ / ? unknown) reusing the .pill styles.
   const row=(label,inner)=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(label)}</span>${inner}</div>`;
   const tri=(label,v)=>{
     if(v===true) return row(label,`<span class="pill yes">✓</span>`);
     if(v===false) return row(label,`<span class="pill no">✗</span>`);
-    return row(label,`<span class="pill" style="background:rgba(139,148,158,.14);color:#9aa4af">?</span>`);
+    return row(label,`<span class="pill" style="background:rgba(139,148,158,.14);color:var(--muted)">?</span>`);
   };
   const ch=ra.channel||'';
   const isMobile = ch==='mobile' || ra.action_code==='double_tap' || ra.action_code==='sms_vm'
@@ -295,7 +294,7 @@ function rpcNextMoveCard(d){
     checklist += tri('Double-tap (2nd dial)', ra.double_tap_done);
     checklist += tri('Voicemail likely left', ra.voicemail_left);
     checklist += (ra.sms_sent==null)
-      ? row('SMS follow-up', `<span class="pill" style="background:rgba(139,148,158,.14);color:#9aa4af">can't verify</span>`)
+      ? row('SMS follow-up', `<span class="pill" style="background:rgba(139,148,158,.14);color:var(--muted)">can't verify</span>`)
       : tri('SMS follow-up', ra.sms_sent);
   }
   if(isGk){
@@ -311,7 +310,7 @@ function rpcNextMoveCard(d){
   // (3) NEXT MOVE — highlighted "what to do next" box.
   const nextTxt = ra.next_move || nm.next_move || ra.required_action || 'Keep working this number until you reach the decision-maker.';
   const chVal = val(ra.next_move_channel, nm.next_move_channel);
-  const chBadge = chVal?` <span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">${esc(chVal)}</span>`:'';
+  const chBadge = chVal?` <span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)">${esc(chVal)}</span>`:'';
   const availTxt = dmWhen?`<div class="muted" style="font-size:12.5px;margin-top:8px">🕑 Decision-maker available: ${esc(dmWhen)}</div>`:'';
   const bdeName = ra.last_bde || c.bde_name || 'the BDE';
   const retryHtml = ra.event_id
@@ -353,7 +352,7 @@ function qualStageRow(v, o){
   if(!v) return '';
   const aiQ=!!v.value, hasOv=!!(o && o.qualified != null), eff=hasOv?!!o.qualified:aiQ;
   const conf=v.confidence!=null?` · ${Math.round(v.confidence*100)}% conf`:'';
-  const nm = 'Qualified' + (hasOv?` <span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd;font-size:11px">BDM override</span>`:'');
+  const nm = 'Qualified' + (hasOv?` <span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent);font-size:11px">BDM override</span>`:'');
   const evTxt = hasOv
     ? `BDM override by ${esc(o.override_by)||'BDM'}: ${esc(o.reason||'')} — the AI originally said ${aiQ?'qualified':'not qualified'}.`
     : esc(v.evidence);
@@ -363,7 +362,7 @@ function qualStageRow(v, o){
 
 const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
-            warm:['🌤 WARM','#fbbf24','rgba(251,191,36,.16)'],none:['—','#8b949e','rgba(139,148,158,.12)']};
+            warm:['🌤 WARM','var(--warn)','rgba(251,191,36,.16)'],none:['—','var(--muted)','rgba(139,148,158,.12)']};
 const PIPE={pipeline1_interested:'Pipeline 1 · Interested',pipeline2_existing_agency:'Pipeline 2 · Already with an agency',none:'No pipeline'};
 // Plain-English meaning under each BANT / Aspiration / Open-to-listening flag.
 const BANT_MEAN={Budget:'Can afford it',Authority:'Decision-maker',Problem:'Has a real need',Urgency:'Wants to act soon',Aspiration:'Wants to grow','Open to listening':'Willing to hear us'};
@@ -387,13 +386,13 @@ function recordingCard(c, canDownload){
 function leadCard(cl, ev, o){
   const t=cl.lead_temperature||'none', [lbl,col,bg]=TEMP[t]||TEMP.none;
   const cb = cl.callback_requested
-    ? `<span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">📞 Callback${cl.callback_when?': '+esc(cl.callback_when):' requested'}</span>` : '';
+    ? `<span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)">📞 Callback${cl.callback_when?': '+esc(cl.callback_when):' requested'}</span>` : '';
   // Effective qualification: a BDM/admin override WINS over the AI verdict (matches the funnel
   // count). Show the effective status, with a "BDM override" tag so it's clear it was changed.
   const aiQ = !!(ev.qualified && ev.qualified.value);
   const hasOv = !!(o && o.qualified != null);
   const effQ = hasOv ? !!o.qualified : aiQ;
-  const ovTag = hasOv ? ` <span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd" title="${esc(o.reason||'')}">BDM override${o.override_by?' · '+esc(o.override_by):''}</span>` : '';
+  const ovTag = hasOv ? ` <span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)" title="${esc(o.reason||'')}">BDM override${o.override_by?' · '+esc(o.override_by):''}</span>` : '';
   const qpill = ev.qualified ? `<span class="pill ${effQ?'yes':'no'}">${effQ?'✓ Qualified':'Not qualified'}</span>${ovTag}` : '';
   const autov = (ev.runs_paid_ads||ev.has_marketing_agency)
     ? `<div class="muted" style="font-size:12.5px;margin-top:10px">⚡ Auto-validated (budget + aspiration): ${[ev.runs_paid_ads?'already runs paid ads':null, ev.has_marketing_agency?'already has a marketing agency':null].filter(Boolean).join(' · ')}</div>` : '';
@@ -452,7 +451,7 @@ function qualOverrideCard(d){
       </div></div>`;
   }
   const OBL={counts:'✓ counts as qualified booking',rescheduled:'🔁 rescheduled',confirmation:'📞 confirmation',tentative:'🕓 tentative (not counted)',not_booking:'✕ not a booking'};
-  const obPill = (o&&o.booking_outcome)?`<span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd">BDM: ${OBL[o.booking_outcome]||o.booking_outcome}</span>`:'';
+  const obPill = (o&&o.booking_outcome)?`<span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)">BDM: ${OBL[o.booking_outcome]||o.booking_outcome}</span>`:'';
   const notBooked = !booked ? `<span class="muted" style="font-size:12px;font-weight:400"> · AI: not a booked meeting</span>` : '';
   return `<div class="card full"><h2>Qualification review <span class="muted">(BDM)</span> ${effPill}${obPill}${notBooked}</h2>
     <div class="hint">The <b>BDM's decision overrides the AI</b> and is what counts in the funnel. The pill above is the current effective status; the line below is the AI's original read.</div>
@@ -530,7 +529,7 @@ function bizCard(d){
   let trackHtml='';
   if(w&&w.found){
     const trk=Object.values(w.trackers||{}), ads=w.paid_ad_platforms||[];
-    const badge=w.runs_paid_ads?'<span class="pill yes">✓ Running paid ads</span>':'<span class="pill" style="background:rgba(139,148,158,.14);color:#9aa4af">No ad pixels found</span>';
+    const badge=w.runs_paid_ads?'<span class="pill yes">✓ Running paid ads</span>':'<span class="pill" style="background:rgba(139,148,158,.14);color:var(--muted)">No ad pixels found</span>';
     const chips=trk.length?trk.map(x=>`<span class="chip">${ads.includes(x)?'🎯 ':'📊 '}${esc(x)}</span>`).join(''):'<span class="muted">No tags found.</span>';
     trackHtml=`<div style="margin-top:14px"><div class="subh">🌐 Website tracking (free scan) ${badge}</div>
       <div class="chips">${chips}</div>
@@ -545,16 +544,16 @@ function bizCard(d){
 
 function scoreBar(label,v){v=Number(v||0);return `<div class="scrow"><span class="scl">${label}</span><span class="sctrack"><i style="width:${v/5*100}%"></i></span><span class="scn">${v}/5</span></div>`;}
 function ciCard(ev){
-  const ENG={dismissive:'#f87171',neutral:'#8b949e',engaged:'#4ade80',keen:'#22c55e'};
-  const SENT={negative:'#f87171',neutral:'#8b949e',positive:'#4ade80'};
+  const ENG={dismissive:'var(--bad)',neutral:'var(--muted)',engaged:'var(--good)',keen:'var(--good)'};
+  const SENT={negative:'var(--bad)',neutral:'var(--muted)',positive:'var(--good)'};
   const eng=ev.engagement||'neutral', sent=ev.prospect_sentiment||'neutral';
   const sig=ev.buying_signals||[], objs=ev.objections||[], tips=ev.coaching_tips||[], sc=ev.scorecard||{};
   const objHtml=objs.length?objs.map(o=>`<div class="obj"><div>${o.handled?'✅':'⚠️'} ${esc(o.objection)}</div><div class="muted" style="font-size:12.5px">↳ ${esc(o.response)||'(no response captured)'}</div></div>`).join(''):'<div class="muted">No objections raised.</div>';
   return `<div class="card full"><h2>Conversation intelligence</h2>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <span class="pill" style="background:rgba(255,255,255,.06);color:${ENG[eng]||'#8b949e'}">Engagement: ${esc(eng)}</span>
-      <span class="pill" style="background:rgba(255,255,255,.06);color:${SENT[sent]||'#8b949e'}">Sentiment: ${esc(sent)}</span>
-      ${ev.next_step?`<span class="pill" style="background:rgba(59,130,246,.16);color:#60a5fa">Next step: ${esc(ev.next_step)}</span>`:''}
+      <span class="pill" style="background:var(--chip);color:${ENG[eng]||'var(--muted)'}">Engagement: ${esc(eng)}</span>
+      <span class="pill" style="background:var(--chip);color:${SENT[sent]||'var(--muted)'}">Sentiment: ${esc(sent)}</span>
+      ${ev.next_step?`<span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)">Next step: ${esc(ev.next_step)}</span>`:''}
     </div>
     <div class="bizgrid">
       <div>
@@ -576,7 +575,7 @@ function ciCard(ev){
 // Prospect-specific "next-call game plan": prefers the AI's next_call_points, else synthesizes
 // from existing evidence so calls that predate the field are never blank (no reclassify needed).
 function nextCallPoints(ev, cl){
-  const KIND={hook:['🪝','#93c5fd'],question:['❓','#c4b5fd'],objection:['🛡️','#fca5a5'],value:['💡','#fcd34d'],logistics:['📋','#86efac']};
+  const KIND={hook:['🪝','var(--accent)'],question:['❓','var(--txt-dim)'],objection:['🛡️','var(--bad)'],value:['💡','var(--warn)'],logistics:['📋','var(--good)']};
   let pts = Array.isArray(ev.next_call_points) ? ev.next_call_points.filter(p=>p&&p.point) : [];
   if(!pts.length){
     const syn=[];
@@ -651,7 +650,7 @@ async function load(){
 
   const verdicts=`<div class="card"><h2>Funnel verdicts <span class="muted">(AI)</span></h2>
     <div class="hint">Each row is one funnel stage as read by the AI — <b>YES</b> means it was met on this call. The banner below shows what actually counts.</div>
-    ${d.sms_confirmed?`<div style="background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.45);color:#86efac;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:700">📱 Booking confirmed by the prospect via SMS — this firmed the meeting (see the SMS / chat tab).</div>`:''}
+    ${d.sms_confirmed?`<div style="background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.45);color:var(--good);padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:700">📱 Booking confirmed by the prospect via SMS — this firmed the meeting (see the SMS / chat tab).</div>`:''}
     ${bookingBanner(ev, d.booking_counts, cl.meeting_datetime, d.qual_override, d.prospect_qualified, d.qualified_via)}
     ${stageRow('Right Party Contact (decision-maker)', ev.rpc_connect)}
     ${stageRow('Full Pitch', ev.full_pitch)}
@@ -679,8 +678,8 @@ async function load(){
   const messagesPane = msgs.length ? `<div class="card full"><h2>💬 SMS / chat from prospect (${msgs.length})</h2>${
     msgs.map(m=>{
       const badge = m.is_booking_confirmation ? `<span class="pill yes">📅 booking confirmation</span>`
-        : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.2);color:#cbd5e1">${esc(m.intent)}</span>` : '');
-      const firmed = m.applied_call_id===c.call_id ? ` · <span style="color:#4ade80;font-weight:700">firmed THIS booking</span>` : (m.applied_call_id?` · <span class="muted">firmed another call</span>`:'');
+        : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.2);color:var(--txt-dim)">${esc(m.intent)}</span>` : '');
+      const firmed = m.applied_call_id===c.call_id ? ` · <span style="color:var(--good);font-weight:700">firmed THIS booking</span>` : (m.applied_call_id?` · <span class="muted">firmed another call</span>`:'');
       const when = esc(String(m.time_sent||'').slice(0,16).replace('T',' '));
       const mt = m.meeting_datetime ? `<div class="muted" style="font-size:12px;margin-top:3px">🗓 ${esc(m.meeting_datetime)}</div>` : '';
       return `<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div class="muted" style="font-size:12px">${when} · ${esc(m.sender_name||m.sender_phone||'')} ${badge}${firmed}</div><div style="margin-top:3px">${esc(m.body||'')}</div>${mt}</div>`;
@@ -688,7 +687,7 @@ async function load(){
     : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
 
   const tabs=[
-    ['summary','Summary', recordingCard(c, d.can_override) + leadCard(cl,ev,d.qual_override) + qualOverrideCard(d) + feedbackCard(ev,cl) + rpcNextMoveCard(d) + meta + verdicts + extractedCard(cl,ev)],
+    ['summary','Summary', leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(c, d.can_override) + feedbackCard(ev,cl) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],

@@ -36,6 +36,8 @@
   .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0;box-shadow:var(--elev1)}
   .brand img{height:24px;display:block}
   h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:.2px}
+  .htitle{display:flex;flex-direction:column;justify-content:center;gap:1px;line-height:1.05}
+  .htitle .over{margin:0}
   .spacer{flex:1}
   /* ---- form controls ---- */
   select,button,input{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);padding:7px 11px;font:inherit}
@@ -71,12 +73,12 @@
   .ev:hover{filter:brightness(1.18)}
   .ev .dot{display:inline-block;width:6px;height:6px;border-radius:50%;vertical-align:middle;margin-right:1px}
   .ev .tm{font-variant-numeric:tabular-nums;opacity:.85}
-  .ev.callback{background:rgba(91,140,255,.14);color:#a9c2ff}
-  .ev.meeting{background:rgba(74,222,128,.13);color:#8ef0b0}
-  .ev.note{background:rgba(154,166,182,.12);color:#c7d0dc}
-  .ev.rpc_retry{background:rgba(192,132,252,.13);color:#d4b6fd}
-  .ev.recall{background:rgba(45,212,191,.14);color:#7fe6d4}
-  .ev.next_call{background:rgba(251,191,36,.12);color:#f5cf7a}
+  .ev.callback{background:rgba(91,140,255,.14);color:var(--ty-callback)}
+  .ev.meeting{background:rgba(74,222,128,.13);color:var(--ty-meeting)}
+  .ev.note{background:rgba(154,166,182,.12);color:var(--ty-note)}
+  .ev.rpc_retry{background:rgba(192,132,252,.13);color:var(--ty-rpc)}
+  .ev.recall{background:rgba(45,212,191,.14);color:#5eead4}
+  .ev.next_call{background:rgba(251,191,36,.12);color:var(--ty-next)}
   .ev.tier-hot{border-left-color:var(--tier-hot);box-shadow:inset 0 0 0 1px var(--tier-hot-soft)}
   .ev.tier-warm{border-left-color:var(--tier-warm);box-shadow:inset 0 0 0 1px var(--tier-warm-soft)}
   .ev.tier-cool{border-left-color:var(--tier-cool)}
@@ -171,7 +173,7 @@
   .ed-plan .pt .p{color:var(--txt);font-size:var(--t-body);line-height:1.45}
   .ed-plan .pt .w{color:var(--muted);font-size:var(--t-meta);margin-top:3px;line-height:1.45}
   .ed-kind{font-size:9px;text-transform:uppercase;letter-spacing:.5px;font-weight:800;padding:2px 6px;border-radius:20px;white-space:nowrap;margin-left:7px;background:var(--chip);border:1px solid var(--line);color:var(--muted);vertical-align:middle}
-  .ed-kind.hook{color:#f5cf7a}.ed-kind.question{color:#a9c2ff}.ed-kind.objection{color:#f4a3a3}.ed-kind.value{color:#8ef0b0}.ed-kind.logistics{color:#d4b6fd}
+  .ed-kind.hook{color:var(--warn)}.ed-kind.question{color:var(--ty-callback)}.ed-kind.objection{color:var(--bad)}.ed-kind.value{color:var(--good)}.ed-kind.logistics{color:var(--ty-rpc)}
   .ed-empty{color:var(--muted);font-size:var(--t-cap);line-height:1.55}
   .ed-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
   .ed-actions .sp{flex:1}
@@ -257,8 +259,10 @@
 <body>
 <header>
   <a class="brand" href="/"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a href="/">&larr; Dashboard</a>
-  <h1>Calendar</h1>
+  <div class="htitle">
+    <span class="over">Planner</span>
+    <h1>Calendar</h1>
+  </div>
   <span class="pill" id="scopePill"></span>
   <div class="spacer"></div>
   <select id="bdeFilter" style="display:none"></select>

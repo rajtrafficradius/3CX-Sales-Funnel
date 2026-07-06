@@ -47,7 +47,7 @@
   .yes{background:rgba(74,222,128,.14);color:var(--good)}.no{background:rgba(248,113,113,.14);color:var(--bad)}
   .neutral{background:rgba(139,150,166,.12);color:var(--muted)}
   .none{background:rgba(139,150,166,.10);color:var(--muted)}
-  .info{background:var(--accent-soft);color:#93b4ff}
+  .info{background:var(--accent-soft);color:var(--accent)}
   /* hero */
   .hero{grid-column:1/-1;background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:var(--r4);padding:20px 22px;box-shadow:var(--elev2);position:relative;overflow:hidden}
   .hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--accent),transparent)}
@@ -102,7 +102,7 @@
   .small{font-size:var(--t-cap);line-height:1.5} .mt6{margin-top:6px}
   ul.ci{margin:5px 0;padding-left:18px;font-size:var(--t-cap)}ul.ci li{margin:2px 0}
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel3);border:1px solid var(--line);padding:11px 18px;border-radius:var(--r2);font-size:var(--t-base);opacity:0;transition:opacity .25s;pointer-events:none;z-index:20;box-shadow:var(--elev2)}
-  .toast.show{opacity:1}.toast.err{border-color:rgba(248,113,113,.5);color:#fca5a5}
+  .toast.show{opacity:1}.toast.err{border-color:rgba(248,113,113,.5);color:var(--bad)}
   /* tabs */
   .tabs{grid-column:1/-1;display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0 4px;flex-wrap:wrap}
   .tab{padding:10px 16px;font-size:var(--t-body);font-weight:600;color:var(--muted);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;border-radius:var(--r1) var(--r1) 0 0;transition:color .15s,background .15s}
@@ -116,8 +116,8 @@
   .bizrow .nm{font-weight:700;font-size:var(--t-base)}
   .bizrow .meta{color:var(--muted);font-size:var(--t-cap);margin-top:3px}
   .trk{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:8px;font-size:var(--t-cap);font-weight:600;border:1px solid var(--line);background:var(--panel2);margin:4px 5px 0 0}
-  .trk.ads{background:rgba(248,113,113,.14);color:#fca5a5;border-color:rgba(248,113,113,.35)}
-  .trk.tk{background:var(--accent-soft);color:#93b4ff;border-color:rgba(91,140,255,.3)}
+  .trk.ads{background:rgba(248,113,113,.14);color:var(--bad);border-color:rgba(248,113,113,.35)}
+  .trk.tk{background:var(--accent-soft);color:var(--accent);border-color:rgba(91,140,255,.3)}
   /* tables (SEO keyword audit etc.) — subtle separators + eyebrow header */
   table{border-collapse:collapse}
   table th{color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px}
@@ -169,7 +169,6 @@
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a class="back" href="/">&larr; Dashboard</a>
   <div class="hdr-titles">
     <span class="hdr-eyebrow">Prospect 360</span>
     <h1>Prospect</h1>
@@ -221,7 +220,7 @@ function heroCard(d){
     <div class="top">
       <h1>${esc(name)}</h1>
       ${temp}
-      <span class="pill" style="background:rgba(255,255,255,.06);color:${pcol}">${esc(plbl)}</span>
+      <span class="pill" style="background:var(--chip);color:${pcol}">${esc(plbl)}</span>
     </div>
     ${d.domain?`<div class="dom"><a class="lnk" href="https://${esc(d.domain)}" target="_blank">${esc(d.domain)} ↗</a>${m.location?' · '+esc(m.location):''}</div>`:(m.location?`<div class="dom">${esc(m.location)}</div>`:'')}
     <div class="stats">
@@ -334,7 +333,7 @@ function apolloCard(d){
   const contactName=calledNames.length?calledNames[calledNames.length-1]:(masterNames[0]||null);
   // skip-if-DM-already-reached: if we've reached the decision-maker, the Apollo list is supplementary.
   const reachedNote=(_ro.ever_rpc||calledNames.length>0)
-    ? `<div class="muted small mt6" style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.35);color:#93c5fd;padding:6px 10px;border-radius:8px">✓ Decision-maker already reached on a call${contactName?' — <b>'+esc(contactName)+'</b>':''}. The Apollo list below is supplementary (other contacts at the company).</div>`
+    ? `<div class="muted small mt6" style="background:var(--accent-soft);border:1px solid rgba(91,140,255,.35);color:var(--accent);padding:6px 10px;border-radius:8px">✓ Decision-maker already reached on a call${contactName?' — <b>'+esc(contactName)+'</b>':''}. The Apollo list below is supplementary (other contacts at the company).</div>`
     : '';
   // LinkedIn per decision-maker: use Apollo's real profile URL if present (rare — it's
   // credit-gated like email/phone), else a FREE LinkedIn people-search deep-link built from
@@ -417,7 +416,7 @@ function digitalMarketingCard(d){
   // ---- PAID (Transparency Center primary + paid keyword/traffic metrics) ----
   const running = df&&df.running_google_ads;
   const verdict = running
-    ? `<span class="pill" style="background:rgba(239,68,68,.16);color:#fca5a5">🎯 Running Google Ads — ${fmtN(ads.count)} active ads · last seen ${esc(ads.last_shown||'?')}</span>`
+    ? `<span class="pill" style="background:rgba(239,68,68,.16);color:var(--bad)">🎯 Running Google Ads — ${fmtN(ads.count)} active ads · last seen ${esc(ads.last_shown||'?')}</span>`
     : (df?`<span class="pill none">No active Google Ads (Transparency Center)</span>`:'');
   const fmts = Object.entries(ads.formats||{}).map(([k,v])=>esc(k)+': '+v).join(' · ');
   const paidM=[];
@@ -429,18 +428,18 @@ function digitalMarketingCard(d){
   // back to the tracking+call heuristic when DataForSEO hasn't checked this domain.
   let topVerdict;
   if(df && df.running_google_ads){
-    topVerdict = `<div style="border:1px solid #3fb95055;background:#16331f;border-radius:10px;padding:12px;margin-bottom:14px">
+    topVerdict = `<div style="border:1px solid #3fb95055;background:rgba(63,185,80,.10);border-radius:var(--r2);padding:12px;margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:18px">🎯</span>
       <b style="color:#3fb950;font-size:15px">Running paid ads — confirmed by Google Ads Transparency Center</b>
       <span class="pill" style="background:#3fb95022;color:#3fb950;border:1px solid #3fb95055">high confidence</span></div>
-      <div class="small" style="color:#8b949e;margin-top:6px">${fmtN(ads.count)} active Google ad${ads.count===1?'':'s'} (last seen ${esc(ads.last_shown||'?')})${(d.paid_ads&&d.paid_ads.platforms||[]).includes('Meta')||((e.website||{}).trackers||{}).meta_pixel?' · Meta pixel also present':''}. Tracking tags &amp; traffic are supportive only.</div></div>`;
+      <div class="small" style="color:var(--muted);margin-top:6px">${fmtN(ads.count)} active Google ad${ads.count===1?'':'s'} (last seen ${esc(ads.last_shown||'?')})${(d.paid_ads&&d.paid_ads.platforms||[]).includes('Meta')||((e.website||{}).trackers||{}).meta_pixel?' · Meta pixel also present':''}. Tracking tags &amp; traffic are supportive only.</div></div>`;
   } else if(df){
     const metaNote = ((e.website||{}).trackers||{}).meta_pixel ? ' A Meta Pixel is present (may run Meta ads — not covered by Google Transparency).' : '';
-    topVerdict = `<div style="border:1px solid #8b949e55;background:#1c2430;border-radius:10px;padding:12px;margin-bottom:14px">
+    topVerdict = `<div style="border:1px solid var(--line);background:var(--panel2);border-radius:var(--r2);padding:12px;margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:18px">🚫</span>
       <b style="color:#a371f7;font-size:15px">Not running Google Ads</b>
-      <span class="pill" style="background:#8b949e22;color:#8b949e;border:1px solid #8b949e55">Transparency Center checked</span></div>
-      <div class="small" style="color:#8b949e;margin-top:6px">No active ads found in the Google Ads Transparency Center (the authoritative source).${metaNote}</div></div>`;
+      <span class="pill" style="background:#8b949e22;color:var(--muted);border:1px solid #8b949e55">Transparency Center checked</span></div>
+      <div class="small" style="color:var(--muted);margin-top:6px">No active ads found in the Google Ads Transparency Center (the authoritative source).${metaNote}</div></div>`;
   } else {
     topVerdict = paidAdsVerdict(d.paid_ads);  // no DataForSEO yet -> tracking + call heuristic
   }
@@ -474,12 +473,12 @@ function seoAuditCard(d){
   const pw=a.proof_winning||a.winning||[];
   const TH='style="text-align:left;color:var(--muted);font-weight:600;padding:0 10px 4px 0;white-space:nowrap"';
   const RH='style="text-align:right;color:var(--muted);font-weight:600;padding:0 0 4px 10px;white-space:nowrap"';
-  const TD='style="padding:5px 10px 5px 0;border-top:1px solid rgba(255,255,255,.06)"';
-  const RD='style="padding:5px 0 5px 10px;text-align:right;border-top:1px solid rgba(255,255,255,.06);white-space:nowrap"';
+  const TD='style="padding:5px 10px 5px 0;border-top:1px solid var(--line-soft)"';
+  const RD='style="padding:5px 0 5px 10px;text-align:right;border-top:1px solid var(--line-soft);white-space:nowrap"';
   const money=k=>k.money_value!=null?'$'+fmtN(k.money_value):(k.cpc?'$'+fmtN(Math.round((k.search_volume||0)*(k.cpc||0))):'—');
   const kwtbl=(rows,exH,exC)=>rows&&rows.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
     <thead><tr><th ${TH}>Keyword</th><th ${RH}>Pos</th><th ${RH}>Vol/mo</th><th ${RH}>CPC</th><th ${RH}>$ value/mo</th><th ${RH}>${exH}</th></tr></thead>
-    <tbody>${rows.map(k=>`<tr><td ${TD}>${esc(k.keyword)||'—'}</td><td ${RD}>#${k.position}</td><td ${RD}>${fmtN(k.search_volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} class="mono" style="color:#3fb950">${money(k)}</td><td ${RD}>${exC(k)}</td></tr>`).join('')}</tbody></table>`:'<div class="muted small mt6">None with meaningful volume.</div>';
+    <tbody>${rows.map(k=>`<tr><td ${TD}>${esc(k.keyword)||'—'}</td><td ${RD}>#${k.position}</td><td ${RD}>${fmtN(k.search_volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} class="mono" style="color:var(--good)">${money(k)}</td><td ${RD}>${exC(k)}</td></tr>`).join('')}</tbody></table>`:'<div class="muted small mt6">None with meaningful volume.</div>';
   return `<div class="card full"><h2>🔍 SEO money-keyword audit</h2>
     <div class="metrics">
       ${metric('$'+fmtN(t.est_traffic_value),'Est. organic traffic value /mo','ASSUMPTION')}
@@ -488,7 +487,7 @@ function seoAuditCard(d){
       ${metric('+'+fmtN(t.quickwin_upside_traffic),'Quick-win upside /mo','ASSUMPTION')}
     </div>
     <div class="subh" style="margin-top:14px">💰 Top money keywords to win — one page-1 push away (currently pos 4–15), ranked by $ value</div>
-    ${kwtbl(mk,'+visits →#3',k=>`<span style="color:#3fb950">+${fmtN(k.upside_traffic)}</span>`)}
+    ${kwtbl(mk,'+visits →#3',k=>`<span style="color:var(--good)">+${fmtN(k.upside_traffic)}</span>`)}
     ${pw.length?`<div class="subh" style="margin-top:16px">🏆 Already ranking top-3 for these money terms — proof the site can rank</div>${kwtbl(pw,'visits/mo',k=>fmtN(k.est_traffic))}`:''}
     <div class="muted small" style="margin-top:10px">⚠ ${esc(a.assumption)} Audited ${fmtDate(a.fetched_at||df.fetched_at)}.${btn}</div>
   </div>`;
@@ -505,10 +504,10 @@ async function runSeoAudit(){
 //      transcript analysis, with the supporting reasons shown (not just a flag). ----
 function paidAdsVerdict(p){
   if(!p) return '';
-  const V={running:['#16331f','#3fb950','🎯','Running paid ads'],
-           likely:['#33300f','#d4a72c','📈','Likely running paid ads'],
-           not:['#2b2230','#a371f7','🚫','Not running paid ads'],
-           unknown:['#1c2430','#8b949e','❔','Unknown']};
+  const V={running:['rgba(63,185,80,.10)','#3fb950','🎯','Running paid ads'],
+           likely:['rgba(212,167,44,.10)','#d4a72c','📈','Likely running paid ads'],
+           not:['rgba(163,113,247,.10)','#a371f7','🚫','Not running paid ads'],
+           unknown:['rgba(139,148,158,.10)','#8b949e','❔','Unknown']};
   const v=V[p.verdict]||V.unknown;
   const CONF={high:'high confidence',medium:'medium confidence',low:'low confidence'};
   const SRC={website:'🌐 Website',call:'🗣 Call'};
@@ -525,7 +524,7 @@ function paidAdsVerdict(p){
       <span class="pill" style="background:${v[1]}22;color:${v[1]};border:1px solid ${v[1]}55">${CONF[p.confidence]||''}</span>
     </div>
     ${plat}
-    <div class="small" style="color:#8b949e;margin:8px 0 2px">Why — combining the website tracking-code scan and call analysis:</div>
+    <div class="small" style="color:var(--muted);margin:8px 0 2px">Why — combining the website tracking-code scan and call analysis:</div>
     <ul style="margin:0;padding:0">${reasons||'<li class="muted small">No signals yet.</li>'}</ul>
   </div>`;
 }
@@ -572,8 +571,8 @@ function dataforseoCard(d){
   }
   const ads=df.ads||{}, rank=df.rank||{}, org=rank.organic||{}, paid=rank.paid||{};
   const verdict = df.running_google_ads
-    ? `<span style="background:rgba(239,68,68,.16);color:#fca5a5;padding:4px 10px;border-radius:999px;font-weight:700">🎯 Running Google Ads — ${fmtN(ads.count)} ads · last seen ${esc(ads.last_shown||'?')}</span>`
-    : `<span style="background:rgba(148,163,184,.16);color:#cbd5e1;padding:4px 10px;border-radius:999px">No active Google Ads found</span>`;
+    ? `<span style="background:rgba(239,68,68,.16);color:var(--bad);padding:4px 10px;border-radius:999px;font-weight:700">🎯 Running Google Ads — ${fmtN(ads.count)} ads · last seen ${esc(ads.last_shown||'?')}</span>`
+    : `<span style="background:rgba(148,163,184,.16);color:var(--txt-dim);padding:4px 10px;border-radius:999px">No active Google Ads found</span>`;
   const fmts = Object.entries(ads.formats||{}).map(([k,v])=>esc(k)+': '+v).join(' · ');
   const advs = (ads.advertisers||[]).length;
   const creatives = (ads.items||[]).map(it=>{
@@ -693,7 +692,7 @@ async function enrichWebsite(){
 function bapu(label,v){const on=v&&v.value;return v?`<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}">${on?'✓':'✕'} ${label}</span>`:'';}
 // Prospect-specific next-call points (prefers AI next_call_points, else synthesizes from evidence).
 function nextCallPoints(ev){
-  const KIND={hook:['🪝','#93c5fd'],question:['❓','#c4b5fd'],objection:['🛡️','#fca5a5'],value:['💡','#fcd34d'],logistics:['📋','#86efac']};
+  const KIND={hook:['🪝','var(--accent)'],question:['❓','var(--accent)'],objection:['🛡️','var(--bad)'],value:['💡','var(--warn)'],logistics:['📋','var(--good)']};
   let pts = Array.isArray(ev.next_call_points) ? ev.next_call_points.filter(p=>p&&p.point) : [];
   if(!pts.length){
     const syn=[];
@@ -788,7 +787,7 @@ function nextMoveCard(d){
   const pts=(nm.points||[]).filter(p=>p&&p.point);
   return `<div class="card full" style="border-color:var(--accent);background:var(--accent-soft)">
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);font-weight:800;margin-bottom:6px">🎯 Winning next move — to book the meeting</div>
-    <div style="font-size:15px;font-weight:700;color:var(--txt);line-height:1.5">${esc(nm.move)}</div>
+    <div style="font-size:var(--t-strong);font-weight:750;color:var(--txt);line-height:1.5;letter-spacing:-.1px">${esc(nm.move)}</div>
     ${meta?`<div class="muted small" style="margin-top:7px">${meta}</div>`:''}
     ${pts.length?`<div class="subh" style="margin-top:12px">💬 What to say</div><ul style="margin:4px 0 0;padding-left:2px;list-style:none">${pts.map(p=>`<li class="small" style="margin:5px 0;color:var(--txt-dim)">${KIND[p.kind]||'•'} ${esc(p.point)}${p.why?` <span class="muted">— ${esc(p.why)}</span>`:''}</li>`).join('')}</ul>`:''}
   </div>`;
@@ -798,19 +797,19 @@ function nextActionCard(d){
   if(dnd){
     return `<div class="card full" style="border-color:#ef4444;background:rgba(239,68,68,.10)">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span style="font-weight:800;color:#f87171">🚫 DO NOT CONTACT</span>
+        <span style="font-weight:800;color:var(--bad)">🚫 DO NOT CONTACT</span>
         <span class="muted">${esc(dnd.reason||'Marked do-not-contact')}${dnd.at?' · '+esc(fmtDate(dnd.at)):''}</span>
         <span class="muted">— no further calls are scheduled.</span>
       </div></div>`;
   }
   if(na && na.when){
-    const assigned=na.bde?`Assigned: <b>${esc(na.bde)}</b>`:'<span style="color:#fb923c;font-weight:600">⚠ Unassigned — not on any BDE calendar</span>';
+    const assigned=na.bde?`Assigned: <b>${esc(na.bde)}</b>`:'<span style="color:var(--warn);font-weight:600">⚠ Unassigned — not on any BDE calendar</span>';
     // 'parked' = a deliberately far-out re-engage (e.g. locked into a renewed contract) —
     // NOT a call-this-week. Show it amber with the reason, not a green next-call.
     if(na.parked){
       return `<div class="card full" style="border-color:#d4a72c;background:rgba(212,167,44,.09)">
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <span style="font-weight:800;color:#e3b341;font-size:15px">⏳ Re-engage: ${esc(fmtDate(na.when))}</span>
+          <span style="font-weight:800;color:var(--warn);font-size:15px">⏳ Re-engage: ${esc(fmtDate(na.when))}</span>
           <span class="muted">${assigned}</span>
           ${na.reason?`<span class="pill" style="font-size:10px">📄 ${esc(na.reason)}</span>`:''}
           <span class="muted small">parked — don't call before then (no value in nagging a locked-in client)</span>
@@ -820,7 +819,7 @@ function nextActionCard(d){
     const src=na.source==='pipeline2'?'🔁 agency weekly rotation':(na.source==='calendar'?'📇 booked on BDE calendar':'⚡ priority queue');
     return `<div class="card full" style="border-color:#3fb950;background:rgba(63,185,80,.08)">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <span style="font-weight:800;color:#3fb950;font-size:15px">📅 Next call: ${esc(fmtDate(na.when))}</span>
+        <span style="font-weight:800;color:var(--good);font-size:15px">📅 Next call: ${esc(fmtDate(na.when))}</span>
         <span class="muted">${assigned}</span>
         <span class="pill" style="font-size:10px">${esc(src)}</span>
         ${na.attempts!=null?`<span class="muted small">${na.attempts} attempt${na.attempts==1?'':'s'} so far</span>`:''}
@@ -834,7 +833,7 @@ function priorityCard(d){
   const P=d.priority; if(!P||P.score==null) return '';
   const TIER={hot:['🔥','HOT PRIORITY','#ef4444','rgba(239,68,68,.13)'],warm:['⚡','PRIORITY','#fb923c','rgba(251,146,60,.13)'],cool:['·','LOW PRIORITY','#8b949e','rgba(139,148,158,.10)']};
   const t=TIER[P.tier]||TIER.cool; const r=P.reason||{};
-  const drivers=(r.drivers||[]).map(x=>`<span class="pill" style="background:rgba(59,130,246,.14);color:#93c5fd">${esc(x)}</span>`).join(' ');
+  const drivers=(r.drivers||[]).map(x=>`<span class="pill" style="background:var(--accent-soft);color:var(--accent)">${esc(x)}</span>`).join(' ');
   const assigned=P.assigned_bde?`Assigned: <b>${esc(P.assigned_bde)}</b>`:'<span class="muted">Unassigned</span>';
   const ctrls=d.can_download?`<button class="lnk" onclick="reassignNext(${P.prospect_id})">Reassign</button> · <button class="lnk" onclick="scheduleNext(${P.prospect_id})">Schedule</button>`:'';
   return `<div class="card full" style="border-color:${t[2]};background:${t[3]}">
@@ -863,9 +862,9 @@ function overallSummary(d){
   // ---- headline status line ----
   const head=[
     `<b>${calls.length}</b> call${calls.length>1?'s':''}`,
-    connectedYet?'<span style="color:#3fb950">✓ reached decision-maker</span>':'<span class="muted">not connected yet</span>',
+    connectedYet?'<span style="color:var(--good)">✓ reached decision-maker</span>':'<span class="muted">not connected yet</span>',
     plbl?`<span style="color:var(--txt-dim)">${esc(plbl)}</span>`:null,
-    bde?`<span class="muted">assigned ${esc(bde)}</span>`:'<span style="color:#fb923c">unassigned</span>',
+    bde?`<span class="muted">assigned ${esc(bde)}</span>`:'<span style="color:var(--warn)">unassigned</span>',
   ].filter(Boolean).join('<span class="muted"> · </span>');
 
   // ---- KEY FACTS chips (derived across all calls) ----
@@ -948,8 +947,8 @@ function competitorAuditCard(d){
     <div class="mt6">${runBtn}</div></div>`;
   const TH='style="text-align:left;color:var(--muted);font-weight:600;padding:0 10px 4px 0;white-space:nowrap"';
   const RH='style="text-align:right;color:var(--muted);font-weight:600;padding:0 0 4px 10px;white-space:nowrap"';
-  const TD='style="padding:5px 10px 5px 0;border-top:1px solid rgba(255,255,255,.06)"';
-  const RD='style="padding:5px 0 5px 10px;text-align:right;border-top:1px solid rgba(255,255,255,.06);white-space:nowrap"';
+  const TD='style="padding:5px 10px 5px 0;border-top:1px solid var(--line-soft)"';
+  const RD='style="padding:5px 0 5px 10px;text-align:right;border-top:1px solid var(--line-soft);white-space:nowrap"';
   const money=k=>k.money_value!=null?'$'+fmtN(k.money_value):(k.cpc?'$'+fmtN(Math.round((k.volume||0)*(k.cpc||0))):'—');
   // 1) real competitors
   const comps=(ca.competitors||[]).slice(0,5);
@@ -961,20 +960,20 @@ function competitorAuditCard(d){
   const orr=(ca.outranked||[]);
   const orrTbl=orr.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
     <thead><tr><th ${TH}>Keyword</th><th ${RH}>Vol/mo</th><th ${RH}>You</th><th ${RH}>Them</th><th ${RH}>$ value/mo</th></tr></thead>
-    <tbody>${orr.map(k=>`<tr><td ${TD}>${esc(k.keyword)} <span class="muted" style="font-size:10px">${esc(k.competitor||'')}</span></td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>#${k.our_position}</td><td ${RD} style="color:#f0883e">#${k.competitor_position}</td><td ${RD} style="color:#3fb950">${money(k)}</td></tr>`).join('')}</tbody></table>`
+    <tbody>${orr.map(k=>`<tr><td ${TD}>${esc(k.keyword)} <span class="muted" style="font-size:10px">${esc(k.competitor||'')}</span></td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>#${k.our_position}</td><td ${RD} style="color:var(--warn)">#${k.competitor_position}</td><td ${RD} style="color:var(--good)">${money(k)}</td></tr>`).join('')}</tbody></table>`
     :'<div class="muted small mt6">No overlapping keywords where a competitor beats you — you lead where you both rank. 👍</div>';
   // 3) on-topic money gap (they rank, you don't)
   const kg=(ca.keyword_gap||[]);
   const kgTbl=kg.length?`<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px">
     <thead><tr><th ${TH}>Keyword</th><th ${RH}>Vol/mo</th><th ${RH}>CPC</th><th ${RH}>$ value/mo</th></tr></thead>
-    <tbody>${kg.map(k=>`<tr><td ${TD}>${esc(k.keyword)}</td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} style="color:#3fb950">${money(k)}</td></tr>`).join('')}</tbody></table>`
+    <tbody>${kg.map(k=>`<tr><td ${TD}>${esc(k.keyword)}</td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} style="color:var(--good)">${money(k)}</td></tr>`).join('')}</tbody></table>`
     :'<div class="muted small mt6">No on-topic money gaps found against this competitor.</div>';
   // 4) content gap — competitor PAGES/topics winning on-topic keywords (what content to build)
   const cg=(ca.content_gap||[]);
   const cgHtml=cg.length?`<div class="subh mt6">📄 Content to build — competitor pages winning on-topic keywords</div>
     <div style="margin-top:4px">${cg.slice(0,5).map(p=>`<div class="small" style="margin:6px 0">
       <b>${esc(p.topic||p.page)}</b> <span class="muted">(${p.keyword_count} kw · ${fmtN(p.total_volume)}/mo)</span>
-      <div class="muted" style="font-size:11px;margin-top:2px">${esc((p.example_keywords||[]).slice(0,5).join(', '))}${p.page?' · <a href="'+esc(p.page)+'" target="_blank" style="color:#58a6ff">'+esc(p.domain||'source')+'</a>':''}</div>
+      <div class="muted" style="font-size:11px;margin-top:2px">${esc((p.example_keywords||[]).slice(0,5).join(', '))}${p.page?' · <a href="'+esc(p.page)+'" target="_blank" style="color:var(--accent)">'+esc(p.domain||'source')+'</a>':''}</div>
     </div>`).join('')}</div>`:'';
   const wins=w=>(w||[]).slice(0,5).map(x=>`<li class="small" style="margin:4px 0"><b>${esc(x.title)}</b>${x.detail?' — '+esc(x.detail):''}${(x.effort||x.impact)?` <span class="muted">(${esc(x.effort||'')}/${esc(x.impact||'')})</span>`:''}</li>`).join('');
   const geo=ca.geo_aeo&&ca.geo_aeo.score!=null?`<div class="subh mt6">🤖 AI-search (GEO/AEO) readiness — ${ca.geo_aeo.score}/100</div>
@@ -1010,7 +1009,7 @@ async function load(){
     if(!ms.length) return `<div class="card full"><h2>💬 SMS / chat</h2><div class="muted small">No inbound SMS/chat captured for this prospect.</div></div>`;
     const rows=ms.map(m=>{
       const badge = m.is_booking_confirmation ? `<span class="pill yes">📅 booking confirmation</span>`
-        : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.16);color:#cbd5e1">${esc(m.intent)}</span>` : '');
+        : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.16);color:var(--txt-dim)">${esc(m.intent)}</span>` : '');
       const when = esc(String(m.time_sent||'').slice(0,16).replace('T',' '));
       const mt = m.meeting_datetime ? `<div class="muted small" style="margin-top:3px">🗓 ${esc(m.meeting_datetime)}</div>` : '';
       const lnk = m.applied_call_id ? ` · <a class="lnk" href="/call/${esc(m.applied_call_id)}" target="_blank">firmed booking ↗</a>` : '';
@@ -1037,10 +1036,10 @@ async function load(){
   const defPane = (d.calls||[]).length ? 'calls' : 'uploaded';
   document.getElementById('main').innerHTML =
     heroCard(d)
-    + nextMoveCard(d)
-    + nextActionCard(d)
-    + priorityCard(d)
-    + overallSummary(d)
+    + nextMoveCard(d)      // #1 action — the single best move, reads first
+    + overallSummary(d)    // the synthesis / story across all calls
+    + nextActionCard(d)    // when & who is scheduled next
+    + priorityCard(d)      // priority score
     + `<div class="tabs">${tabs.map(t=>`<button class="tab${t[0]===defPane?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
     + tabs.map(t=>`<div class="tabpane${t[0]===defPane?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');
   document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{

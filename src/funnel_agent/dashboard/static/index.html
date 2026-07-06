@@ -103,7 +103,7 @@
   .ev{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}
   .ev .s{display:flex;justify-content:space-between;font-weight:600}
   .ev .q{color:var(--muted);margin-top:4px;font-size:13px}
-  .transcript{white-space:pre-wrap;background:#0b0f15;border:1px solid var(--line);border-radius:8px;padding:12px;max-height:42vh;overflow:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cbd5e1}
+  .transcript{white-space:pre-wrap;background:var(--panel3);border:1px solid var(--line);border-radius:8px;padding:12px;max-height:42vh;overflow:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--txt-dim)}
   .muted{color:var(--muted)}
   .x{cursor:pointer;color:var(--muted);font-size:20px;border:none;background:none}
   .empty{color:var(--muted);padding:20px;text-align:center}
@@ -248,10 +248,10 @@
     color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
     font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
   ::selection{background:var(--accent-soft)}
-  *{scrollbar-width:thin;scrollbar-color:#2a3344 transparent}
+  *{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
   *::-webkit-scrollbar{width:10px;height:10px}
-  *::-webkit-scrollbar-thumb{background:#28313f;border:2px solid transparent;background-clip:padding-box;border-radius:8px}
-  *::-webkit-scrollbar-thumb:hover{background:#34404f;background-clip:padding-box}
+  *::-webkit-scrollbar-thumb{background:var(--line2);border:2px solid transparent;background-clip:padding-box;border-radius:8px}
+  *::-webkit-scrollbar-thumb:hover{background:var(--faint);background-clip:padding-box}
   *::-webkit-scrollbar-track{background:transparent}
 
   /* --- form controls: flat, hairline, single accent focus ring --- */
@@ -315,18 +315,18 @@
     transition:background .3s,border-color .3s;flex:0 1 248px;min-width:0;width:auto;box-sizing:border-box}
   .livebadge .lb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--good);
     box-shadow:0 0 0 0 rgba(74,222,128,.55);animation:lb-pulse 1.6s ease-out infinite}
-  .livebadge .lb-text{flex:none;font-size:var(--t-meta);font-weight:800;letter-spacing:.7px;color:#86efac}
+  .livebadge .lb-text{flex:none;font-size:var(--t-meta);font-weight:800;letter-spacing:.7px;color:var(--good)}
   .livebadge .lb-sub{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     font-size:var(--t-meta);color:var(--muted);font-variant-numeric:tabular-nums}
-  .livebadge .lb-spark{flex:none;font-size:var(--t-cap);line-height:1;color:#86efac;animation:lb-twinkle 2.2s ease-in-out infinite}
+  .livebadge .lb-spark{flex:none;font-size:var(--t-cap);line-height:1;color:var(--good);animation:lb-twinkle 2.2s ease-in-out infinite}
   .livebadge.connecting{border-color:rgba(251,191,36,.34);background:rgba(251,191,36,.08)}
   .livebadge.connecting .lb-dot{background:var(--warn);animation-duration:1s}
-  .livebadge.connecting .lb-text{color:#fcd34d}
-  .livebadge.connecting .lb-spark{color:#fcd34d}
+  .livebadge.connecting .lb-text{color:var(--warn)}
+  .livebadge.connecting .lb-spark{color:var(--warn)}
   .livebadge.offline{border-color:rgba(248,113,113,.34);background:rgba(248,113,113,.08)}
   .livebadge.offline .lb-dot{background:var(--bad);box-shadow:none;animation:none}
-  .livebadge.offline .lb-text{color:#fca5a5}
-  .livebadge.offline .lb-spark{color:#fca5a5;animation:none}
+  .livebadge.offline .lb-text{color:var(--bad)}
+  .livebadge.offline .lb-spark{color:var(--bad);animation:none}
 
   /* --- classification progress bar — flat accent fill (no neon/rainbow flow).
      Full-bleed background + divider span the viewport; the INNER content
@@ -354,7 +354,7 @@
   .clsbar.done .clsfill{background:linear-gradient(90deg,#16a34a,var(--good));box-shadow:none;animation:none}
   .clsbar.done .clsfill::after{animation:none;opacity:0}
   .clsbar.done .clslabel .dot{background:var(--good);animation:none;box-shadow:0 0 6px rgba(74,222,128,.55)}
-  .clsbar.done .clsbadge{color:#86efac;border-color:rgba(74,222,128,.35)}
+  .clsbar.done .clsbadge{color:var(--good);border-color:rgba(74,222,128,.35)}
 
   /* --- layout shell --- */
   main{padding:20px var(--content-pad);max-width:var(--content-w);margin:0 auto}
@@ -396,8 +396,8 @@
   /* --- deltas: small colored lozenges --- */
   .delta{font-size:var(--t-meta);font-weight:800;margin-left:7px;font-variant-numeric:tabular-nums;letter-spacing:.2px;
     padding:1px 6px;border-radius:6px}
-  .delta.up{color:#86efac;background:rgba(74,222,128,.13)}
-  .delta.down{color:#fca5a5;background:rgba(248,113,113,.13)}
+  .delta.up{color:var(--good);background:rgba(74,222,128,.13)}
+  .delta.down{color:var(--bad);background:rgba(248,113,113,.13)}
   .delta.flat{color:var(--faint);background:rgba(139,150,166,.10)}
 
   /* --- lead chips --- */
@@ -446,7 +446,7 @@
   #funnelTable td.benchcell,#funnelTable th.benchhead{text-align:left;padding-left:18px;color:var(--muted)}
   .bench{display:inline-flex;align-items:center;gap:5px;font-size:var(--t-meta);font-weight:800;
     font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.4}
-  .bench.ok{color:#86efac}.bench.bad{color:#fca5a5}
+  .bench.ok{color:var(--good)}.bench.bad{color:var(--bad)}
   .bench .muted{font-weight:500}
 
   /* pipeline table (center-aligned, larger drill numbers) */
@@ -471,9 +471,9 @@
   /* --- pills (engine: p-good/p-mid/p-bad; p-ok defensive) --- */
   .pill{display:inline-block;min-width:42px;text-align:center;padding:2px 9px;border-radius:7px;font-size:11.5px;
     font-weight:700;font-variant-numeric:tabular-nums;line-height:1.55;border:1px solid transparent;vertical-align:middle}
-  .p-good,.p-ok{background:rgba(74,222,128,.13);color:#86efac;border-color:rgba(74,222,128,.24)}
-  .p-mid{background:rgba(251,191,36,.14);color:#fcd34d;border-color:rgba(251,191,36,.26)}
-  .p-bad{background:rgba(248,113,113,.13);color:#fca5a5;border-color:rgba(248,113,113,.26)}
+  .p-good,.p-ok{background:rgba(74,222,128,.13);color:var(--good);border-color:rgba(74,222,128,.24)}
+  .p-mid{background:rgba(251,191,36,.14);color:var(--warn);border-color:rgba(251,191,36,.26)}
+  .p-bad{background:rgba(248,113,113,.13);color:var(--bad);border-color:rgba(248,113,113,.26)}
 
   /* --- drill links --- */
   .drill{cursor:pointer;font-variant-numeric:tabular-nums;text-decoration:underline dotted;text-underline-offset:3px;
@@ -517,8 +517,8 @@
   .ev{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r1);padding:10px 12px;margin:8px 0}
   .ev .s{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:var(--t-body);gap:10px}
   .ev .q{color:var(--txt-dim);margin-top:5px;font-size:var(--t-body);line-height:1.5}
-  .transcript{white-space:pre-wrap;background:#070a0f;border:1px solid var(--line);border-radius:var(--r1);
-    padding:12px;max-height:42vh;overflow:auto;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c8d2de}
+  .transcript{white-space:pre-wrap;background:var(--panel3);border:1px solid var(--line);border-radius:var(--r1);
+    padding:12px;max-height:42vh;overflow:auto;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--txt-dim)}
   .stageitem{display:block;padding:10px 12px;margin:7px 0;background:var(--panel2);border:1px solid var(--line);
     border-radius:var(--r1);color:var(--txt);font-size:var(--t-body);text-decoration:none;transition:border-color .14s,background .14s}
   .stageitem:hover{border-color:var(--accent);background:var(--panel3)}
@@ -699,11 +699,6 @@
       </div>
       <div className="vdiv"></div>
       <nav className="appnav">
-        ${nav('calBtn','/calendar','📅 Calendar',{title:'Open the calendar'})}
-        ${nav('p2Btn','/pipeline2','🔁 Pipeline',{title:'Pipeline 2 — call list / assignments'})}
-        ${nav('coachBtn','/coaching','🎓 Coaching',{title:'Coaching & development — per-BDE call intelligence'})}
-        ${nav('dbBtn','/database','🗄️ Database',{hidden:true,title:'Master prospect database'})}
-        ${nav('adminBtn','/admin','⚙️ Admin',{hidden:true,title:'User management'})}
         ${nav('tvBtn','/?tv=1','📺 TV',{target:'_blank',title:'Open full-screen for an office TV'})}
       </nav>
       <div className="right">

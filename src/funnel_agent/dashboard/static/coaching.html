@@ -55,7 +55,7 @@
   .hd-t{font-size:var(--t-strong);font-weight:700;color:var(--txt);letter-spacing:.2px;line-height:1.3}
   .sub{font-size:var(--t-cap);color:var(--muted);line-height:1.55;margin:6px 0 14px;max-width:70ch}
   .sub b{color:var(--txt-dim);font-weight:600}
-  .foot{font-size:var(--t-meta);color:var(--faint);line-height:1.55;margin-top:10px}
+  .foot{font-size:var(--t-meta);color:var(--faint);line-height:1.55;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-soft)}
 
   /* In-card sub-heading overline */
   h2{font-size:var(--t-eyebrow);margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
@@ -64,7 +64,7 @@
   /* Skill bars */
   .bar{display:flex;align-items:center;gap:10px;margin:8px 0}
   .bl{width:132px;font-size:var(--t-cap);color:var(--txt-dim)}
-  .bt{flex:1;height:9px;background:#0b0f15;border:1px solid var(--line-soft);border-radius:999px;overflow:hidden;position:relative}
+  .bt{flex:1;height:9px;background:var(--chip);border:1px solid var(--line-soft);border-radius:999px;overflow:hidden;position:relative}
   .bt i{display:block;height:100%;border-radius:999px}
   .bn{width:82px;text-align:right;font-size:var(--t-cap);font-variant-numeric:tabular-nums;color:var(--txt-dim)}
 
@@ -135,7 +135,6 @@
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a class="back" href="/">&larr; Dashboard</a>
   <div class="htitle"><span class="eyebrow">Rep development</span><h1>Coaching &amp; development</h1></div>
   <div class="hspacer"></div>
   <div class="ctrl"><label for="bde">Viewing BDE</label><select id="bde"></select></div>
@@ -146,12 +145,12 @@ const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const DIMS=['opening','discovery','pitch','objection_handling','close'];
 const LBL={opening:'Opening',discovery:'Discovery',pitch:'Pitch',objection_handling:'Objection handling',close:'Close'};
-function col(v){v=Number(v||0);return v>=3.5?'#4ade80':v>=2.5?'#fbbf24':'#f87171';}
+function col(v){v=Number(v||0);return v>=3.5?'var(--good)':v>=2.5?'var(--warn)':'var(--bad)';}
 function barRow(label,v){v=v==null?0:Number(v);
   return `<div class="bar"><span class="bl">${label}</span><span class="bt"><i style="width:${v/5*100}%;background:${col(v)}"></i></span><span class="bn">${v?v.toFixed(2):'—'}/5</span></div>`;}
-function col100(v){v=Number(v||0);return v>=50?'#4ade80':v>=30?'#fbbf24':'#f87171';}
+function col100(v){v=Number(v||0);return v>=50?'var(--good)':v>=30?'var(--warn)':'var(--bad)';}
 function callLink(x){const t=esc(x.company||x.dest_number||x.call_id);
-  return `<li><a href="/call/${encodeURIComponent(x.call_id)}" style="color:#93c5fd;text-decoration:none">${t}</a>`
+  return `<li><a href="/call/${encodeURIComponent(x.call_id)}" style="color:var(--accent);text-decoration:none">${t}</a>`
     +(x.who_answered?` <span class="muted" style="font-size:11.5px">— ${esc(x.who_answered)}</span>`:'')
     +(x.gatekeeper_notes?`<div class="muted" style="font-size:11.5px">${esc(x.gatekeeper_notes)}</div>`:'')+`</li>`;}
 
@@ -210,7 +209,7 @@ async function load(){
   const stageRow=k=>{const a=fn[k]||[],n=a[0],p=a[1];const dlt=(n!=null&&p!=null)?(n-p):null;
     return `<div>${FL[k]}</div><div class="big" style="font-size:18px">${n!=null?n+'%':'—'}</div>
       <div class="muted">${p!=null?'was '+p+'%':'—'}${dlt!=null?` <span class="delta ${dlt>=0?'up':'down'}">${dlt>=0?'▲':'▼'}${Math.abs(dlt).toFixed(1)}</span>`:''}</div>`;};
-  const KIND={up:'#4ade80',down:'#f87171',tip:'#fbbf24'};
+  const KIND={up:'var(--good)',down:'var(--bad)',tip:'var(--warn)'};
   const KICON={up:'✅',down:'⚠️',tip:'💡'};
   const fb=`<div class="card full" style="border-color:rgba(91,140,255,.45);background:linear-gradient(180deg,rgba(91,140,255,.08),var(--panel))">
     <div class="hd"><div class="eyebrow" style="color:var(--accent)">Priority focus</div><div class="hd-t">Feedback intelligence — what changed &amp; what to do next</div></div>
@@ -219,14 +218,14 @@ async function load(){
       <div class="h">Stage (this vs previous period)</div><div class="h">Now</div><div class="h">Prev</div>
       ${['connect','rpc','pitch','booked'].map(stageRow).join('')}</div>
     ${ins.length?`<ul class="ci" style="font-size:13.5px;list-style:none;padding-left:0">
-      ${ins.map(i=>`<li style="margin:8px 0;padding-left:26px;position:relative"><span style="position:absolute;left:0">${KICON[i.kind]||'•'}</span><span style="color:${KIND[i.kind]||'#e6edf3'}">${esc(i.text)}</span></li>`).join('')}</ul>`
+      ${ins.map(i=>`<li style="margin:8px 0;padding-left:26px;position:relative"><span style="position:absolute;left:0">${KICON[i.kind]||'•'}</span><span style="color:${KIND[i.kind]||'var(--txt)'}">${esc(i.text)}</span></li>`).join('')}</ul>`
       :'<div class="muted">Not enough activity in this period to compute changes yet.</div>'}
     <div class="foot">Compares the selected window against the previous equal-length working period. Green = improving, amber = a fix to apply, red = a drop to address.</div></div>`;
   // RPC-connect feedback — reaching the decision-maker vs stopping at the gatekeeper.
   const team=rf.team||{}, rrows=rf.rows||[], rtips=rf.tips||[], rex=rf.examples||{};
   const rd=rex.reached_dm||[], sg=rex.stopped_at_gatekeeper||[];
   const bdeBars=rrows.length?rrows.map(r=>{const hl=r.bde===bde;
-      return `<div class="bar"><span class="bl"${hl?' style="font-weight:700;color:#fff"':''}>${esc(r.bde)}</span>
+      return `<div class="bar"><span class="bl"${hl?' style="font-weight:700;color:var(--accent)"':''}>${esc(r.bde)}</span>
         <span class="bt"><i style="width:${Math.min(Number(r.rpc_rate||0),100)}%;background:${col100(r.rpc_rate)}"></i></span>
         <span class="bn">${r.rpc_rate!=null?r.rpc_rate+'%':'—'}</span>
         <span class="muted" style="width:96px;text-align:right;font-size:11.5px">GK ${r.gk_handled_rate!=null?r.gk_handled_rate+'%':'—'}</span></div>`;}).join('')
@@ -240,7 +239,7 @@ async function load(){
       <div class="kpi"><div class="big" style="color:var(--good)">${team.reached_dm||0}</div><div class="l">Reached decision-maker</div><div class="s">Calls that got to the right party</div></div>
       <div class="kpi"><div class="big" style="color:var(--bad)">${team.stopped_at_gatekeeper||0}</div><div class="l">Stopped at gatekeeper</div><div class="s">Calls that never reached the DM</div></div>
     </div>
-    ${rtips.length?`<ul class="ci" style="list-style:none;padding-left:0">${rtips.map(t=>`<li style="margin:7px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">💡</span><span style="color:#fbbf24">${esc(t)}</span></li>`).join('')}</ul>`:''}
+    ${rtips.length?`<ul class="ci" style="list-style:none;padding-left:0">${rtips.map(t=>`<li style="margin:7px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">💡</span><span style="color:var(--warn)">${esc(t)}</span></li>`).join('')}</ul>`:''}
     <h2 style="margin-top:14px">RPC-connect rate by BDE <span class="muted" style="text-transform:none;letter-spacing:0">(reached decision-maker ÷ connected)</span></h2>
     ${bdeBars}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px">

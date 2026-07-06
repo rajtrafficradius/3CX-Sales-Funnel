@@ -25,11 +25,15 @@
   header{display:flex;align-items:center;gap:var(--s4);padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:6}
   header a{color:var(--accent);text-decoration:none;font-size:var(--t-body)}
   header a:hover{text-decoration:underline}
+  header a.signout{color:var(--txt-dim);border:1px solid var(--line2);border-radius:var(--r2);padding:6px 12px;font-size:var(--t-cap);transition:border-color .12s,color .12s}
+  header a.signout:hover{border-color:var(--accent);color:var(--txt);text-decoration:none}
   header h1{font-size:var(--t-strong);margin:0;font-weight:700;letter-spacing:-.2px}
+  .hgroup{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .hsub{font-size:var(--t-cap);color:var(--faint);line-height:1.3}
   .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0}
   .brand img{height:24px;display:block}
   .spacer{flex:1}
-  .live{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-cap);color:var(--muted)}
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:var(--t-cap);color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:5px 11px}
   .live .dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(74,222,128,.5);animation:pulse 2s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.5)}70%{box-shadow:0 0 0 7px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
   main{max-width:1480px;margin:0 auto;padding:20px 22px}
@@ -46,7 +50,7 @@
   .stat.cov{cursor:pointer;user-select:none;transition:border-color .12s,box-shadow .12s,background .12s}
   .stat.cov:hover{border-color:var(--line2)}
   .stat.cov.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset,var(--elev1);background:var(--accent-soft)}
-  .stat.cov.active .l{color:#9ec3ff}
+  .stat.cov.active .l{color:var(--accent)}
   /* ---- panels ---- */
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2)}
   /* ---- filter panel ---- */
@@ -79,7 +83,7 @@
   .trkchips{display:flex;gap:8px;flex-wrap:wrap}
   .trkchip{background:var(--panel3);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;font-size:var(--t-cap);color:var(--txt-dim);cursor:pointer;user-select:none;transition:border-color .12s,color .12s,background .12s}
   .trkchip:hover{border-color:var(--accent);color:var(--txt)}
-  .trkchip.active{background:var(--accent-soft);border-color:var(--accent);color:#cfe0ff;font-weight:700}
+  .trkchip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:700}
   /* ---- results header + active-filter pills ---- */
   .results-head{margin:0 0 var(--s3)}
   .results-head .overline{margin-bottom:8px}
@@ -89,8 +93,8 @@
   .fpill{display:inline-flex;align-items:center;gap:7px;background:var(--chip);border:1px solid var(--line2);border-radius:999px;padding:4px 8px 4px 12px;font-size:var(--t-cap);color:var(--txt-dim)}
   .fpill button{all:unset;cursor:pointer;color:var(--muted);font-weight:800;line-height:1;padding:0 1px}
   .fpill button:hover{color:var(--bad)}
-  #clearAll{border-color:rgba(248,113,113,.45);color:#fca5a5;padding:6px 12px;font-size:var(--t-cap)}
-  #clearAll:hover{border-color:var(--bad);background:rgba(248,113,113,.10);color:#fca5a5}
+  #clearAll{border-color:rgba(248,113,113,.45);color:var(--bad);padding:6px 12px;font-size:var(--t-cap)}
+  #clearAll:hover{border-color:var(--bad);background:rgba(248,113,113,.10);color:var(--bad)}
   /* ---- table ---- */
   .tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);overflow:auto}
   table{width:100%;border-collapse:collapse;font-size:var(--t-body);white-space:nowrap}
@@ -109,7 +113,7 @@
   /* ---- pills / badges ---- */
   .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:var(--t-micro);font-weight:700;line-height:1.7}
   .p1{background:rgba(91,140,255,.16);color:#7cb0ff}.p2{background:rgba(168,85,247,.16);color:#c79bf7}
-  .ok{background:rgba(74,222,128,.15);color:#86efac}.none{background:rgba(139,150,166,.14);color:#cbd5e1}
+  .ok{background:rgba(74,222,128,.15);color:var(--good)}.none{background:rgba(139,150,166,.14);color:var(--muted)}
   .muted{color:var(--muted)}
   .dom{color:var(--accent)}
   /* ---- pager ---- */
@@ -120,6 +124,7 @@
     main{padding:14px}
     header{padding:12px 14px;gap:10px}
     header h1{font-size:var(--t-body)}
+    .hsub{display:none}
     .filters{padding:14px}
     .filters-top{gap:var(--s3)}
     .field--search{flex:1 1 100%}
@@ -169,11 +174,13 @@
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a href="/">&larr; Dashboard</a>
-  <h1>Prospect Database</h1>
+  <div class="hgroup">
+    <h1>Prospect Database</h1>
+    <div class="hsub">Every business in the pipeline — search, segment &amp; enrich</div>
+  </div>
   <span class="spacer"></span>
   <span class="live"><span class="dot"></span><span id="liveText">live</span></span>
-  <a href="/logout" style="font-size:13px">Sign out</a>
+  <a class="signout" href="/logout">Sign out</a>
 </header>
 
 <main>
@@ -492,8 +499,8 @@ function fmtRev(m){
 }
 function paidAdsCell(r){
   const bits=[];
-  if(r.runs_google_ads) bits.push('<span class="pill" style="background:rgba(239,68,68,.16);color:#fca5a5" title="Confirmed via Google Ads Transparency Center">🎯 Google</span>');
-  if(r.has_meta_pixel) bits.push('<span class="pill" style="background:rgba(59,130,246,.16);color:#93c5fd" title="Meta Pixel present (supportive)">📘 Meta</span>');
+  if(r.runs_google_ads) bits.push('<span class="pill" style="background:rgba(239,68,68,.16);color:var(--bad)" title="Confirmed via Google Ads Transparency Center">🎯 Google</span>');
+  if(r.has_meta_pixel) bits.push('<span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)" title="Meta Pixel present (supportive)">📘 Meta</span>');
   if(bits.length) return bits.join(' ');
   if(r.dfs_checked) return '<span class="muted" title="Transparency checked — no Google ads">No</span>';
   if(r.scanned) return '<span class="muted" title="not transparency-checked yet">·</span>';

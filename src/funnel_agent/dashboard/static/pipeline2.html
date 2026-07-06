@@ -40,7 +40,7 @@
     background:linear-gradient(180deg,#10151e,#0d121a);border-bottom:1px solid var(--line);
     position:sticky;top:0;z-index:5}
   header a{color:var(--accent);text-decoration:none;font-size:var(--t-cap)}
-  header a:hover{color:#7ea6ff}
+  header a:hover{color:var(--accent2)}
   .brand{display:flex;align-items:center;background:#fff;border-radius:var(--r2);padding:5px 10px;line-height:0}
   .brand img{height:24px;display:block}
   .back{display:inline-flex;align-items:center;gap:4px;padding:6px 11px;border:1px solid var(--line);
@@ -70,7 +70,8 @@
   .bar{display:flex;gap:var(--s3);align-items:center;flex-wrap:wrap;margin-bottom:var(--s4)}
   .filters{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap}
   .filter{display:inline-flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);
-    border-radius:var(--r2);padding:6px 12px;color:var(--txt-dim)}
+    border-radius:var(--r2);padding:6px 12px;color:var(--txt-dim);transition:border-color .15s,box-shadow .15s}
+  .filter:hover{border-color:var(--line2)}
   .filter:focus-within{border-color:var(--accent);box-shadow:var(--ring)}
   .filter .filter-lbl{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700}
   .filter.check{cursor:pointer}
@@ -89,7 +90,7 @@
     font-weight:700;box-shadow:var(--elev1)}
   button.primary:hover{filter:brightness(1.07)}
   button.small{padding:5px 9px;font-size:var(--t-cap)}
-  button.rbtn{background:var(--accent-soft);border-color:rgba(91,140,255,.35);color:#cfe0ff;font-weight:650}
+  button.rbtn{background:var(--accent-soft);border-color:rgba(91,140,255,.35);color:var(--accent);font-weight:650}
   button.rbtn:hover{background:rgba(91,140,255,.24);border-color:var(--accent)}
   button.dndbtn{background:transparent;border-color:var(--line2);color:var(--txt-dim)}
   button.dndbtn:hover{border-color:var(--bad);color:var(--bad)}
@@ -111,10 +112,11 @@
   tbody tr:hover td{background:var(--panel2)}
   tbody tr:last-child td{border-bottom:none}
   tr.due td{background:rgba(251,191,36,.06)}
+  tr.due td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
   tr.due:hover td{background:rgba(251,191,36,.10)}
 
   a.lnk{color:var(--accent);text-decoration:none;font-weight:650}
-  a.lnk:hover{color:#7ea6ff;text-decoration:underline}
+  a.lnk:hover{color:var(--accent2);text-decoration:underline}
 
   /* ── Pills / badges ── */
   .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;
@@ -134,7 +136,7 @@
     font-size:var(--t-body);color:var(--txt);box-shadow:var(--elev2);opacity:0;
     transition:opacity .25s,transform .25s;pointer-events:none;z-index:20}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-  .toast.err{border-color:rgba(248,113,113,.5);color:#fca5a5}
+  .toast.err{border-color:rgba(248,113,113,.5);color:var(--bad)}
 
   @media (max-width:640px){
     header{padding:10px 14px;gap:10px}
@@ -187,7 +189,6 @@
 <body>
 <header>
   <a class="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <a class="back" href="/">&larr; Dashboard</a>
   <div class="hgroup">
     <span class="eyebrow">Sales funnel · Pipeline 2</span>
     <h1 id="title">Pipeline 2 — call list</h1>
@@ -281,7 +282,7 @@ async function load(){
     const prospect = `<a class="lnk" href="/prospect/${encodeURIComponent(r.dest_number||r.dest9)}" target="_blank">${name}</a>
       <div class="muted" style="font-size:11.5px">${esc(r.dest_number||'')}${r.domain?' · '+esc(r.domain):''}</div>`;
     const status = r.dnd
-      ? `<span class="pill" style="background:rgba(239,68,68,.18);color:#fca5a5" title="${esc(r.dnd_reason||'')}${r.dnd_by?' ('+esc(r.dnd_by)+')':''}">🚫 DND</span>`
+      ? `<span class="pill" style="background:rgba(239,68,68,.18);color:var(--bad)" title="${esc(r.dnd_reason||'')}${r.dnd_by?' ('+esc(r.dnd_by)+')':''}">🚫 DND</span>`
       : (due?`<span class="pill due">Due now</span>`:`<span class="pill wait">Scheduled</span>`)
         + (r.override_by?` <span class="pill ovr" title="manually set by ${esc(r.override_by)}">override</span>`:'');
     const contract = r.contract_end
