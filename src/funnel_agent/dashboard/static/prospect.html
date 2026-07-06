@@ -728,20 +728,43 @@ async function addPhone(){
   }catch(e){ toast(e.message,true); }
 }
 
+// ---- Next scheduled call / Do-Not-Contact — shown for EVERY prospect (all pipelines),
+//      consolidating the calendar appointment, the P2 agency rotation, and the priority queue. ----
+function nextActionCard(d){
+  const dnd=d.dnd, na=d.next_action;
+  if(dnd){
+    return `<div class="card full" style="border-color:#ef4444;background:rgba(239,68,68,.10)">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-weight:800;color:#f87171">🚫 DO NOT CONTACT</span>
+        <span class="muted">${esc(dnd.reason||'Marked do-not-contact')}${dnd.at?' · '+esc(fmtDate(dnd.at)):''}</span>
+        <span class="muted">— no further calls are scheduled.</span>
+      </div></div>`;
+  }
+  if(na && na.when){
+    const src=na.source==='pipeline2'?'🔁 agency weekly rotation':(na.source==='calendar'?'📇 booked on BDE calendar':'⚡ priority queue');
+    const assigned=na.bde?`Assigned: <b>${esc(na.bde)}</b>`:'<span style="color:#fb923c;font-weight:600">⚠ Unassigned — not on any BDE calendar</span>';
+    return `<div class="card full" style="border-color:#3fb950;background:rgba(63,185,80,.08)">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span style="font-weight:800;color:#3fb950;font-size:15px">📅 Next call: ${esc(fmtDate(na.when))}</span>
+        <span class="muted">${assigned}</span>
+        <span class="pill" style="font-size:10px">${esc(src)}</span>
+        ${na.attempts!=null?`<span class="muted small">${na.attempts} attempt${na.attempts==1?'':'s'} so far</span>`:''}
+      </div></div>`;
+  }
+  return `<div class="card full"><div class="muted small">📅 No next call scheduled for this prospect yet.</div></div>`;
+}
 // ---- Smart next-call priority (A) ---- //
 function priorityCard(d){
   const P=d.priority; if(!P||P.score==null) return '';
   const TIER={hot:['🔥','HOT PRIORITY','#ef4444','rgba(239,68,68,.13)'],warm:['⚡','PRIORITY','#fb923c','rgba(251,146,60,.13)'],cool:['·','LOW PRIORITY','#8b949e','rgba(139,148,158,.10)']};
   const t=TIER[P.tier]||TIER.cool; const r=P.reason||{};
   const drivers=(r.drivers||[]).map(x=>`<span class="pill" style="background:rgba(59,130,246,.14);color:#93c5fd">${esc(x)}</span>`).join(' ');
-  const nbt=P.next_best_time?fmtDate(P.next_best_time):null;
   const assigned=P.assigned_bde?`Assigned: <b>${esc(P.assigned_bde)}</b>`:'<span class="muted">Unassigned</span>';
   const ctrls=d.can_download?`<button class="lnk" onclick="reassignNext(${P.prospect_id})">Reassign</button> · <button class="lnk" onclick="scheduleNext(${P.prospect_id})">Schedule</button>`:'';
   return `<div class="card full" style="border-color:${t[2]};background:${t[3]}">
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <span style="background:${t[3]};color:${t[2]};font-weight:800;padding:6px 14px;border-radius:20px">${t[0]} ${t[1]}</span>
       <span style="font-size:22px;font-weight:800;color:var(--txt)">${Math.round(P.score)}<span class="muted" style="font-size:13px;font-weight:600">/100 next-call priority</span></span>
-      ${nbt?`<span class="muted">📅 Next best call: <b>${esc(nbt)}</b></span>`:''}
       <span class="muted">${assigned}</span>
       <span style="margin-left:auto">${ctrls}</span>
     </div>
@@ -858,6 +881,7 @@ async function load(){
   const defPane = (d.calls||[]).length ? 'calls' : 'uploaded';
   document.getElementById('main').innerHTML =
     heroCard(d)
+    + nextActionCard(d)
     + priorityCard(d)
     + `<div class="tabs">${tabs.map(t=>`<button class="tab${t[0]===defPane?' active':''}" data-pane="${t[0]}">${t[1]}</button>`).join('')}</div>`
     + tabs.map(t=>`<div class="tabpane${t[0]===defPane?' active':''}" id="pane-${t[0]}">${t[2]}</div>`).join('');

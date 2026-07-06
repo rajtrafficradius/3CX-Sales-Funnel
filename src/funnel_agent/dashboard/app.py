@@ -2063,6 +2063,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             priority = None
 
+        # Next scheduled action + Do-Not-Contact status — consolidate the three sources so EVERY
+        # prospect page shows the next call (or clearly says why there isn't one). Sources, in
+        # order of authority: a real dated calendar appointment (calendar_events) > the P2 agency
+        # rotation board (prospect_pipeline, weekly cadence) > the priority queue (next_best_time).
+        next_action = None
+        dnd = None
+        try:
+            d9list = list(d9s) if d9s else []
+            board = None
+            if d9list:
+                bd = q("SELECT pipeline, assigned_bde, next_action_at, cadence_days, attempts, "
+                       "dnd, dnd_reason, dnd_at FROM prospect_pipeline "
+                       "WHERE dest9 = ANY(%s) ORDER BY updated_at DESC NULLS LAST LIMIT 1", (d9list,))
+                board = bd[0] if bd else None
+            if board and board.get("dnd"):
+                dnd = {"reason": board.get("dnd_reason"), "at": board.get("dnd_at")}
+            cal = None
+            if d9list and not dnd:
+                ev = q("SELECT type, start_at, bde_name, status FROM calendar_events "
+                       "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%s) "
+                       "  AND status='pending' ORDER BY start_at ASC LIMIT 1", (d9list,))
+                cal = ev[0] if ev else None
+            if dnd:
+                next_action = None
+            elif cal:
+                next_action = {"when": cal["start_at"], "bde": cal.get("bde_name"),
+                               "source": "calendar", "type": cal.get("type")}
+            elif board and board.get("next_action_at"):
+                next_action = {"when": board["next_action_at"], "bde": board.get("assigned_bde"),
+                               "source": "pipeline2", "type": "agency_cadence",
+                               "attempts": board.get("attempts")}
+            elif priority and priority.get("next_best_time"):
+                next_action = {"when": priority["next_best_time"], "bde": priority.get("assigned_bde"),
+                               "source": "queue", "type": "priority"}
+        except Exception:
+            next_action = None
+            dnd = None
+
         # Batch D 5-pipeline membership for this prospect — so the hero shows P4 · Fresh for an
         # uncalled, Google-ads-confirmed domain (like ourxplor.com) instead of "No pipeline".
         # Resolves p5>p2>p1>p3 by domain company_key OR any dialled number; else P4 (fresh/attempted).
@@ -2101,6 +2139,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "rollup": rollup,
             "paid_ads": _paid_ads_intel(enr, calls),
             "priority": priority,
+            "next_action": next_action,
+            "dnd": dnd,
             "pipeline5": pipeline5,
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
             "calls": calls,
