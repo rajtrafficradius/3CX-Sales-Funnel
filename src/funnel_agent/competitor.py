@@ -41,11 +41,14 @@ log = get_logger(__name__)
 
 # --- Cost / scope caps (the whole point of this module) ------------------------------------ #
 # Cost-optimised: we REUSE the domain's own keywords already fetched for the SEO audit (no
-# self-refetch), deep-fetch just ONE real competitor, and drop the flaky/pricey backlink calls.
-MAX_DFS_CALLS = 3          # HARD ceiling on DataForSEO calls per audit (was 6)
-TOP_COMPETITORS = 4        # how many REAL SERP competitors we surface (mega-sites filtered out)
-GAP_COMPETITORS = 1        # how many competitors we deep-fetch ranked keywords for (was 2)
+# self-refetch) and drop the flaky/pricey backlink calls. We deep-fetch the top competitor and
+# ADD a 2nd one ONLY when the first came back thin (a poor keyword-overlap match) — so rich
+# prospects pay for one call and only the thin ones pay for the extra.
+MAX_DFS_CALLS = 4          # HARD ceiling on DataForSEO calls per audit (was 6)
+TOP_COMPETITORS = 5        # how many REAL SERP competitors we surface (mega-sites filtered out)
+GAP_COMPETITORS = 2        # MAX competitors we deep-fetch (the 2nd only fires if the 1st is thin)
 COMP_KW_LIMIT = 100        # keywords pulled per competitor (was 300 — cost scales with rows)
+MIN_SIGNAL_ROWS = 6        # gap+outranked rows below which we fetch another competitor / relax floor
 
 _CACHE_KEY = "competitor_audit"   # enrichment.dataforseo->'competitor_audit'
 
@@ -199,7 +202,7 @@ def pick_competitors(items: list[dict], target: str, top: int = TOP_COMPETITORS)
     return out[:top]
 
 
-def _topic_vocab(our_keywords: list[dict], min_count: int = 3) -> set[str]:
+def _topic_vocab(our_keywords: list[dict], min_count: int = 2) -> set[str]:
     """The prospect's DISTINCTIVE topic vocabulary — niche tokens that recur across the keywords it
     already ranks for (brake/rotor/caliper for a brake maker; funeral/cremation for a funeral home),
     EXCLUDING broad commerce words (car/shop/near/melbourne...). A competitor's keyword is only a
@@ -226,7 +229,7 @@ def _on_topic(keyword: str, vocab: set[str]) -> bool:
 
 def compute_keyword_gap(our_keywords: list[dict],
                         competitor_keywords: dict[str, list[dict]],
-                        *, limit: int = 8, min_volume: int = MIN_MONEY_VOL,
+                        *, limit: int = 10, min_volume: int = MIN_MONEY_VOL,
                         brands: set[str] | None = None, assumed_position: int = 5) -> list[dict]:
     """MONEY keywords competitors rank for that OUR domain does not — a short, high-value, ON-TOPIC
     gap list, not a raw dump. Drops branded terms (ours + each competitor's own name), off-topic
@@ -286,7 +289,7 @@ def compute_keyword_gap(our_keywords: list[dict],
 
 def compute_outranked(our_keywords: list[dict],
                       competitor_keywords: dict[str, list[dict]],
-                      *, limit: int = 8, min_volume: int = MIN_MONEY_VOL,
+                      *, limit: int = 10, min_volume: int = MIN_MONEY_VOL,
                       brands: set[str] | None = None) -> list[dict]:
     """Keywords WE ALREADY RANK FOR where a competitor ranks HIGHER — on-topic by construction
     (we rank for it) and the most actionable competitor insight ('you're #12 for X, they're #3,
@@ -330,15 +333,23 @@ def compute_outranked(our_keywords: list[dict],
 
 def compute_content_gap(our_keywords: list[dict],
                         competitor_keywords: dict[str, list[dict]],
-                        *, limit: int = 15) -> list[dict]:
-    """The competitor PAGES (topics) that win keywords we don't rank for — derived, no extra API
-    call, by clustering the gap keywords onto the competitor URL that ranks for them."""
+                        *, limit: int = 6, brands: set[str] | None = None) -> list[dict]:
+    """The competitor PAGES (topics) that win ON-TOPIC keywords we don't rank for — derived, no
+    extra API call, by clustering the (filtered) gap keywords onto the competitor URL that ranks
+    for them. Same relevance gates as the keyword gap so the pages are useful, not noise."""
+    brands = set(brands or set())
+    for cdom in (competitor_keywords or {}):
+        brands |= brand_tokens(cdom)
+    vocab = _topic_vocab(our_keywords)
     ours = {_norm_kw(k.get("keyword")) for k in (our_keywords or [])}
     pages: dict[str, dict] = {}
     for cdom, kws in (competitor_keywords or {}).items():
         for k in kws or []:
             nk = _norm_kw(k.get("keyword"))
             if not nk or nk in ours:
+                continue
+            if (k.get("search_volume") or 0) < MIN_MONEY_VOL or is_branded(nk, brands) \
+                    or not _on_topic(k.get("keyword"), vocab):
                 continue
             url = k.get("url")
             if not url:
@@ -649,16 +660,26 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
             our_rk = budget.run("ranked_keywords(self)", lambda: client.ranked_keywords(domain, limit=COMP_KW_LIMIT))
             our_keywords = (our_rk or {}).get("keywords") or []
 
-        # (3) Deep-fetch ranked keywords for the top REAL competitor (GAP_COMPETITORS=1) — one call.
+        # (3) Deep-fetch the top competitor's keywords; if gap+outranked come back thin (the #1
+        #     competitor was a poor keyword-overlap match, e.g. a broad portal), fetch ONE more —
+        #     but only then. Rich prospects pay for a single call; thin ones pay for the extra.
         competitor_keywords: dict[str, list[dict]] = {}
+        keyword_gap: list[dict] = []
+        outranked: list[dict] = []
         for c in competitors[:GAP_COMPETITORS]:
             cd = c["domain"]
             rk = budget.run(f"ranked_keywords({cd})", lambda cd=cd: client.ranked_keywords(cd, limit=COMP_KW_LIMIT))
             competitor_keywords[cd] = (rk or {}).get("keywords") or []
+            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands)
+            outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands)
+            if len(keyword_gap) + len(outranked) >= MIN_SIGNAL_ROWS:
+                break                              # enough signal — don't pay for more competitors
 
-        keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands)
-        outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands)
-        content_gap = compute_content_gap(our_keywords, competitor_keywords)
+        # sparse fallback: still thin -> relax the volume floor (free; reuses fetched keywords)
+        if len(keyword_gap) + len(outranked) < MIN_SIGNAL_ROWS:
+            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands, min_volume=40)
+            outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands, min_volume=40)
+        content_gap = compute_content_gap(our_keywords, competitor_keywords, brands=brands)
     finally:
         client.close()
 

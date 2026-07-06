@@ -790,6 +790,13 @@ function competitorAuditCard(d){
     <thead><tr><th ${TH}>Keyword</th><th ${RH}>Vol/mo</th><th ${RH}>CPC</th><th ${RH}>$ value/mo</th></tr></thead>
     <tbody>${kg.map(k=>`<tr><td ${TD}>${esc(k.keyword)}</td><td ${RD}>${fmtN(k.volume)}</td><td ${RD}>${k.cpc?'$'+k.cpc:'—'}</td><td ${RD} style="color:#3fb950">${money(k)}</td></tr>`).join('')}</tbody></table>`
     :'<div class="muted small mt6">No on-topic money gaps found against this competitor.</div>';
+  // 4) content gap — competitor PAGES/topics winning on-topic keywords (what content to build)
+  const cg=(ca.content_gap||[]);
+  const cgHtml=cg.length?`<div class="subh mt6">📄 Content to build — competitor pages winning on-topic keywords</div>
+    <div style="margin-top:4px">${cg.slice(0,5).map(p=>`<div class="small" style="margin:6px 0">
+      <b>${esc(p.topic||p.page)}</b> <span class="muted">(${p.keyword_count} kw · ${fmtN(p.total_volume)}/mo)</span>
+      <div class="muted" style="font-size:11px;margin-top:2px">${esc((p.example_keywords||[]).slice(0,5).join(', '))}${p.page?' · <a href="'+esc(p.page)+'" target="_blank" style="color:#58a6ff">'+esc(p.domain||'source')+'</a>':''}</div>
+    </div>`).join('')}</div>`:'';
   const wins=w=>(w||[]).slice(0,5).map(x=>`<li class="small" style="margin:4px 0"><b>${esc(x.title)}</b>${x.detail?' — '+esc(x.detail):''}${(x.effort||x.impact)?` <span class="muted">(${esc(x.effort||'')}/${esc(x.impact||'')})</span>`:''}</li>`).join('');
   const geo=ca.geo_aeo&&ca.geo_aeo.score!=null?`<div class="subh mt6">🤖 AI-search (GEO/AEO) readiness — ${ca.geo_aeo.score}/100</div>
     <div class="small" style="opacity:.85">${(ca.geo_aeo.checks||[]).slice(0,6).map(c=>`${c.pass?'✅':'⚠️'} ${esc(c.name)}`).join(' · ')}</div>`:'';
@@ -799,6 +806,7 @@ function competitorAuditCard(d){
     <div class="subh mt6">🏢 Your real competitors <span class="muted small">(mega-sites like YouTube/Facebook/Amazon filtered out)</span></div>${compTbl}
     <div class="subh mt6">🎯 You're being outranked — you rank for these, a competitor ranks higher (close the gap)</div>${orrTbl}
     <div class="subh mt6">💡 Money keywords they win that you don't — on-topic, by $ value</div>${kgTbl}
+    ${cgHtml}
     ${geo}
     ${wins(ca.quick_wins).length?`<div class="subh mt6">⚡ Quick wins</div><ul style="padding-left:18px;margin:4px 0">${wins(ca.quick_wins)}</ul>`:''}
     <div class="muted small mt6" style="opacity:.75">Backlink/off-page analysis disabled to control cost — treat authority-building as a checklist item.</div>
