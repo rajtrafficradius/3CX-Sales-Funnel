@@ -440,7 +440,7 @@ async function openEvent(id){
     const d=await jget('/api/event/'+id); const e=d.event||{};
     const when=e.start_at||''; const time=when.slice(11,16);
     let dstr=when.slice(0,10);
-    try{ const dt=new Date(when); if(!isNaN(dt)) dstr=dt.toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}); }catch(_){}
+    try{ const dt=new Date(when); if(!isNaN(dt)) dstr=dt.toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',weekday:'short',day:'numeric',month:'short',year:'numeric'}); }catch(_){}
     const notes=(e.notes==null?'':String(e.notes)).trim();
     const nm=d.next_move||{}; const pipe=d.pipeline||{};
     const KIND={ask:'❓',confirm:'✅',do:'📌',avoid:'⚠️',open:'🎯',hook:'🪝',question:'❓',value:'💎',logistics:'📋',objection:'⚠️'};

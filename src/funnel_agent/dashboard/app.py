@@ -2685,7 +2685,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conds.append("ge.p4_sub = %(p4sub)s")
             params["p4sub"] = p4sub
         cte = f"""
-        WITH g AS (
+        WITH kd AS (   -- domain -> pipeline rollup computed ONCE (set-wise), not per output row.
+          SELECT substring(cl.company_key from 5) AS domain,
+                 bool_or(cl.pipeline_stage='p5')                  AS k_booked,
+                 bool_or(cl.pipeline='pipeline2_existing_agency') AS k_agency,
+                 bool_or(cl.pipeline_stage='p1')                  AS k_p1,
+                 bool_or(cl.pipeline_stage='p3')                  AS k_p3,
+                 true                                             AS k_called
+          FROM classifications cl
+          WHERE cl.company_key LIKE 'dom:%%'
+          GROUP BY 1
+        ), g AS (
           SELECT co.domain AS domain, 'domain' AS kind, count(*) AS businesses,
                  sum(co.revenue_musd) AS total_revenue, max(co.employees) AS employees,
                  (array_agg(co.company_name ORDER BY co.revenue_musd DESC NULLS LAST))[1] AS name,
@@ -2752,15 +2762,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           FROM g
           LEFT JOIN enrichment e ON e.domain = g.domain
           LEFT JOIN prospects pr ON pr.domain = g.domain
-          LEFT JOIN LATERAL (
-            SELECT bool_or(cl.pipeline_stage = 'p5') AS k_booked,
-                   bool_or(cl.pipeline = 'pipeline2_existing_agency') AS k_agency,
-                   bool_or(cl.pipeline_stage = 'p1') AS k_p1,
-                   bool_or(cl.pipeline_stage = 'p3') AS k_p3,
-                   count(*) > 0 AS k_called
-            FROM classifications cl
-            WHERE g.domain IS NOT NULL AND cl.company_key = 'dom:' || g.domain
-          ) k ON g.domain IS NOT NULL
+          LEFT JOIN kd k ON k.domain = g.domain
         )
         """
         return cte, params, conds

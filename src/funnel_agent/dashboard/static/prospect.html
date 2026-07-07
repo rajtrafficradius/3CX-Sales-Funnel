@@ -182,7 +182,7 @@
 const KEY = decodeURIComponent(location.pathname.split('/prospect/')[1]||'');
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
-const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}); };
 const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
             warm:['🌤 WARM','#fbbf24','rgba(251,191,36,.16)'],none:['',' ',' ']};
 const PIPE={pipeline1_interested:['Pipeline 1 · Interested (callback)','#60a5fa'],

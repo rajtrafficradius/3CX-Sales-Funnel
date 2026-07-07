@@ -280,7 +280,7 @@
 <script>
 // ---------- helpers ----------
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const fmtDate = s => { if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); };
+const fmtDate = s => { if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); };
 function toast(m,e){ const t=document.getElementById('toast'); t.textContent=m; t.className='toast show'+(e?' err':''); setTimeout(()=>t.className='toast'+(e?' err':''),2600); }
 const num = n => (n==null||n===''?0:Math.round(Number(n)));
 

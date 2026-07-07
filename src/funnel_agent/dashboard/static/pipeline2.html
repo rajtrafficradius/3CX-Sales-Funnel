@@ -250,7 +250,7 @@ const $=s=>document.querySelector(s);
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let CAN=false, ROSTER=[];
 function toast(m,e){const t=$('#toast');t.textContent=m;t.className='toast show'+(e?' err':'');setTimeout(()=>t.className='toast'+(e?' err':''),2500);}
-const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'2-digit'}); };
+const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',day:'2-digit',month:'short',year:'2-digit'}); };
 const isDue=s=>{ if(!s) return true; return new Date(s) <= new Date(); };
 
 async function api(u,o){ const r=await fetch(u,o); let j={}; try{j=await r.json();}catch(e){} if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
