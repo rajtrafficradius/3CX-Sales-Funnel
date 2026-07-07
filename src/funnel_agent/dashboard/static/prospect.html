@@ -817,16 +817,31 @@ function nextActionCard(d){
         </div></div>`;
     }
     const src=na.source==='pipeline2'?'🔁 agency weekly rotation':(na.source==='calendar'?'📇 booked on BDE calendar':'⚡ priority queue');
+    // #5 website mandate: we've reached the decision-maker but have no website on file — the BDE
+    // must add it before the next (RPC) call so our enrichment can verify the marketing claims.
+    const mandate = d.website_required ? `<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:rgba(212,167,44,.12);border:1px solid rgba(212,167,44,.4);font-size:12px;color:var(--warn);font-weight:600">🌐 Website required — we reached the decision-maker but have no website on file. Add it before the next call so our SEO/ads enrichment can run. <button class="lnk" onclick="addWebsitePrompt()" style="margin-left:6px">+ Add website</button></div>` : '';
     return `<div class="card full" style="border-color:#3fb950;background:rgba(63,185,80,.08)">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <span style="font-weight:800;color:var(--good);font-size:15px">📅 Next call: ${esc(fmtDate(na.when))}</span>
         <span class="muted">${assigned}</span>
         <span class="pill" style="font-size:10px">${esc(src)}</span>
+        ${na.label?`<span class="pill" style="font-size:10px;background:var(--accent-soft);color:var(--accent)">🏷️ ${esc(na.label)}</span>`:''}
         ${na.attempts!=null?`<span class="muted small">${na.attempts} attempt${na.attempts==1?'':'s'} so far</span>`:''}
         ${calLink(na)}
-      </div></div>`;
+      </div>
+      ${na.reason?`<div style="margin-top:9px;font-size:12.5px;color:var(--txt-dim);line-height:1.5"><b style="color:var(--txt)">⏰ Why this time:</b> ${esc(na.reason)}</div>`:''}
+      ${mandate}
+    </div>`;
   }
   return `<div class="card full"><div class="muted small">📅 No next call scheduled for this prospect yet.</div></div>`;
+}
+function addWebsitePrompt(){
+  const w=(prompt('Enter this prospect\'s website (so our SEO/ads enrichment can verify it):','')||'').trim();
+  if(!w) return;
+  const key=location.pathname.split('/').pop();
+  fetch(`/api/prospect/${encodeURIComponent(key)}/set-website`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'website='+encodeURIComponent(w)})
+    .then(r=>r.json()).then(j=>{ if(j&&j.ok!==false){location.reload();} else {alert((j&&j.error)||'Could not save the website');} })
+    .catch(()=>alert('Could not save the website'));
 }
 // ---- Smart next-call priority (A) ---- //
 function priorityCard(d){
@@ -875,11 +890,14 @@ function overallSummary(d){
   if(contract) chips.push(`<span class="chip">📄 Contract: ${esc(contract)}</span>`);
   let dm=null; for(let i=calls.length-1;i>=0;i--){ if(calls[i].prospect_contact_name){dm=calls[i].prospect_contact_name;break;} }
   if(dm) chips.push(`<span class="chip">👤 Decision-maker: ${esc(dm)}</span>`);
-  const runningAds = (d.paid_ads&&['running','likely'].includes(d.paid_ads.verdict))
-    || calls.some(c=>(c.evidence||{}).runs_paid_ads)
+  // #6 attribution: OUR enrichment is the source of truth for ads; a BDE/prospect CALL claim is
+  // shown separately as "claimed, unverified" so a BDE's pitch assertion is never taken as fact.
+  const adsVerified = (d.paid_ads&&['running','likely'].includes(d.paid_ads.verdict))
     || (((d.enrichment||{}).dataforseo||{}).running_google_ads)
     || (p5.p4_sub==='fresh_ads');
-  if(runningAds) chips.push('<span class="chip">🎯 Running ads</span>');
+  const adsClaimed = calls.some(c=>(c.evidence||{}).runs_paid_ads);
+  if(adsVerified) chips.push('<span class="chip">🎯 Running ads <span style="opacity:.65">· verified (our data)</span></span>');
+  else if(adsClaimed) chips.push('<span class="chip" style="opacity:.9" title="Stated on a call — not confirmed by our SEO/ads data">🎯 Running ads <span style="opacity:.65">· claimed, unverified</span></span>');
   const BANT=[['budget','Budget'],['authority','Authority'],['problem','Problem'],['urgency','Urgency'],['aspiration','Aspiration'],['open_to_listening','Open']];
   const bantSeen=BANT.filter(([k])=>calls.some(c=>{const f=(c.evidence||{})[k]; return f&&f.value;})).map(x=>x[1]);
   if(bantSeen.length) chips.push(`<span class="chip">📊 BANT: ${esc(bantSeen.join(' · '))}</span>`);
@@ -919,11 +937,30 @@ function overallSummary(d){
        ${timing?`<div class="muted small" style="margin-top:4px">📅 ${timing}</div>`:''}`
     : '';
 
+  // ---- PEOPLE directory + FACTS + coaching gaps (#1/#4) from server-synthesized intel ----
+  const it=d.intel||{};
+  const person=(p,badge,color)=>`<span class="chip" style="border-color:${color}"><b>${esc(p.name)}</b>${p.roles&&p.roles.length?' · '+esc(p.roles.join(', ')):''}${(p.mobiles&&p.mobiles.length)?' · 📱 '+esc(p.mobiles[0]):''}${(p.emails&&p.emails.length)?' · ✉️ '+esc(p.emails[0]):''} <span style="opacity:.6;font-size:10px">${badge}</span></span>`;
+  const dms=(it.decision_makers||[]), gks=(it.gatekeepers||[]), others=(it.other_people||[]);
+  const peopleHtml=(dms.length||gks.length||others.length)
+    ? `<div class="subh">Who we've spoken to</div><div class="chips">
+         ${dms.map(p=>person(p,'DECISION-MAKER','var(--good)')).join('')}
+         ${gks.map(p=>person(p,'GATEKEEPER','var(--warn)')).join('')}
+         ${others.map(p=>person(p,'CONTACT','var(--line)')).join('')}
+       </div>` : '';
+  const metaBits=[];
+  if(it.best_time) metaBits.push(`<span class="chip">🕐 Best time to reach: ${esc(it.best_time)}</span>`);
+  (it.extra_contacts||[]).forEach(ct=>{ const bits=[ct.mobile?'📱 '+esc(ct.mobile):'',ct.email?'✉️ '+esc(ct.email):''].filter(Boolean).join(' · '); if(bits) metaBits.push(`<span class="chip">${bits}</span>`); });
+  const metaHtml=metaBits.length?`<div class="chips" style="margin-top:6px">${metaBits.join('')}</div>`:'';
+  const factsHtml=(it.facts&&it.facts.length)
+    ? `<div class="subh">What we've learned about them</div><ul class="ci">${it.facts.slice(0,8).map(f=>`<li>• ${esc(f)}</li>`).join('')}</ul>` : '';
+  const gapsHtml=(it.coaching_gaps&&it.coaching_gaps.length)
+    ? `<div class="subh">⚑ Coaching — what we keep missing on this prospect</div><ul class="ci">${it.coaching_gaps.slice(0,5).map(g=>`<li style="color:var(--warn)">${esc(g)}</li>`).join('')}</ul>` : '';
+
   return `<div class="card full">
     <h2>🧭 Call intelligence — overall</h2>
     <div class="small" style="margin-bottom:2px">${head}</div>
-    <div class="subh">Key facts</div>${chipsHtml}
-    ${narrHtml}${objHtml}${moveHtml}
+    <div class="subh">Key facts</div>${chipsHtml}${metaHtml}
+    ${peopleHtml}${factsHtml}${narrHtml}${objHtml}${gapsHtml}${moveHtml}
   </div>`;
 }
 async function reassignNext(id){ const bde=prompt('Reassign this prospect\'s next call to which BDE?'); if(!bde) return;

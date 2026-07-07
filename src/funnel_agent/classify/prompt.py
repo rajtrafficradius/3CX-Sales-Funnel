@@ -204,12 +204,22 @@ confidence (do NOT assume) — EXCEPT where the auto-validation rule below appli
   (asks questions, agrees to a session/info, "tell me more", lets the pitch run) — NOT a flat
   brush-off. FALSE for "not interested", hostile, or hangs up.
 
+SPEAKER ATTRIBUTION (critical): these flags describe the PROSPECT and must come from the
+PROSPECT's OWN words. Our sales rep (the BDE — may introduce himself with an alias like "Richard")
+routinely makes CLAIMS about the prospect's website in the pitch ("your site only has an authority
+score of 8", "you're getting very little Google Ads traffic", "you're not ranking"). Those are OUR
+sales assertions, NOT verified facts and NOT the prospect confirming anything — NEVER let a BDE
+claim set runs_paid_ads / has_marketing_agency or land in key_facts. Our own enrichment
+(DataForSEO / SEMrush) is the single source of truth for the prospect's SEO / traffic / ad metrics;
+the transcript is only trusted for what the PROSPECT states about themselves.
+
 AUTO-VALIDATION (infer signals from BEHAVIOUR, not just explicit statements). Set these factual
 flags, then APPLY the rule:
-- runs_paid_ads: TRUE if the prospect indicates they currently run ANY paid advertising — Google
+- runs_paid_ads: TRUE only if the PROSPECT indicates THEY currently run paid advertising — Google
   Ads / sponsored ads / Meta/Facebook/Instagram ads / shopping ads / "boosting posts" for spend.
-- has_marketing_agency: TRUE if the prospect indicates an agency / freelancer / "someone" currently
-  does their marketing or SEO or ads.
+  FALSE if it's only our BDE asserting they do/don't run ads — that's an unverified pitch claim.
+- has_marketing_agency: TRUE only if the PROSPECT indicates an agency / freelancer / "someone"
+  currently does their marketing or SEO or ads (not our BDE guessing/claiming it).
   RULE: if runs_paid_ads OR has_marketing_agency is TRUE, the prospect is DEMONSTRABLY investing in
   marketing — so treat budget=TRUE and aspiration=TRUE (they clearly want results and are willing
   to spend), even if they never stated a dollar figure. Reference this in the budget/aspiration
@@ -319,11 +329,14 @@ record what was actually said.
   correct themselves, use the FINAL corrected number). "" if none given.
 - prospect_email: an email the prospect gives or spells (e.g. "sales at recons dot com dot au"
   -> "sales@recons.com.au"). "" if none.
-- key_facts: a list capturing EVERY other valuable fact the prospect revealed that isn't already a
+- key_facts: a list capturing EVERY other valuable fact the PROSPECT revealed that isn't already a
   field above — e.g. turnover/revenue, number of staff, locations/branches, named competitors,
   what they currently spend, who currently does their marketing, products/services, timelines,
   decision process. Short factual phrases ("does its own Meta posting", "supplies recycled timber
   flooring", "competitor: Euro Oak Flooring"). [] only if the prospect truly revealed nothing.
+  DO NOT include anything our BDE merely ASSERTED about the prospect's website / SEO / ads / traffic
+  / authority score — those are our pitch claims, verified only by our own enrichment, not prospect
+  facts. Record a marketing/SEO fact ONLY when the PROSPECT themselves confirms it.
 
 CALLBACK:
 - callback_requested: TRUE if the prospect asked to be called back / agreed to a specific
