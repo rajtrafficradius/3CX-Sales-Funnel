@@ -107,19 +107,23 @@ WITH base AS (
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
                            AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) AND NOT COALESCE(pcl.meeting_confirmation,false)
                            AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
-                   -- Effective qualification: a BDM/admin OVERRIDE always wins; otherwise the AI's
-                   -- OWN verdict. The AI SELF-QUALIFIES every booked meeting (firm OR tentative) by
-                   -- its BANT judgment — qualification does NOT depend on the booking being firm.
-                   -- The BDM has overriding authority to qualify/disqualify afterwards, and the
-                   -- count changes accordingly. Prospect/company-level: counts if THIS call or ANY
-                   -- in-scope call to the same NUMBER/COMPANY is (effectively) qualified.
-                   AND (COALESCE(qo.qualified, cl.qualified) OR EXISTS (
-                         SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
-                         LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id
-                         WHERE c2.in_scope
-                           AND (right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
-                                OR (cl.company_key IS NOT NULL AND cl2.company_key IS NOT NULL AND cl2.company_key = cl.company_key))
-                           AND COALESCE(qo2.qualified, cl2.qualified)))
+                   -- Effective qualification: a BDM/admin OVERRIDE on THE BOOKED CALL is DEFINITIVE —
+                   -- it wins over everything, including a sibling call's qualification. So when the
+                   -- BDM explicitly disqualifies a booked meeting ("client doesn't need us, nurture"),
+                   -- it drops out of the count even if an earlier call to the same company was AI-
+                   -- qualified. Only when the booked call has NO explicit override do we fall back to
+                   -- the AI's own verdict OR prospect/company-level inheritance (this call, or ANY
+                   -- in-scope call to the same NUMBER/COMPANY, is effectively qualified).
+                   AND (CASE
+                          WHEN qo.qualified IS NOT NULL THEN qo.qualified
+                          ELSE (cl.qualified OR EXISTS (
+                             SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id = c2.call_id
+                             LEFT JOIN qualification_overrides qo2 ON qo2.call_id = c2.call_id
+                             WHERE c2.in_scope
+                               AND (right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) = right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)
+                                    OR (cl.company_key IS NOT NULL AND cl2.company_key IS NOT NULL AND cl2.company_key = cl.company_key))
+                               AND COALESCE(qo2.qualified, cl2.qualified)))
+                        END)
               THEN 1 ELSE 0 END) AS qualified_booked,
         -- "Done" is optional/future from calendar/CRM; 0 unless that adapter is wired.
         (CASE WHEN EXISTS (SELECT 1 FROM meetings m

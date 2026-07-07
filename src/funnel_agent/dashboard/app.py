@@ -97,6 +97,173 @@ def _winning_next_move(evidence: dict | None) -> dict:
     }
 
 
+def _sv(ev: dict, key: str) -> bool:
+    """Truthiness of a StageVerdict-or-bool evidence flag (budget/authority/problem/urgency)."""
+    x = (ev or {}).get(key)
+    return bool(x.get("value")) if isinstance(x, dict) else bool(x)
+
+
+def _call_coaching(evidence: dict | None, call: dict | None = None) -> dict:
+    """Per-call BDE coaching from the transcript intelligence: what they did well, what they FAILED
+    to do (the double-tap / ask-for-DM / lock-a-time misses the user asked for), and what to do next
+    time. Read-only synthesis over the classifier evidence — never invents facts not in evidence."""
+    ev = evidence or {}
+    call = call or {}
+    rpc = ev.get("rpc_next_move") if isinstance(ev.get("rpc_next_move"), dict) else {}
+    reached_dm = bool(call.get("rpc_connect")) or bool(rpc.get("dm_name"))
+    answered = bool(call.get("answered"))
+    talk = call.get("talk_seconds") or 0
+    did_well, missed = [], []
+
+    def _has(k):   # field explicitly present in the RPC evidence (distinguish False from 'unknown')
+        return k in rpc and rpc.get(k) is not None
+
+    # ---- what they did well ----
+    if rpc.get("asked_for_dm"):
+        did_well.append("Asked to be put through to the decision-maker")
+    if rpc.get("dm_name"):
+        did_well.append(f"Captured the decision-maker's name ({rpc.get('dm_name')})")
+    if rpc.get("got_direct_contact") or call.get("prospect_mobile") or call.get("prospect_email"):
+        did_well.append("Secured a direct contact (mobile / email) for follow-up")
+    if rpc.get("asked_callback_time") or call.get("callback_when"):
+        did_well.append("Locked a specific time to call back")
+    handled = [o.get("objection") for o in (ev.get("objections") or [])
+               if isinstance(o, dict) and o.get("handled") is True and o.get("objection")]
+    for o in handled[:2]:
+        did_well.append(f"Handled the objection: “{o}”")
+    # ---- what they failed to do (the coaching gaps) ----
+    if answered and not reached_dm:
+        if _has("asked_for_dm") and rpc.get("asked_for_dm") is False:
+            missed.append("Didn’t ask to be put through to the decision-maker (spoke only to the gatekeeper)")
+        if _has("asked_dm_name") and rpc.get("asked_dm_name") is False and not rpc.get("dm_name"):
+            missed.append("Didn’t get the decision-maker’s name — the next caller starts blind")
+        if _has("asked_callback_time") and rpc.get("asked_callback_time") is False and not call.get("callback_when"):
+            missed.append("Didn’t pin a specific callback time — left the next call to chance")
+    if answered and not (rpc.get("got_direct_contact") or call.get("prospect_mobile") or call.get("prospect_email")):
+        if _has("got_direct_contact") and rpc.get("got_direct_contact") is False:
+            missed.append("Didn’t secure a direct line or email for the decision-maker")
+    unhandled = [o.get("objection") for o in (ev.get("objections") or [])
+                 if isinstance(o, dict) and o.get("handled") is False and o.get("objection")]
+    for o in unhandled[:2]:
+        missed.append(f"Left an objection unaddressed: “{o}”")
+    if answered and talk and talk < 25 and not reached_dm:
+        missed.append(f"Very short call ({int(talk)}s) — hung up too early to probe or build rapport")
+
+    # ---- what to do next time (from the next-call points / winning move) ----
+    pts = [p.get("point") for p in (ev.get("next_call_points") or [])
+           if isinstance(p, dict) and p.get("point")]
+    do_next = [_clean_time_noise(p) for p in pts[:3]]
+    if not do_next and rpc.get("next_move"):
+        do_next = [_clean_time_noise(rpc.get("next_move"))]
+    return {"did_well": did_well, "missed": missed, "do_next": [d for d in do_next if d]}
+
+
+def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
+    """A rich, human overall summary of a prospect across ALL its calls (task #2/#1): a PEOPLE
+    directory (who is the gatekeeper vs the decision-maker), the direct contacts we captured, the
+    concrete facts learned, the incumbent-agency picture, the best time to reach them, and a call-
+    by-call timeline with the BDE + outcome + coaching. Pure read-only synthesis over evidence."""
+    calls = calls or []
+    if not calls:
+        return None
+    people: dict[str, dict] = {}          # name -> {roles:set, kind, mobiles, emails, mentions}
+    facts: list[str] = []
+    contacts: list[dict] = []
+    agency = {"has_agency": False, "name": None, "contract_end": None}
+    best_time = None
+    timeline: list[dict] = []
+    seen_facts: set[str] = set()
+
+    def _add_person(name, role=None, kind=None, mobile=None, email=None):
+        name = (name or "").strip()
+        if not name or len(name) > 60:
+            return
+        p = people.setdefault(name, {"name": name, "roles": [], "kind": kind,
+                                     "mobiles": [], "emails": []})
+        if kind and (p["kind"] in (None, "contact")):
+            p["kind"] = kind
+        if role and role not in p["roles"]:
+            p["roles"].append(role)
+        if mobile and mobile not in p["mobiles"]:
+            p["mobiles"].append(mobile)
+        if email and email not in p["emails"]:
+            p["emails"].append(email)
+
+    for c in calls:
+        ev = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
+        rpc = ev.get("rpc_next_move") if isinstance(ev.get("rpc_next_move"), dict) else {}
+        # decision-maker (from the RPC move or the extracted contact)
+        dm = (rpc.get("dm_name") or c.get("prospect_contact_name") or "").strip()
+        if dm:
+            _add_person(dm, role=(rpc.get("dm_role") or "").strip() or "Decision-maker",
+                        kind="dm", mobile=c.get("prospect_mobile"), email=c.get("prospect_email"))
+        # gatekeeper (whoever answered, when we did NOT reach the DM)
+        who = (ev.get("who_answered") or "").strip()
+        if who and not c.get("rpc_connect") and who.lower() not in (dm.lower(), "decision maker", "owner"):
+            _add_person(who, role="Gatekeeper / reception", kind="gk")
+        # standalone captured contact (no name tied) — still record mobile/email
+        if (c.get("prospect_mobile") or c.get("prospect_email")) and not dm:
+            contacts.append({"mobile": c.get("prospect_mobile"), "email": c.get("prospect_email")})
+        # concrete facts learned on the call
+        for f in (ev.get("key_facts") or []):
+            f = (str(f) or "").strip()
+            k = f.lower()
+            if f and k not in seen_facts and len(f) < 240:
+                seen_facts.add(k)
+                facts.append(f)
+        ps = _clean_time_noise(c.get("problem_summary") or ev.get("problem_summary") or "")
+        if ps and ps.lower() not in seen_facts:
+            seen_facts.add(ps.lower())
+            facts.append(ps)
+        # incumbent agency
+        if c.get("has_marketing_agency"):
+            agency["has_agency"] = True
+        ce = (ev.get("contract_end") or "").strip() if isinstance(ev.get("contract_end"), str) else None
+        if ce and not agency["contract_end"]:
+            agency["contract_end"] = ce
+        # best time to reach the DM
+        bt = (rpc.get("dm_available_when") or c.get("callback_when") or "").strip()
+        if bt and not best_time:
+            best_time = _clean_time_noise(bt)
+        # timeline row
+        timeline.append({
+            "call_id": c.get("call_id"),
+            "when": c.get("started_at"),
+            "bde": c.get("bde_name") or c.get("bde_extension"),
+            "answered": bool(c.get("answered")),
+            "talk_seconds": c.get("talk_seconds"),
+            "reached_dm": bool(c.get("rpc_connect")),
+            "outcome": (c.get("call_outcome") or "").strip(),
+            "booked": bool(c.get("meeting_booked")),
+            "coaching": _call_coaching(ev, c),
+        })
+
+    # dedupe standalone contacts against people we already have
+    known = {m for p in people.values() for m in p["mobiles"]} | {e for p in people.values() for e in p["emails"]}
+    contacts = [ct for ct in contacts
+                if (ct.get("mobile") and ct["mobile"] not in known) or (ct.get("email") and ct["email"] not in known)]
+    dms = [p for p in people.values() if p["kind"] == "dm"]
+    gks = [p for p in people.values() if p["kind"] == "gk"]
+    others = [p for p in people.values() if p["kind"] not in ("dm", "gk")]
+    # roll up the coaching across every call → prospect-level "what we keep missing"
+    all_missed: list[str] = []
+    for t in timeline:
+        for m in t["coaching"]["missed"]:
+            if m not in all_missed:
+                all_missed.append(m)
+    return {
+        "decision_makers": dms,
+        "gatekeepers": gks,
+        "other_people": others,
+        "extra_contacts": contacts[:4],
+        "facts": facts[:12],
+        "agency": agency,
+        "best_time": best_time,
+        "timeline": timeline,
+        "coaching_gaps": all_missed[:6],
+    }
+
+
 # Funnel stages in order, with the daily_funnel column each maps to.
 STAGES = [
     ("Calls Made", "calls_made"),
@@ -1255,6 +1422,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "AND NOT COALESCE(cl.meeting_rescheduled, false) "
                         "AND NOT COALESCE(cl.booking_already_exists, false) "
                         f"AND {_FIRST_BOOKING}")
+    # Effective qualification of a BOOKED call, mirroring aggregate.py exactly: a BDM/admin OVERRIDE
+    # on THE BOOKED CALL is DEFINITIVE (wins over sibling inheritance), so an explicit disqualify
+    # drops the meeting from Qualified Booked even if an earlier call to the same number was AI-
+    # qualified. Only with NO override do we fall back to the AI verdict OR prospect-level inheritance.
+    _OVR_QUAL = "(SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id)"
+    _SIB_QUAL = ("EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
+                 "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
+                 "WHERE right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) "
+                 "AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified))")
+    _EFF_QUAL = f"(CASE WHEN {_OVR_QUAL} IS NOT NULL THEN {_OVR_QUAL} ELSE (COALESCE(cl.qualified,false) OR {_SIB_QUAL}) END)"
     _STAGE_COND = {
         "calls_made": "TRUE",
         "connected": _CONN,
@@ -1266,19 +1443,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # PROSPECT-level fact: this call qualified OR any in-scope call to the same number.
         "qualified_booked": f"{_CONN} AND {_BOOKED} AND NOT COALESCE(cl.meeting_confirmation, false) "
                             f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND NOT COALESCE(cl.booking_already_exists, false) AND {_FIRST_BOOKING} "
-                            "AND (COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified) "
-                            "OR EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
-                            "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
-                            "WHERE right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified)))",
+                            f"AND COALESCE({_EFF_QUAL}, false)",
         # Booked but NOT qualified = the EXACT complement of qualified_booked within new
         # bookings, so qualified_booked + booked_unqualified = meetings_booked. (Same
-        # first-booking dedup + override + prospect-level qualification, negated.)
+        # first-booking dedup + effective-qualification, negated — override still definitive.)
         "booked_unqualified": f"{_CONN} AND {_BOOKED} AND NOT COALESCE(cl.meeting_confirmation, false) "
                               f"AND NOT COALESCE(cl.meeting_rescheduled, false) AND NOT COALESCE(cl.booking_already_exists, false) AND {_FIRST_BOOKING} "
-                              "AND NOT COALESCE((SELECT qo.qualified FROM qualification_overrides qo WHERE qo.call_id=c.call_id), cl.qualified, false) "
-                              "AND NOT EXISTS (SELECT 1 FROM calls c2 JOIN classifications cl2 ON cl2.call_id=c2.call_id "
-                              "LEFT JOIN qualification_overrides qo2 ON qo2.call_id=c2.call_id "
-                              "WHERE right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) AND c2.in_scope AND COALESCE(qo2.qualified, cl2.qualified))",
+                              f"AND NOT COALESCE({_EFF_QUAL}, false)",
         # Reference-only drill-downs (NOT counted in the funnel). The sidebar "Rescheduled /
         # confirmed" link uses `already_booked`; the two split views are also available.
         "already_booked": f"{_CONN} AND {_BOOKED} AND "
@@ -1657,10 +1828,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prospect_qualified = None
         qualified_via = None  # {bde, date} of the earlier call that qualified the prospect
         if c0:
-            eff_this = (ovr[0]["qualified"] if ovr else None)
-            if eff_this is None:
-                eff_this = c0.get("qualified")
-            if eff_this:
+            # A BDM/admin OVERRIDE on THIS booked call is DEFINITIVE — it wins over sibling
+            # inheritance, so an explicit disqualify shows as NOT qualified here (matching the
+            # funnel) even when an earlier call to the same prospect was AI-qualified.
+            if ovr:
+                prospect_qualified = bool(ovr[0]["qualified"])
+            elif c0.get("qualified"):
                 prospect_qualified = True
             else:
                 sib_q = q(
@@ -1727,6 +1900,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "messages": messages,
             "sms_confirmed": sms_confirmed,  # booking firmed by a prospect SMS
             "rpc_action": rpc_action,  # RPC Connect — Next Move (ledger + AI next-move)
+            # BDE coaching for THIS call (#4): what they did well / failed to do / do next time.
+            "feedback": _call_coaching(_ev, {**call, **(cl[0] if cl else {})}),
         }))
 
     # One cached 3CX client (reuses its OAuth token) for streaming recordings on demand.
@@ -2205,7 +2380,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # several piled-up pending events); only if none are upcoming fall back to the most
                 # recent past one (an overdue to-do). Never show a 'next call' before today.
                 _now = _dt.now(_tz.utc)
-                ev = q("SELECT id, type, start_at, bde_name, status FROM calendar_events "
+                ev = q("SELECT id, type, start_at, bde_name, status, title, notes FROM calendar_events "
                        "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%(d9)s) "
                        "  AND status='pending' AND (NOT %(sr)s OR type <> 'rpc_retry') "
                        "ORDER BY (start_at >= %(now)s) DESC, "
@@ -2218,9 +2393,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if dnd:
                 next_action = None
             elif cal:
+                # WHY THIS TIME (#2) + classification/provenance label (#5) parsed from the event
+                # notes the scheduler wrote ("⏰ Why this time: …  ·  🏷️ Classification: …").
+                _notes = cal.get("notes") or ""
+                _rm = re.search(r"Why this time:\s*(.+?)(?:\s*·\s*|\n|$)", _notes)
+                _cm = re.search(r"Classification:\s*(.+?)(?:\.|\n|$)", _notes)
                 next_action = {"when": cal["start_at"], "bde": cal.get("bde_name"),
                                "source": "calendar", "type": cal.get("type"),
-                               "event_id": cal.get("id")}
+                               "event_id": cal.get("id"),
+                               "reason": (_rm.group(1).strip() if _rm else ""),
+                               "label": (_cm.group(1).strip() if _cm else ""),
+                               "title": cal.get("title")}
             elif board and board.get("next_action_at"):
                 na = board["next_action_at"]
                 parked = bool(na and na > horizon)
@@ -2292,6 +2475,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "next_move": next_move,
             "dnd": dnd,
             "pipeline5": pipeline5,
+            # rich people/facts/timeline summary across all calls (#1)
+            "intel": _prospect_intel(calls, enr),
+            # data provenance + website mandate (#5): on BDE-sourced data we only pursue prospects we
+            # actually reached the DM on; and if we've reached the DM but have no website on file, the
+            # BDE MUST add it before the next (RPC) call so enrichment can verify the marketing claims.
+            "provenance": {
+                "source": ((master or {}).get("source") or "call_capture"),
+                "bde_sourced": ((master or {}).get("source") != "master_file"),
+                "label": ("Curated database (high-trust)"
+                          if (master or {}).get("source") == "master_file" else "BDE-sourced data"),
+            },
+            "website_required": bool(not domain and rollup.get("ever_rpc")),
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
             "calls": calls,
             "messages": messages,
@@ -3029,11 +3224,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 stage = stage or er[0].get("pipeline_stage")
                 industry = industry or er[0].get("prospect_industry")
                 contact_name = contact_name or er[0].get("prospect_contact_name")
+        # WHY THIS TIME (#2) + classification/provenance (#5) parsed out of the notes the scheduler
+        # wrote, so the drill-down can show them as first-class fields (not buried in a notes blob).
+        _notes = ev.get("notes") or ""
+        _rm = _re.search(r"Why this time:\s*(.+?)(?:\s*·\s*|\n|$)", _notes)
+        _cm = _re.search(r"Classification:\s*(.+?)(?:\.|\n|$)", _notes)
         return JSONResponse(jsonable_encoder({
             "event": ev, "prospect_key": prospect_key,
             "business_name": business_name, "evidence": evidence,
             "pipeline": _pipeline_meta(stage),
             "next_move": _winning_next_move(evidence),
+            "schedule_reason": (_rm.group(1).strip() if _rm else ""),
+            "classification_label": (_cm.group(1).strip() if _cm else ""),
+            "feedback": _call_coaching(evidence, {}),  # last-call coaching (what the BDE missed)
             "industry": industry, "contact_name": contact_name,
         }))
 

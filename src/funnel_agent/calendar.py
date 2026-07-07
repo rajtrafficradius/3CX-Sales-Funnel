@@ -191,7 +191,10 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT c.call_id, COALESCE(c.bde_name, c.bde_extension) AS bde_name, c.dest_number, "
-            "c.started_at, cl.callback_when, cl.prospect_company, cl.evidence "
+            "c.started_at, cl.callback_when, cl.prospect_company, cl.evidence, cl.rpc_connect, "
+            "(SELECT p.source FROM prospects p WHERE "
+            "   right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) = ANY(p.phones_norm) "
+            "   LIMIT 1) AS source "
             "FROM calls c JOIN classifications cl ON cl.call_id = c.call_id "
             "LEFT JOIN calendar_events e ON e.call_id = c.call_id AND e.type='callback' "
             "WHERE c.in_scope AND c.started_at >= %s AND c.started_at < %s "
@@ -200,17 +203,31 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
         )
         pending = cur.fetchall()
     created = 0
+    suppressed = 0
     for r in pending:
+        # BDE-SOURCED GATEKEEPER SUPPRESSION (user rule): on BDE-dialled data (source not the curated
+        # master/D&B DB) we only pursue callbacks where we actually reached the decision-maker (an
+        # RPC-connect). A gatekeeper-only "call back later" on unverified BDE data gets no callback.
+        bde_sourced = (r.get("source") != "master_file")
+        reached_dm = bool(r.get("rpc_connect"))
+        if bde_sourced and not reached_dm:
+            suppressed += 1
+            continue
         base = (r["started_at"].date() if r["started_at"] else day)
         when = guess_when(r["callback_when"], base)
         who = r["prospect_company"] or r["dest_number"] or "prospect"
         # strip our-side noise like '(Richard's time)' (Richard = a BDE alias) from the display.
         cbw = _clean_time_noise(r["callback_when"])
-        title = f"📞 Callback: {who}" + (f" ({cbw})" if cbw else "")
+        stage = "RPC callback" if reached_dm else "gatekeeper callback"
+        prov = "from BDE-sourced data" if bde_sourced else "from curated database"
+        when_s = when.strftime("%a %-d %b at %-I:%M %p")
+        title = f"📞 {stage}: {who}" + (f" ({cbw})" if cbw else "")
         plan = synth_next_call_points_text(r.get("evidence"))
-        # lead with the game plan (the winning next move), then the requested time.
-        notes = ("Next-call game plan:\n" + plan + "\n\n") if plan else ""
-        notes += (f"They asked us to call back: {cbw}" if cbw else "")
+        # lead with WHY this time + the classification/provenance, then the game plan.
+        reason = (f"They asked us to call back ‘{cbw}’, so it’s booked for {when_s}." if cbw
+                  else f"A callback was requested (no exact time given) — booked for {when_s}.")
+        notes = f"⏰ Why this time: {reason}\n🏷️ Classification: {stage} · {prov}.\n\n"
+        notes += ("Next-call game plan:\n" + plan + "\n\n") if plan else ""
         notes = notes.strip() or cbw
         try:
             create_event(pool, bde_name=r["bde_name"], type="callback", title=title,
@@ -220,6 +237,6 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
             created += 1
         except Exception as exc:  # unique index race / already exists
             log.warning("callback_create_skip", call_id=r["call_id"], error=str(exc)[:120])
-    if created:
-        log.info("callbacks_synced", day=str(day), created=created)
-    return {"callbacks": created}
+    if created or suppressed:
+        log.info("callbacks_synced", day=str(day), created=created, suppressed_bde_gk=suppressed)
+    return {"callbacks": created, "suppressed_bde_gk": suppressed}

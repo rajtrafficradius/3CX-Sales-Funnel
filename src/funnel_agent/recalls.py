@@ -42,6 +42,11 @@ WITH agg AS (
   SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) AS d9,
          (array_agg(c.dest_number ORDER BY c.started_at DESC))[1]                        AS dest_number,
          bool_or(cl.rpc_connect IS TRUE)                                                 AS ever_connected,
+         -- BEST-EVER stage guards (no-revert rule): once we ever reached the decision-maker (p1 /
+         -- rpc_connect) or booked (p5), a later gatekeeper-only call must NOT drag them back into
+         -- the gatekeeper recall loop. These let us exclude/cancel such prospects explicitly.
+         bool_or(cl.pipeline_stage = 'p5')                                               AS ever_booked,
+         bool_or(cl.pipeline_stage = 'p1' OR cl.rpc_connect IS TRUE)                      AS ever_reached_dm,
          max(c.started_at)                                                               AS last_attempt,
          min(c.started_at)                                                               AS first_attempt,
          (array_agg(COALESCE(c.bde_name, c.bde_extension) ORDER BY c.started_at DESC)
@@ -63,7 +68,8 @@ WITH agg AS (
   WHERE c.in_scope AND lower(c.direction) = 'outbound'
   GROUP BY 1
 )
-SELECT a.d9, a.dest_number, a.ever_connected, a.last_attempt, a.first_attempt, a.last_bde,
+SELECT a.d9, a.dest_number, a.ever_connected, a.ever_booked, a.ever_reached_dm,
+       a.last_attempt, a.first_attempt, a.last_bde,
        a.last_stage, a.company, a.callback_when, a.unavailable_until, a.attempts,
        pp.pipeline AS pp_pipeline, pp.assigned_bde, pp.next_action_at, pp.cadence_days,
        pp.business_name AS pp_name,
@@ -74,20 +80,27 @@ FROM agg a
 LEFT JOIN prospect_pipeline pp ON pp.dest9 = a.d9
 WHERE length(a.d9) = 9
   AND COALESCE(pp.dnd, false) = false
+  -- NO-REVERT (best-ever stage wins): never re-enter the gatekeeper recall loop for a prospect we
+  -- already booked or already reached the decision-maker on — even if their most recent call only
+  -- got the gatekeeper. Those are owned by the booking / RPC-callback pipelines, not weekly recalls.
+  AND COALESCE(a.ever_booked, false) = false
+  AND COALESCE(a.ever_reached_dm, false) = false
   AND (
         (a.ever_connected = false AND a.last_stage IN ('p1','p3'))   -- un-connected, actively pursued
         OR pp.pipeline = 'pipeline2_existing_agency'                 -- existing-agency rotation
       )
 """
 
-# Cancel recalls for prospects we've since connected with or that went DND.
+# Cancel recalls for prospects we've since connected with / booked / reached the DM on, or that went
+# DND. Booking (p5) and reaching the decision-maker (p1) are "best-ever" stages that permanently
+# retire the gatekeeper recall — a later gatekeeper-only call must never revive it (no-revert rule).
 _CANCEL_RESOLVED = """
 UPDATE calendar_events e SET status = 'cancelled'
 WHERE e.type = 'recall' AND e.status = 'pending'
   AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) IN (
         SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)
         FROM calls c JOIN classifications cl ON cl.call_id = c.call_id
-        WHERE cl.rpc_connect IS TRUE
+        WHERE cl.rpc_connect IS TRUE OR cl.pipeline_stage IN ('p1','p5')
         UNION
         SELECT dest9 FROM prospect_pipeline WHERE dnd
   )
@@ -199,6 +212,7 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
     best_hours = _best_call_hours(pool, getattr(settings, "tz", "Australia/Melbourne"), hour)
     params: list[dict] = []
     skipped = 0
+    suppressed_bde_gk = 0
     for i, r in enumerate(rows):
         is_agency = (r.get("pp_pipeline") == "pipeline2_existing_agency")
         bde = (r.get("assigned_bde") if is_agency else None) or r.get("last_bde")
@@ -240,22 +254,43 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             skipped += 1
             continue
         who = r.get("company") or r.get("pp_name") or r.get("dest_number") or "prospect"
-        # source-based priority for gatekeeper/un-connected recalls (user rule): a curated-database
-        # number is higher-trust than one a BDE dialled ad-hoc (which may have data-quality issues).
+        # source-based trust (user rule): a curated master/D&B number is higher-trust than one a BDE
+        # dialled ad-hoc (source 'call_capture' / not in the curated DB — may have data-quality issues).
         high_trust = (r.get("source") == "master_file")
+        # BDE-SOURCED GATEKEEPER SUPPRESSION (user rule): on BDE-dialled data we do NOT chase a weekly
+        # gatekeeper (P3) recall — the number/decision-maker is unverified. We only pursue such a
+        # prospect if we actually reached the DM, which fires a separate RPC-connect 'callback' event
+        # (kept). Curated master/D&B gatekeeper numbers still get the weekly recall.
+        if not is_agency and not high_trust:
+            suppressed_bde_gk += 1
+            continue
+        # WHY THIS TIME (#2): a human, accurate one-liner explaining the chosen slot, shown on the
+        # calendar drill-down + prospect card so the reason for the timing is never a mystery.
+        when_s = when.strftime("%a %-d %b at %-I:%M %p")
+        gave_time = bool(cbw) and any(m in cbw.lower() for m in
+                        ("am", "pm", "morning", "afternoon", "evening", "noon", "midday", ":"))
+        if is_agency:
+            reason = (f"Existing-agency contract rotation — cycle every {cadence} days, so the next "
+                      f"touch lands {when_s} (attempt #{(r.get('attempts') or 0) + 1}).")
+        elif cbw:
+            reason = (f"The last call told us to call ‘{cbw}’, so it’s scheduled for {when_s}"
+                      + ("" if gave_time else f" — at {best_hour}:00, our best historical pick-up "
+                         "hour, since no exact time was given") + ".")
+        else:
+            reason = (f"No callback time was given, so it falls to weekly cadence — placed {when_s}, "
+                      f"because {best_hour}:00 is when prospects answer most often.")
+        if unavail:
+            reason = (f"They’re unavailable until ‘{unavail}’, so the next call is pushed past that "
+                      f"window. ") + reason
         if is_agency:
             title = f"🔁 Agency call-cycle: {who}"
-            notes = (f"Existing-agency rotation (every {cadence} days). Attempt "
-                     f"#{(r.get('attempts') or 0) + 1}. Assigned to {bde}.")
+            notes = (f"⏰ Why this time: {reason}  ·  Existing-agency rotation, assigned to {bde}.")
         else:
-            stage = "RPC callback" if r.get("last_stage") == "p1" else "gatekeeper callback"
-            prio = "🔷 HIGH priority (database-sourced)" if high_trust else \
-                   "▫️ Lower priority (BDE-sourced — verify the number/decision-maker)"
-            timing = (f"they told us to call '{cbw}'" if cbw else "no callback time given — weekly cadence")
-            title = ("🔷 " if high_trust else "") + f"🔁 Recall: {who}"
-            notes = (f"Recall — not yet connected ({stage}). {prio}. Timing: {timing}. Attempt "
-                     f"#{(r.get('attempts') or 0) + 1}. Keep calling until we speak to them "
-                     f"(auto-cancels once connected or marked DND).")
+            title = f"🔷 🔁 Recall: {who}"
+            notes = (f"⏰ Why this time: {reason}  ·  Recall — not yet connected (gatekeeper callback, "
+                     f"🔷 database-sourced / high-trust). Attempt #{(r.get('attempts') or 0) + 1}. "
+                     f"Keep calling until we speak to them (auto-cancels once connected, booked, or "
+                     f"marked DND).")
         params.append({"bde": bde, "title": title, "start": when,
                        "end": when + timedelta(minutes=30), "notes": notes,
                        "dest": r.get("dest_number")})
@@ -267,6 +302,7 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             conn.commit()
             scheduled = len(params)
 
-    out = {"scheduled": scheduled, "cancelled": cancelled, "skipped": skipped, "candidates": len(rows)}
+    out = {"scheduled": scheduled, "cancelled": cancelled, "skipped": skipped,
+           "suppressed_bde_gk": suppressed_bde_gk, "candidates": len(rows)}
     log.info("weekly_recalls_synced", **out)
     return out
