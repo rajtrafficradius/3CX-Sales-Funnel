@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-<script>(function(){try{var t=localStorage.getItem("tr-theme");document.documentElement.setAttribute("data-theme",t==="dark"?"dark":"light");}catch(e){}})();</script>
+<script>(function(){try{var t=localStorage.getItem("tr-theme-v2");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}catch(e){}})();</script>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Traffic Radius — Sales Funnel (TV)</title>
@@ -256,7 +256,7 @@ _cur=setTimeout(()=>document.body.style.cursor='none',4000);
   b.title="Toggle light / dark theme";b.setAttribute("aria-label","Toggle theme");
   function paint(){b.textContent=cur()==="light"?"\u{1F319}":"\u2600\uFE0F";}
   b.onclick=function(){var n=cur()==="light"?"dark":"light";el.setAttribute("data-theme",n);
-    try{localStorage.setItem("tr-theme",n);}catch(e){}paint();};
+    try{localStorage.setItem("tr-theme-v2",n);}catch(e){}paint();};
   paint();(document.body||el).appendChild(b);
 })();</script>
 </body>
