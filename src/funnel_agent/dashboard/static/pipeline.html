@@ -126,14 +126,22 @@ function renderToolbar(){
 window.setWin=function(w){win=w;renderToolbar();loadBoard();};
 
 function row(r){
-  const biz=esc(r.business_name||r.prospect_company||r.dest_number||'—');
+  const biz=esc(r.business_name||r.prospect_company||r.dest_number||r.domain||'—');
   const key=(r.dest_number||'').replace(/[^0-9]/g,'');
   const nc=r.next_call_at;
   const ncTxt=nc?`<span class="next-ok">${esc(fmtDate(nc))}</span>${r.next_call_bde?` <span class="sub">${esc(r.next_call_bde)}</span>`:''}`:'<span class="next-none">—</span>';
+  const bizCell=`<td><a href="/prospect/${encodeURIComponent(key||r.domain||'')}"><span class="biz">${biz}</span></a>${r.domain?`<div class="dom">${esc(r.domain)}</div>`:''}</td>`;
+  if(stage==='p4'){   // confirmed-ads pool: business · phone · industry · revenue · next call
+    return `<tr>${bizCell}
+      <td class="num">${esc(r.dest_number||'—')}</td>
+      <td>${r.industry?esc(r.industry):'<span class="muted">—</span>'}</td>
+      <td class="r num">${r.revenue_musd!=null?('$'+Math.round(r.revenue_musd)+'M'):''}</td>
+      <td>${ncTxt}</td>
+    </tr>`;
+  }
   const tier=r.lead_temperature;
-  const tierCell=tier?`<span class="pill ${tierClass(tier)}">${esc(tier)}</span>`:(r.p4_subpipeline?`<span class="pill t-cool">${esc((r.p4_subpipeline||'').replace('fresh_','').replace('_',' '))}</span>`:'');
-  return `<tr>
-    <td><a href="/prospect/${encodeURIComponent(key||r.domain||'')}"><span class="biz">${biz}</span></a>${r.domain?`<div class="dom">${esc(r.domain)}</div>`:''}</td>
+  const tierCell=tier?`<span class="pill ${tierClass(tier)}">${esc(tier)}</span>`:'';
+  return `<tr>${bizCell}
     <td class="num">${esc(r.dest_number||'')}</td>
     <td>${tierCell}</td>
     <td class="r num">${r.ncalls!=null?r.ncalls:''}</td>
@@ -148,10 +156,12 @@ async function loadBoard(){
   try{
     const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}`);
     const rows=d.rows||[];
-    if(!rows.length){$('#board').innerHTML='<div class="empty">No prospects in this pipeline'+(bde!=='ALL'?' for '+esc(bde):'')+' right now.</div>';return;}
-    $('#board').innerHTML=`<table><thead><tr>
-      <th>Prospect</th><th>Phone</th><th>${STAGES[stage].win?'Temp':'Status'}</th><th class="r">Calls</th><th>Last call</th><th>Next call</th><th>BDE</th>
-    </tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`;
+    if(!rows.length){$('#board').innerHTML='<div class="empty">Nothing in this pipeline'+(bde!=='ALL'?' for '+esc(bde):'')+' right now.</div>';return;}
+    const head = stage==='p4'
+      ? '<th>Business</th><th>Phone</th><th>Industry</th><th class="r">Revenue</th><th>Next call</th>'
+      : `<th>Prospect</th><th>Phone</th><th>Temp</th><th class="r">Calls</th><th>Last call</th><th>Next call</th><th>BDE</th>`;
+    const cap = (d.total && d.total>rows.length) ? `<div class="sub" style="padding:10px 14px;border-top:1px solid var(--line-soft)">Showing top ${rows.length} of ${d.total.toLocaleString()} confirmed-ads businesses (by revenue).</div>` : '';
+    $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>${cap}`;
   }catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
 }
 
@@ -169,7 +179,7 @@ async function boot(){
       $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.fresh_ads; }catch(e){}
+  try{ const p=await api('/api/pipelines5'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.running_ads; }catch(e){}
   renderTabs(); renderToolbar(); loadBoard();
 }
 boot();

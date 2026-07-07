@@ -1121,6 +1121,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )[0]
         pools = {s: int(pool.get(s) or 0) for s in _P4_SUBS}
         pools["total"] = int(pool.get("total") or 0)
+        # the real 'fresh worklist' size = businesses confirmed running Google Ads (the callable pool)
+        ra = q("SELECT count(*) n FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'")
+        pools["running_ads"] = int(ra[0]["n"]) if ra else 0
         return JSONResponse({"found": True, "today": today,
                              "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
                              "rows": out_rows, "pools": pools})
@@ -1141,27 +1144,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         the board is a full call-list like Pipeline 2."""
         bde = _scoped_bde(request, bde)
         limit = max(10, min(int(limit or 300), 1000))
-        # ---- P4: the fresh worklist = prospects CONFIRMED running Google Ads (the callable pool).
-        # We deliberately exclude 'ads unknown' (unscanned), captured (already dialled) and retries —
-        # a fresh cold call is only worth it when we KNOW they're spending on ads. ----
+        # ---- P4 Fresh worklist = every business CONFIRMED running Google Ads: the real callable
+        # ad-spender pool (enrichment.running_google_ads + D&B companies for name/phone/revenue),
+        # ~7.8k, biggest revenue first — NOT just the handful already loaded into `prospects`. ----
         if pipeline == "p4":
-            where = ["pipeline_stage='p4'", "p4_subpipeline='fresh_ads'"]
-            if bde and bde != "ALL":
-                where.append("assigned_bde=%(bde)s")
+            total = q("SELECT count(*) n FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'")[0]["n"]
             rows = q(
-                "SELECT pr.business_name, pr.domain, pr.assigned_bde AS bde, pr.p4_subpipeline, "
-                "  pr.last_called_at AS started_at, (pr.phones_norm)[1] AS dest_number, "
+                "WITH ads AS (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'), "
+                "picked AS (SELECT DISTINCT ON (a.domain) a.domain, co.company_name AS business_name, "
+                "  COALESCE(NULLIF(co.phone,''), co.phone_norm) AS dest_number, co.industry, co.revenue_musd "
+                "  FROM ads a LEFT JOIN companies co ON co.domain=a.domain "
+                "  ORDER BY a.domain, (NULLIF(co.phone,'') IS NOT NULL) DESC, co.revenue_musd DESC NULLS LAST), "
+                # SMB targets ($1-50M) first, biggest-in-band first; enterprises (>$50M, not agency
+                # targets) sink to the bottom. Only callable (has a phone) rows.
+                "top AS (SELECT * FROM picked WHERE dest_number IS NOT NULL "
+                "  ORDER BY CASE WHEN revenue_musd BETWEEN 1 AND 50 THEN 0 WHEN revenue_musd IS NULL "
+                "    THEN 1 ELSE 2 END, revenue_musd DESC NULLS LAST LIMIT %(lim)s) "
+                "SELECT t.domain, t.business_name, t.dest_number, t.industry, t.revenue_musd, "
                 "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
-                "FROM prospects pr "
-                + _NEXT_CALL_LATERAL.replace("%(d9col)s", "(pr.phones_norm)[1]")
-                + f" WHERE {' AND '.join(where)} "
-                "ORDER BY pr.updated_at DESC NULLS LAST LIMIT %(lim)s",
-                {"bde": bde, "lim": limit})
+                "FROM top t "
+                + _NEXT_CALL_LATERAL.replace("%(d9col)s", "right(regexp_replace(COALESCE(t.dest_number,''),'[^0-9]','','g'),9)")
+                + " ORDER BY CASE WHEN t.revenue_musd BETWEEN 1 AND 50 THEN 0 "
+                "  WHEN t.revenue_musd IS NULL THEN 1 ELSE 2 END, t.revenue_musd DESC NULLS LAST",
+                {"lim": limit})
             for r in rows:
-                r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
             return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
-                                 "rows": jsonable_encoder(rows)})
+                                 "total": int(total), "rows": jsonable_encoder(rows)})
         today = _pipe_anchor()
         off = dict((k, o) for k, _l, o in _PIPE_WINDOWS).get(window, 29)
         if not today or pipeline not in _STAGE_RANK:
