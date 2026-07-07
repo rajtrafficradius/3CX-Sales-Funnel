@@ -452,6 +452,13 @@ async function openEvent(id){
       </div>` : '';
     const pts=(nm.points&&nm.points.length)?nm.points:((d.evidence&&Array.isArray(d.evidence.next_call_points))?d.evidence.next_call_points:[]);
     const plan = pts.length ? `<div class="subh">💬 What to say</div><ul class="evplan">${pts.slice(0,5).map(p=>`<li>${KIND[p.kind]||'•'} ${esc(p.point||'')}${p.why?` <span class="muted">— ${esc(p.why)}</span>`:''}</li>`).join('')}</ul>` : '';
+    // #2/#5: structured why-this-time + classification label + last-call coaching gaps.
+    const reasonBox = d.schedule_reason
+      ? `<div class="subh">⏰ Why this time</div><div class="evnotes">${esc(d.schedule_reason)}</div>`
+      : (notes?`<div class="subh">Why this call is scheduled</div><div class="evnotes">${esc(notes).replace(/\n/g,'<br>')}</div>`:'');
+    const missed=(d.feedback&&d.feedback.missed)||[];
+    const missedBox = missed.length
+      ? `<div class="subh" style="color:var(--bad)">🚫 What the BDE didn't do last call</div><ul class="evplan">${missed.slice(0,4).map(m=>`<li>✗ ${esc(m)}</li>`).join('')}</ul>` : '';
     const canWrite = ME.role!=='kiosk' && !(ME.role==='bde' && e.bde_name && e.bde_name!==ME.bde_name);
     const openBtn = d.prospect_key ? `<a class="btn-primary" href="/prospect/${encodeURIComponent(d.prospect_key)}" style="text-decoration:none">Open prospect page →</a>` : '';
     const acts = canWrite ? `<button onclick="toggleDone(${id},'${e.status}');closeEvent()">${e.status==='done'?'↺ Reopen':'✓ Mark done'}</button><button onclick="closeEvent();editTime(${id})">🕑 Reschedule</button><button onclick="closeEvent();del(${id})">🗑 Delete</button>` : '';
@@ -459,6 +466,7 @@ async function openEvent(id){
       <div class="evhead">
         <span class="etype ${e.type}">${TYPE_ICON[e.type]||''} ${esc(TYPE_LABEL[e.type]||e.type||'')}</span>
         ${pipe.label?`<span class="pill" style="background:var(--accent-soft)">${esc(pipe.label)}</span>`:''}
+        ${d.classification_label?`<span class="pill" style="background:var(--accent-soft)">🏷️ ${esc(d.classification_label)}</span>`:''}
         ${e.status&&e.status!=='pending'?`<span class="pill">${esc(e.status)}</span>`:''}
         <button class="evx" onclick="closeEvent()" aria-label="Close">✕</button>
       </div>
@@ -471,7 +479,8 @@ async function openEvent(id){
       </div>
       ${moveBox}
       ${plan}
-      ${notes?`<div class="subh">Why this call is scheduled</div><div class="evnotes">${esc(notes).replace(/\n/g,'<br>')}</div>`:''}
+      ${reasonBox}
+      ${missedBox}
       <div class="evactions">${openBtn}${acts}</div>`;
   }catch(err){ card.innerHTML=`<div style="padding:24px">Couldn't load this event (${esc(String(err.message||err))}). <button onclick="closeEvent()">Close</button></div>`; }
 }

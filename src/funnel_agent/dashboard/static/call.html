@@ -395,7 +395,7 @@ function leadCard(cl, ev, o){
   const ovTag = hasOv ? ` <span class="pill" style="background:rgba(59,130,246,.16);color:var(--accent)" title="${esc(o.reason||'')}">BDM override${o.override_by?' · '+esc(o.override_by):''}</span>` : '';
   const qpill = ev.qualified ? `<span class="pill ${effQ?'yes':'no'}">${effQ?'✓ Qualified':'Not qualified'}</span>${ovTag}` : '';
   const autov = (ev.runs_paid_ads||ev.has_marketing_agency)
-    ? `<div class="muted" style="font-size:12.5px;margin-top:10px">⚡ Auto-validated (budget + aspiration): ${[ev.runs_paid_ads?'already runs paid ads':null, ev.has_marketing_agency?'already has a marketing agency':null].filter(Boolean).join(' · ')}</div>` : '';
+    ? `<div class="muted" style="font-size:12.5px;margin-top:10px" title="Captured from what the PROSPECT stated, not our BDE's pitch claims. SEO/ads metrics are verified separately by our own enrichment.">⚡ Auto-validated (budget + aspiration): ${[ev.runs_paid_ads?'already runs paid ads':null, ev.has_marketing_agency?'already has a marketing agency':null].filter(Boolean).join(' · ')} <span style="opacity:.7">— as stated by the prospect</span></div>` : '';
   const prob = ev.problem_summary ? `<div style="font-size:13px;margin-top:10px"><b>Marketing problem (prospect's words):</b> ${esc(ev.problem_summary)}</div>` : '';
   return `<div class="card full"><h2>Lead qualification <span class="muted">— BANT + Aspiration / Open-to-listening</span></h2>
     <div class="hint">Is this prospect worth a strategy session? <b>Qualified = Authority + at least 2 of Budget, Problem or Urgency.</b> A BDM can override the AI's call.</div>
@@ -589,24 +589,29 @@ function nextCallPoints(ev, cl){
   if(!pts.length) return '';
   return '<ul style="list-style:none;padding-left:0;margin:0">'+pts.slice(0,5).map(p=>{const k=KIND[p.kind]||KIND.hook;return '<li style="margin:7px 0;padding-left:26px;position:relative"><span style="position:absolute;left:0">'+k[0]+'</span><span style="color:'+k[1]+'">'+esc(p.point)+'</span>'+(p.why?'<span class="muted" style="font-size:12px"> — '+esc(p.why)+'</span>':'')+'</li>';}).join('')+'</ul>';
 }
-function feedbackCard(ev, cl){
+function feedbackCard(ev, cl, fb){
+  fb=fb||{};
   const sc=ev.scorecard||{};
   const DIMS=[['opening','Opening'],['discovery','Discovery'],['pitch','Pitch'],['objection_handling','Objection handling'],['close','Close']];
   const scored=DIMS.filter(([k])=>sc[k]!=null).map(([k,l])=>({l,v:Number(sc[k])}));
   const tips=ev.coaching_tips||[];
   const objs=ev.objections||[];
   const unhandled=objs.filter(o=>!o.handled);
-  if(!scored.some(s=>s.v>0) && !tips.length && !objs.length) return '';   // no coaching signal on this call
+  // server "what the BDE actually did / failed to do" (RPC behaviours: ask for DM, get name,
+  // lock a time, secure a direct contact) — the concrete gaps the user asked to surface (#4).
+  const missed=fb.missed||[], didWell=fb.did_well||[], doNext=fb.do_next||[];
+  if(!scored.some(s=>s.v>0) && !tips.length && !objs.length && !missed.length && !didWell.length) return '';
   const strong=scored.filter(s=>s.v>=3.5).sort((a,b)=>b.v-a.v);
   const weak=scored.filter(s=>s.v>0&&s.v<2.5).sort((a,b)=>a.v-b.v);
   const wins=[
+    ...didWell,
     ...strong.map(s=>`${s.l} was strong (${s.v.toFixed(1)}/5)`),
     ...(ev.buying_signals||[]).slice(0,2).map(s=>`Buying signal: ${s}`),
-    ...objs.filter(o=>o.handled).slice(0,1).map(o=>`Handled the "${o.objection}" objection`),
   ];
+  // "What the BDE didn't do" leads (the specific misses), then scorecard weaknesses + tips.
   const improves=[
+    ...missed,
     ...weak.map(s=>`${s.l} needs work (${s.v.toFixed(1)}/5)`),
-    ...unhandled.slice(0,2).map(o=>`Unhandled objection: "${o.objection}"`),
     ...tips.slice(0,3),
   ];
   const booked=ev.meeting_booked&&ev.meeting_booked.value;
@@ -614,12 +619,15 @@ function feedbackCard(ev, cl){
     || (booked?'Send the calendar invite + overview/testimonials pack and confirm the time.'
              :'Follow up to secure a firm strategy-session date/time.');
   const li=(arr,icon,color)=>arr.length?`<ul class="ci" style="list-style:none;padding-left:0;margin:0">${arr.map(x=>`<li style="margin:6px 0;padding-left:24px;position:relative"><span style="position:absolute;left:0">${icon}</span><span style="color:${color}">${esc(x)}</span></li>`).join('')}</ul>`:'<div class="muted">—</div>';
+  const missedHtml = missed.length
+    ? `<div style="margin-top:12px"><div class="subh" style="color:var(--bad)">🚫 What the BDE didn't do (last call)</div>${li(missed,'✗','var(--bad)')}</div>` : '';
   return `<div class="card full" style="border-color:var(--accent2)">
     <h2 style="color:var(--accent)">🧠 Feedback intelligence <span class="muted">— this call</span></h2>
     <div class="bizgrid">
       <div><div class="subh">✅ What went well</div>${li(wins,'✅','var(--good)')}</div>
       <div><div class="subh">⚠️ What to improve</div>${li(improves,'⚠️','var(--warn)')}</div>
     </div>
+    ${missedHtml}
     <div class="subh" style="margin-top:12px">🎯 Next-call game plan</div>
     <div style="background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;color:var(--txt-dim)">${nextCallPoints(ev,cl)||esc(next)}</div>
   </div>`;
@@ -687,7 +695,7 @@ async function load(){
     : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
 
   const tabs=[
-    ['summary','Summary', leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(c, d.can_override) + feedbackCard(ev,cl) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
+    ['summary','Summary', leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(c, d.can_override) + feedbackCard(ev,cl,d.feedback) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (summary||'') + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],
