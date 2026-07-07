@@ -102,7 +102,7 @@ const $=s=>document.querySelector(s);
 const STAGES={
   p1:{label:'RPC callback',blurb:'We reached the decision-maker and they asked us to call back — warm, keep the thread alive and lock the meeting.',icon:'\u{1F4DE}',win:true},
   p3:{label:'Gatekeeper callback',blurb:'We got a gatekeeper, not the decision-maker yet — get through and secure a direct line / callback time.',icon:'\u{1F6E1}️',win:true},
-  p4:{label:'Fresh worklist',blurb:'Not yet worked — first-contact pool (running-ads and captured prospects prioritised).',icon:'\u{1F195}',win:false},
+  p4:{label:'Fresh · running ads',blurb:'Not yet worked — prospects CONFIRMED running Google Ads (the callable first-contact pool).',icon:'\u{1F195}',win:false},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
 };
 const ORDER=['p1','p3','p4','p5'];
@@ -169,7 +169,7 @@ async function boot(){
       $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.total; }catch(e){}
+  try{ const p=await api('/api/pipelines5'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.fresh_ads; }catch(e){}
   renderTabs(); renderToolbar(); loadBoard();
 }
 boot();

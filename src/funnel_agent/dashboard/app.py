@@ -1141,9 +1141,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         the board is a full call-list like Pipeline 2."""
         bde = _scoped_bde(request, bde)
         limit = max(10, min(int(limit or 300), 1000))
-        # ---- P4: the fresh worklist pool lives in the prospects table, not per-call ----
+        # ---- P4: the fresh worklist = prospects CONFIRMED running Google Ads (the callable pool).
+        # We deliberately exclude 'ads unknown' (unscanned), captured (already dialled) and retries —
+        # a fresh cold call is only worth it when we KNOW they're spending on ads. ----
         if pipeline == "p4":
-            where = ["pipeline_stage='p4'", "COALESCE(p4_subpipeline,'') NOT IN ('dead','')"]
+            where = ["pipeline_stage='p4'", "p4_subpipeline='fresh_ads'"]
             if bde and bde != "ALL":
                 where.append("assigned_bde=%(bde)s")
             rows = q(
@@ -1153,7 +1155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "FROM prospects pr "
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "(pr.phones_norm)[1]")
                 + f" WHERE {' AND '.join(where)} "
-                "ORDER BY (pr.p4_subpipeline='fresh_ads') DESC, pr.updated_at DESC NULLS LAST LIMIT %(lim)s",
+                "ORDER BY pr.updated_at DESC NULLS LAST LIMIT %(lim)s",
                 {"bde": bde, "lim": limit})
             for r in rows:
                 r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
