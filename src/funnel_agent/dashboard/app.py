@@ -1921,16 +1921,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return resources.files("funnel_agent.dashboard").joinpath(
             "static/call.html").read_text(encoding="utf-8")
 
+    def _bde_access_ok(own: str | None, dest_number: str | None) -> bool:
+        """The ONE rule for whether a BDE may access a prospect and ALL its calls/recordings: they
+        either DIALLED that number themselves, OR the prospect is ASSIGNED to them (pipeline rotation
+        / next-call worklist). This is the rotation hand-off — a rep who owns (or has worked) a
+        prospect sees every rep's calls to it. Used by the prospect page, call page and recording so
+        access is consistent (fixing the class of '403 on my own assigned prospect' bugs)."""
+        if not own:
+            return False
+        d9 = re.sub(r"\D", "", dest_number or "")[-9:]
+        if len(d9) < 9:
+            return False
+        try:
+            r = q("SELECT 1 FROM calls c WHERE c.in_scope "
+                  "  AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%(d)s "
+                  "  AND COALESCE(c.bde_name, c.bde_extension)=%(b)s "
+                  "UNION ALL SELECT 1 FROM prospect_pipeline WHERE dest9=%(d)s AND assigned_bde=%(b)s "
+                  "UNION ALL SELECT 1 FROM next_call_queue WHERE dest9=%(d)s AND assigned_bde=%(b)s LIMIT 1",
+                  {"d": d9, "b": own})
+            return bool(r)
+        except Exception:
+            return False
+
     @app.get("/api/call/{call_id}")
     def call_detail(request: Request, call_id: str) -> JSONResponse:
         calls = q("SELECT * FROM calls WHERE call_id=%s", (call_id,))
         if not calls:
             raise HTTPException(404, "call not found")
         call = calls[0]
-        if _is_bde(request):  # a BDE may only open their own calls
-            own = _scoped_bde(request, None)
-            if (call.get("bde_name") or call.get("bde_extension")) != own:
-                raise HTTPException(403, "not your call")
+        # A BDE may open any call to a prospect they can access (they dialled it OR it's assigned to
+        # them) — the rotation hand-off, consistent with the prospect page (which lists every call).
+        if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
+            raise HTTPException(403, "not your call")
         call["started_at"] = str(call["started_at"]) if call["started_at"] else None
         tr = q("SELECT text, sentiment, summary, diarized FROM transcripts WHERE call_id=%s",
                (call_id,))
@@ -2099,10 +2121,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not rows:
             raise HTTPException(404, "call not found")
         call = rows[0]
-        if _is_bde(request):                        # a BDE may only hear their own calls
-            own = _scoped_bde(request, None)
-            if (call.get("bde_name") or call.get("bde_extension")) != own:
-                raise HTTPException(403, "not your call")
+        # Same rotation-handoff rule as the call page: a rep may hear any call to a prospect they can
+        # access (dialled it OR assigned to them), not only calls they personally made.
+        if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
+            raise HTTPException(403, "not your call")
         rec_id = call.get("recording_id")
         if not rec_id:
             raise HTTPException(404, "no recording for this call")
@@ -2448,14 +2470,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     dn = re.sub(r"\D", "", c.get("dest_number") or "")
                     if dn:
                         d9set.add(dn[-9:])
-                if d9set:
-                    try:
-                        asg = q("SELECT 1 FROM prospect_pipeline WHERE dest9 = ANY(%(d)s) AND assigned_bde = %(b)s "
-                                "UNION ALL SELECT 1 FROM next_call_queue WHERE dest9 = ANY(%(d)s) AND assigned_bde = %(b)s "
-                                "LIMIT 1", {"d": list(d9set), "b": own})
-                        allowed = bool(asg)
-                    except Exception:
-                        allowed = False
+                allowed = any(_bde_access_ok(own, d9) for d9 in d9set)   # same rule as the call page
             if not allowed:
                 raise HTTPException(403, "not your prospect")
 
@@ -3393,9 +3408,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not rows:
             raise HTTPException(404, "event not found")
         ev = rows[0]
-        # A BDE may only open their own events; managers/kiosk see all.
-        if _is_bde(request) and ev.get("bde_name") and ev["bde_name"] != _scoped_bde(request, None):
-            raise HTTPException(403, "not your event")
+        # A BDE may open an event on their OWN calendar, OR any event for a prospect they can access
+        # (dialled it / assigned to them) — so a "View on calendar" link from their own worklist
+        # prospect opens even when the event was created for another rep. Managers/kiosk see all.
+        if _is_bde(request):
+            _own = _scoped_bde(request, None)
+            if ev.get("bde_name") and ev["bde_name"] != _own and not _bde_access_ok(_own, ev.get("dest_number")):
+                raise HTTPException(403, "not your event")
         # prospect_key = the dialled number's digits → drives /prospect/<key>. dest9
         # (trailing 9) is the distinct-prospect key the pipeline board / call rows use.
         import re as _re
