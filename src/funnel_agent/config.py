@@ -194,6 +194,12 @@ class Settings(BaseSettings):
     fresh_ads_enrich_per_cycle: int = 20
     fresh_ads_enrich_workers: int = 6
 
+    # Calendar shows ONLY the Fresh · running-ads calling worklist (+ manual events). The old
+    # BDE-sourced auto-events — RPC-connect callbacks, gatekeeper/weekly recalls — are NOT scheduled
+    # or shown; that data is reached from the pipeline pages instead. Flip off to restore the old
+    # multi-pipeline calendar.
+    calendar_fresh_only: bool = True
+
     # --- Fresh Google-Ads calling calendar (AI daily allocation) ---
     # The ONLY cold pool that goes on the calendar: prospects CONFIRMED running Google Ads. Each BDE
     # gets a curated rolling worklist of ~N high-value fresh calls (value×90-day-performance matched),

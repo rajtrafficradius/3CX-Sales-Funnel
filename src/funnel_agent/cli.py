@@ -728,12 +728,15 @@ def refresh(
             log.warning("sync_next_call_scores_failed", error=str(exc)[:160])
         # Weekly recall — put a dated 'call this week' event on the assigned BDE's calendar for
         # every un-connected P1/P3 prospect + the P2 agency rotation; roll forward until connected.
-        try:
-            from .recalls import sync_weekly_recalls
-            wr = sync_weekly_recalls(ana, settings)
-        except Exception as exc:
-            wr = {"error": str(exc)[:80]}
-            log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
+        # Skipped when the calendar is Fresh-ads-only (that data is reached from the pipeline pages).
+        wr = {"skipped": "fresh_only"}
+        if not settings.calendar_fresh_only:
+            try:
+                from .recalls import sync_weekly_recalls
+                wr = sync_weekly_recalls(ana, settings)
+            except Exception as exc:
+                wr = {"error": str(exc)[:80]}
+                log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
         # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
         # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
         try:

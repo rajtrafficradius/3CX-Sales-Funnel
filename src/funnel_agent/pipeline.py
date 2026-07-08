@@ -98,11 +98,12 @@ def classify_window(
                 enr = enrich_day(analytics_pool, settings, day)
             except Exception as exc:  # enrichment must never block the funnel
                 log.warning("enrich_day_failed", day=str(day), error=str(exc)[:160])
-        try:  # auto-assign interested-prospect callbacks to the BDE calendar
-            from .calendar import sync_callbacks_for_day
-            sync_callbacks_for_day(analytics_pool, day)
-        except Exception as exc:
-            log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
+        if not settings.calendar_fresh_only:  # calendar is Fresh-ads-only → skip callback auto-scheduling
+            try:  # auto-assign interested-prospect callbacks to the BDE calendar
+                from .calendar import sync_callbacks_for_day
+                sync_callbacks_for_day(analytics_pool, day)
+            except Exception as exc:
+                log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
         try:  # RPC "Next Move": per-day upsert only; global resolve+schedule runs once after loop
             from .rpc import analyze_rpc_actions
             analyze_rpc_actions(analytics_pool, settings, day, run_global=False)

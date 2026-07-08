@@ -140,10 +140,13 @@ def guess_when(text: str | None, base: date) -> datetime:
 
 
 def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None = None) -> list[dict]:
-    # NEVER show cancelled events — the recall engine cancels/supersedes thousands of them each cycle
-    # (they accumulate into the hundreds of thousands); rendering them floods the calendar. Only live
-    # (pending) + completed (done) events belong on the board.
-    where = ["e.status <> 'cancelled'", "e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
+    # The calendar is the Fresh · running-ads calling worklist: show ONLY fresh_call events plus any
+    # MANUAL entries a user added (a booked meeting, a note). The old auto-scheduled BDE events —
+    # callbacks, gatekeeper/weekly recalls, rpc retries (all created_by='auto') — are reached from the
+    # pipeline pages instead, not shown here. Cancelled events are never rendered.
+    where = ["e.status <> 'cancelled'",
+             "(e.type = 'fresh_call' OR COALESCE(e.created_by, '') <> 'auto')",
+             "e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
     params: dict = {"s": start, "e": end}
     if bde_name:
         where.append("e.bde_name = %(b)s")
