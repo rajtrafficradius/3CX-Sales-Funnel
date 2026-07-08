@@ -314,15 +314,19 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
     for c in calls:
         ev = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
         rpc = ev.get("rpc_next_move") if isinstance(ev.get("rpc_next_move"), dict) else {}
-        # decision-maker (from the RPC move or the extracted contact)
+        outcome = (c.get("call_outcome") or "").strip().lower()
+        # "Who we've spoken to" must be people we ACTUALLY spoke to. A voicemail/no-answer greeting
+        # that names someone ("you've reached Derek") is NOT contact — only list a person from a real
+        # conversation or an RPC-connect. (The DM's NAME still shows under Key facts either way.)
+        reached_dm = bool(c.get("rpc_connect"))
         dm = (rpc.get("dm_name") or c.get("prospect_contact_name") or "").strip()
-        if dm:
+        if dm and (reached_dm or outcome == "conversation"):
             _add_person(dm, role=(rpc.get("dm_role") or "").strip() or "Decision-maker",
                         kind="dm", mobile=c.get("prospect_mobile"), email=c.get("prospect_email"))
-        # gatekeeper (only a REAL gatekeeper descriptor, when we did NOT reach the DM — never a
-        # machine token like 'voicemail' and never the decision-maker).
+        # gatekeeper — only when we genuinely spoke to a gatekeeper on this call (outcome=gatekeeper),
+        # never a machine token like 'voicemail' and never the decision-maker.
         gkn = _gk_name(ev.get("who_answered"))
-        if gkn and not c.get("rpc_connect"):
+        if gkn and outcome == "gatekeeper" and not reached_dm:
             _add_person(gkn, role="Gatekeeper / receptionist", kind="gk")
         # standalone captured contact (no name tied) — still record mobile/email
         if (c.get("prospect_mobile") or c.get("prospect_email")) and not dm:
