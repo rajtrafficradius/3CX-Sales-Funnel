@@ -140,7 +140,10 @@ def guess_when(text: str | None, base: date) -> datetime:
 
 
 def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None = None) -> list[dict]:
-    where = ["e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
+    # NEVER show cancelled events — the recall engine cancels/supersedes thousands of them each cycle
+    # (they accumulate into the hundreds of thousands); rendering them floods the calendar. Only live
+    # (pending) + completed (done) events belong on the board.
+    where = ["e.status <> 'cancelled'", "e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
     params: dict = {"s": start, "e": end}
     if bde_name:
         where.append("e.bde_name = %(b)s")
@@ -157,6 +160,20 @@ def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None
             params,
         )
         return cur.fetchall()
+
+
+def purge_cancelled(pool: ConnectionPool, older_than_days: int = 3) -> int:
+    """Hard-delete cancelled events older than N days. The recall engine cancels/supersedes many events
+    every cycle; without a purge they accumulate into the hundreds of thousands and bloat the table.
+    Cancelled rows are dead (a new recall makes a new row), so this is safe. Returns rows removed."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM calendar_events WHERE status='cancelled' "
+            "AND COALESCE(created_at, start_at) < now() - make_interval(days => %s)",
+            (int(older_than_days),))
+        n = cur.rowcount
+        conn.commit()
+    return n
 
 
 def create_event(pool: ConnectionPool, *, bde_name, type, title, start_at, end_at=None,

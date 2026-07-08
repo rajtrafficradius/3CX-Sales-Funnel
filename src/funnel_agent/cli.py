@@ -734,6 +734,13 @@ def refresh(
         except Exception as exc:
             wr = {"error": str(exc)[:80]}
             log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
+        # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
+        # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
+        try:
+            from .calendar import purge_cancelled
+            purge_cancelled(ana, older_than_days=3)
+        except Exception as exc:
+            log.warning("purge_cancelled_failed", error=str(exc)[:160])
         # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
         # 90-day performance). The ONLY cold pool on the calendar; resolves once a number is dialled.
         fx = {"scheduled": 0}
