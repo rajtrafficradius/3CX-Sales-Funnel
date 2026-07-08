@@ -642,6 +642,59 @@
   :root[data-theme=light] .tr-rail{box-shadow:none}
   :root[data-theme=light] .tr-rail:hover,:root[data-theme=light] .tr-rail:focus-within{box-shadow:22px 0 48px -30px rgba(20,30,50,.35)}
 </style>
+<style id="tr-dash-polish">
+  /* ===== DASHBOARD PREMIUM POLISH (design-panel winner: editorial typography + material depth).
+     Appended so it wins by source order. Structure/DOM/palette untouched — typography, scoped
+     elevation tokens, and calm 150ms hovers only. Verified in dark (default) + light theme. ===== */
+  :root{
+    --track-display:-.021em; --track-fig:-.018em; --track-cap:.05em; --track-over:.085em;
+    --mat-elev:            inset 0 1px 0 rgba(255,255,255,.035), 0 1px 2px rgba(0,0,0,.34), 0 6px 16px -12px rgba(0,0,0,.60);
+    --mat-elev-hover:      inset 0 1px 0 rgba(255,255,255,.05),  0 1px 2px rgba(0,0,0,.38), 0 10px 24px -14px rgba(0,0,0,.70);
+    --mat-elev-hero:       inset 0 1px 0 rgba(255,255,255,.05),  0 1px 2px rgba(0,0,0,.40), 0 18px 42px -24px rgba(0,0,0,.82);
+    --mat-elev-hero-hover: inset 0 1px 0 rgba(255,255,255,.065), 0 1px 2px rgba(0,0,0,.42), 0 22px 50px -24px rgba(0,0,0,.86);
+  }
+  :root[data-theme=light]{
+    --mat-elev:            inset 0 1px 0 rgba(255,255,255,.90), 0 1px 2px rgba(20,30,50,.06), 0 6px 16px -12px rgba(20,30,50,.16);
+    --mat-elev-hover:      inset 0 1px 0 rgba(255,255,255,1),   0 1px 2px rgba(20,30,50,.08), 0 10px 24px -14px rgba(20,30,50,.22);
+    --mat-elev-hero:       inset 0 1px 0 rgba(255,255,255,1),   0 1px 2px rgba(20,30,50,.07), 0 18px 42px -26px rgba(20,30,50,.26);
+    --mat-elev-hero-hover: inset 0 1px 0 rgba(255,255,255,1),   0 1px 2px rgba(20,30,50,.09), 0 22px 50px -26px rgba(20,30,50,.32);
+  }
+  /* instrument-grade numerals + crisper rendering */
+  body{font-variant-numeric:tabular-nums slashed-zero;font-optical-sizing:auto;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+  /* H1 masthead + unified overlines */
+  .pagehead{align-items:baseline;gap:14px;margin:var(--s2) 0 var(--s4);padding-bottom:var(--s3);border-bottom:1px solid var(--line-soft)}
+  .pagehead h1{font-size:var(--t-h1);font-weight:760;letter-spacing:var(--track-display);line-height:1.03;color:var(--txt)}
+  .pagehead .sub,.pagehead #pageScope{font-size:var(--t-body);color:var(--muted);font-weight:500;letter-spacing:-.006em}
+  .sectionlabel{letter-spacing:var(--track-over);color:var(--faint);font-weight:700}
+  .card h2{letter-spacing:var(--track-cap);line-height:1.3}
+  .card h2 .muted{font-size:var(--t-meta);letter-spacing:0;font-weight:500}
+  thead th,#pipelineTable th{letter-spacing:var(--track-over)}
+  .card.kpi .l,.leadchip .t{letter-spacing:var(--track-over)}
+  .ctlgroup label{letter-spacing:.08em}.appttl .s{letter-spacing:.12em}
+  /* expensive figures */
+  .card.kpi .v{font-weight:800;letter-spacing:var(--track-display);line-height:1.04;color:var(--txt)}
+  .card.kpi .v .delta{align-self:center;font-size:var(--t-meta);font-weight:700;letter-spacing:.01em;transform:translateY(-1px)}
+  .card.kpi .l{margin-top:var(--s2);color:var(--muted)}.card.kpi .sub{margin-top:var(--s1);letter-spacing:.004em}
+  .leadchip .n{letter-spacing:var(--track-fig)}
+  .leadchip .n .delta{align-self:center;font-size:var(--t-meta);font-weight:700;transform:translateY(-1px)}
+  #pipelineTable td .drill{letter-spacing:var(--track-fig)}
+  tbody td:first-child{letter-spacing:-.008em}.bench{letter-spacing:.006em}
+  :root[data-theme=light] .pagehead{border-bottom-color:var(--line)}
+  /* material depth — scoped tokens, calm 150ms hovers, no transform on charts */
+  .card{box-shadow:var(--mat-elev);transition:border-color .15s ease,box-shadow .15s ease}
+  .card:hover{border-color:var(--line2);box-shadow:var(--mat-elev-hover)}
+  #funnelCard,#leaderboardCard,#trendCard{box-shadow:var(--mat-elev-hero);border-color:var(--line2)}
+  #funnelCard:hover,#leaderboardCard:hover,#trendCard:hover{box-shadow:var(--mat-elev-hero-hover)}
+  .card.kpi{box-shadow:var(--mat-elev-hero);transition:border-color .15s ease,background .15s ease,transform .15s ease,box-shadow .15s ease}
+  .card.kpi:hover{border-color:var(--line2);background:var(--panel3);transform:translateY(-1px);box-shadow:var(--mat-elev-hero-hover)}
+  .card.kpi::before{top:8px;bottom:8px;width:3px;border-radius:0 2px 2px 0;background:linear-gradient(180deg,var(--accent),var(--accent2));opacity:.95}
+  .card.kpi:has(.delta.up)::before{background:var(--good)}.card.kpi:has(.delta.down)::before{background:var(--bad)}
+  .leadchip{box-shadow:var(--mat-elev);transition:border-color .15s ease,background .15s ease,transform .15s ease,box-shadow .15s ease}
+  .leadchip.drill:hover{box-shadow:var(--mat-elev-hover)}
+  thead th{box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 1px 0 var(--line)}
+  :root[data-theme=light] thead th{box-shadow:inset 0 1px 0 rgba(255,255,255,.75),0 1px 0 var(--line)}
+  @media (prefers-reduced-motion:reduce){.card,.card.kpi,.leadchip,#funnelCard,#leaderboardCard,#trendCard{transition:none}}
+</style>
 </head>
 <body>
 <header class="appbar" id="appbar"><!-- redesigned top bar rendered by React (htm) below --></header>
@@ -1065,9 +1118,17 @@ async function openPipeline5Prospects(pipeline, window, title){
   $('#drawer').classList.add('open'); $('#drawerBg').style.display='block';
 }
 
+// re-render the funnel when the theme flips live (so the theme-aware seam updates without a reload).
+window.addEventListener('tr-theme-change', function(){ try{ if(window.__lastF) renderFunnel(window.__lastF); }catch(e){} });
 function renderFunnel(f){
   if(!f.found){funnelChart.clear();return;}
+  window.__lastF = f;
   const data = f.stages.map(s=>({name:s.stage,value:s.total}));
+  // theme-aware grout so seams are invisible on BOTH the dark hero card and the white light card;
+  // animate the staged rise ONLY on the first paint (never on the 60s auto-refresh) + respect reduced-motion.
+  const seam = (document.documentElement.getAttribute('data-theme')==='light') ? '#ffffff' : '#10151e';
+  const reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion:reduce)').matches);
+  const animate = !reduce && !funnelChart.__drawn; funnelChart.__drawn = true;
   funnelChart.setOption({
   backgroundColor:'transparent',
   textStyle:{fontFamily:'ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial'},
@@ -1095,50 +1156,56 @@ function renderFunnel(f){
     type:'funnel',
     sort:'none',
     funnelAlign:'center',
-    gap:3,
+    gap:2,
     left:'7%',
     right:'7%',
     top:8,
     bottom:8,
-    minSize:'18%',
+    minSize:'22%',
     maxSize:'100%',
+    animationDuration: animate ? 620 : 0,
+    animationEasing:'cubicOut',
+    animationDelay: function(i){ return animate ? i*55 : 0; },
+    // editorial two-tier label: UPPERCASE stage overline above a large value figure.
+    // Ink colour is set PER SEGMENT below (adaptive) so contrast is real on every band.
     label:{
       position:'inside',
-      color:'#f4f7ff',
-      fontWeight:700,
-      fontSize:TV?20:12,
-      formatter:'{b}\n{c}',
-      lineHeight:TV?24:16,
-      textShadowColor:'rgba(7,10,16,.62)',
-      textShadowBlur:3
+      formatter:function(p){ return '{n|'+String(p.name).toUpperCase()+'}\n{v|'+(p.value!=null?p.value.toLocaleString():'')+'}'; },
+      rich:{
+        n:{ fontSize:TV?12:10, fontWeight:700, lineHeight:TV?18:13, padding:[0,0,TV?4:2,0] },
+        v:{ fontSize:TV?30:19, fontWeight:800, lineHeight:TV?32:21 }
+      }
     },
     labelLine:{show:false},
-    itemStyle:{
-      borderColor:'#0a0d13',
-      borderWidth:2,
-      opacity:1
-    },
+    itemStyle:{ borderColor:seam, borderWidth:2, opacity:1 },
     emphasis:{
-      label:{fontWeight:800},
-      itemStyle:{borderColor:'#5b8cff',borderWidth:2,shadowBlur:14,shadowColor:'rgba(91,140,255,.4)'}
+      label:{ rich:{ v:{ fontSize:TV?32:21 } } },
+      itemStyle:{ borderColor:'#5b8cff', borderWidth:2, shadowBlur:18, shadowColor:'rgba(91,140,255,.45)' }
     },
     data:data.map(function(d,i){
       var n=(data.length>1)?(data.length-1):1;
+      // tuned blue ramp (light -> deep), even perceptual steps
       var stops=[
         ['#cdd9f3','#a7bef0'],
-        ['#9fbbf2','#7aa1ee'],
-        ['#7aa0f0','#5b8cff'],
-        ['#5b8cff','#4574e6'],
-        ['#4574e6','#345dc4'],
-        ['#345dc4','#2a4ba3'],
-        ['#2a4ba3','#213d86']
+        ['#a9c1f2','#84a3ee'],
+        ['#87a6f0','#6690ea'],
+        ['#6b91ec','#5b8cff'],
+        ['#5079e0','#3f66cf'],
+        ['#3d5cc0','#2f489f'],
+        ['#31509a','#213d86']
       ];
       var idx=Math.round(i/n*(stops.length-1));
       var c=stops[idx];
+      // deep-navy ink on the 3 palest bands; near-white ink from the mid-blue crossover down
+      // (large bold value clears contrast) — correct in every theme, real contrast not shadow-faked.
+      var lightSeg = idx<=2;
       return {
-        name:d.name,
-        value:d.value,
-        itemStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:c[0]},{offset:1,color:c[1]}]}}
+        name:d.name, value:d.value,
+        itemStyle:{ color:{ type:'linear', x:0,y:0,x2:0,y2:1,
+          colorStops:[{offset:0,color:c[0]},{offset:1,color:c[1]}] } },
+        label:{ color: lightSeg?'#0f1830':'#f5f8ff',
+                textShadowColor: lightSeg?'rgba(255,255,255,.30)':'rgba(8,12,20,.55)',
+                textShadowBlur: lightSeg?1:3 }
       };
     })
   }]
@@ -1635,7 +1702,8 @@ pollProgress();
   b.title="Toggle light / dark theme";b.setAttribute("aria-label","Toggle theme");
   function paint(){b.textContent=cur()==="light"?"\u{1F319}":"\u2600\uFE0F";}
   b.onclick=function(){var n=cur()==="light"?"dark":"light";el.setAttribute("data-theme",n);
-    try{localStorage.setItem("tr-theme-v2",n);}catch(e){}paint();};
+    try{localStorage.setItem("tr-theme-v2",n);}catch(e){}paint();
+    try{window.dispatchEvent(new Event("tr-theme-change"));}catch(e){}};
   paint();(document.body||el).appendChild(b);
 })();</script>
 
