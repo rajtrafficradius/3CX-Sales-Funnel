@@ -69,17 +69,37 @@
   /* ---- theme toggle + nav drawer (shared) ---- */
   .tr-theme-btn{position:fixed;right:16px;bottom:16px;z-index:90;width:40px;height:40px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-size:17px;cursor:pointer;box-shadow:var(--elev1);display:flex;align-items:center;justify-content:center}
   .tr-theme-btn:hover{border-color:var(--accent)}
-  .tr-nav-btn{position:fixed;top:13px;left:14px;z-index:96;width:34px;height:34px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--txt-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1;transition:background .12s,color .12s,border-color .12s}
-  .tr-nav-btn:hover{background:var(--panel2);border-color:var(--line);color:var(--txt)}
-  .tr-drawer{position:fixed;top:0;left:0;bottom:0;width:250px;background:var(--panel);border-right:1px solid var(--line);box-shadow:0 24px 60px -24px rgba(8,12,20,.55);transform:translateX(-102%);transition:transform .22s cubic-bezier(.4,0,.2,1);z-index:101;padding:14px 12px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
-  .tr-drawer.open{transform:none}
-  .tr-drawer-hd{padding:6px 10px 12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;font-size:11px;color:var(--faint)}
-  .tr-drawer a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;color:var(--txt-dim);font-weight:600;font-size:13.5px}
-  .tr-drawer a:hover{background:var(--panel2);color:var(--txt)}
-  .tr-drawer a.active{background:var(--accent-soft);color:var(--accent)}
-  .tr-drawer a .i{width:20px;text-align:center;font-size:15px}
-  .tr-drawer-backdrop{position:fixed;inset:0;background:rgba(8,12,20,.42);opacity:0;pointer-events:none;transition:opacity .2s;z-index:100}
-  .tr-drawer-backdrop.open{opacity:1;pointer-events:auto}
+
+  /* ---- persistent icon rail (Claude-style): always-visible slim nav that expands on hover ---- */
+  :root{--rail-w:58px;--rail-open:238px}
+  body{padding-left:var(--rail-w)}
+  html.tv body{padding-left:0}
+  html.tv .tr-rail{display:none}
+  .tr-rail{position:fixed;top:0;left:0;bottom:0;width:var(--rail-w);z-index:60;box-sizing:border-box;
+    background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;
+    padding:10px 0;overflow:hidden;transition:width .19s cubic-bezier(.4,0,.2,1),box-shadow .19s}
+  .tr-rail:hover,.tr-rail:focus-within{width:var(--rail-open);box-shadow:22px 0 48px -30px rgba(8,12,20,.6)}
+  .tr-rail-brand{display:flex;align-items:center;height:40px;flex:none;text-decoration:none;margin:0 8px 10px;border-radius:10px}
+  .tr-rail-brand .ic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
+  .tr-rail-brand .ic img{width:24px;height:24px;object-fit:contain;border-radius:5px;background:#fff;padding:2px;box-sizing:border-box}
+  .tr-rail-nav{display:flex;flex-direction:column;gap:2px;flex:1;overflow-y:auto;overflow-x:hidden}
+  .tr-rail-nav::-webkit-scrollbar{width:0}
+  .tr-rail-foot{flex:none;display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
+  .tr-rail-item,.tr-rail-user{display:flex;align-items:center;height:42px;margin:0 8px;border-radius:10px;
+    color:var(--txt-dim);text-decoration:none;font-weight:600;font-size:13.5px;overflow:hidden;white-space:nowrap;
+    transition:background .12s,color .12s}
+  .tr-rail-item:hover{background:var(--panel2);color:var(--txt)}
+  .tr-rail-item.active{background:var(--accent-soft);color:var(--accent)}
+  .tr-rail-item .ic,.tr-rail-user .ic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
+  .tr-rail svg{width:20px;height:20px;flex:none}
+  .tr-rail .lbl{opacity:0;transition:opacity .16s;letter-spacing:-.1px}
+  .tr-rail:hover .lbl,.tr-rail:focus-within .lbl{opacity:1}
+  .tr-rail-brand .lbl{font-weight:800;font-size:14px;color:var(--txt);letter-spacing:-.2px}
+  .tr-rail-user .av{width:28px;height:28px;flex:none;border-radius:50%;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+  .tr-rail-user .lbl{font-weight:600;font-size:12.5px;color:var(--txt-dim);overflow:hidden;text-overflow:ellipsis;max-width:150px}
+  :root[data-theme=light] .tr-rail{box-shadow:none}
+  :root[data-theme=light] .tr-rail:hover,:root[data-theme=light] .tr-rail:focus-within{box-shadow:22px 0 48px -30px rgba(20,30,50,.35)}
 </style>
 </head>
 <body>
@@ -185,20 +205,36 @@ async function boot(){
 boot();
 </script>
 <button class="tr-theme-btn" title="Toggle light / dark" aria-label="Toggle theme" onclick="var e=document.documentElement,n=e.getAttribute('data-theme')==='light'?'dark':'light';e.setAttribute('data-theme',n);try{localStorage.setItem('tr-theme-v2',n)}catch(x){};this.textContent=n==='light'?'\u{1F319}':'☀️'">🌙</button>
-<button class="tr-nav-btn" aria-label="Open navigation menu" onclick="var d=document.querySelector('.tr-drawer'),b=document.querySelector('.tr-drawer-backdrop');d.classList.toggle('open');b.classList.toggle('open')">☰</button>
-<div class="tr-drawer-backdrop" onclick="document.querySelector('.tr-drawer').classList.remove('open');this.classList.remove('open')"></div>
-<nav class="tr-drawer" aria-label="Main navigation">
-  <div class="tr-drawer-hd">Navigate</div>
-  <a href="/" data-nav="/"><span class="i">📊</span> Dashboard</a>
-  <a href="/calendar" data-nav="/calendar"><span class="i">📅</span> Calendar</a>
-  <a href="/next-calls" data-nav="/next-calls"><span class="i">⭐</span> Next calls</a>
-  <a href="/pipeline/p1" data-nav="/pipeline"><span class="i">🚦</span> Call pipelines</a>
-  <a href="/database" data-nav="/database"><span class="i">🗄️</span> Prospect database</a>
-  <a href="/pipeline2" data-nav="/pipeline2"><span class="i">🔁</span> Agency pipeline</a>
-  <a href="/coaching" data-nav="/coaching"><span class="i">🎯</span> Coaching</a>
-  <a href="/admin" data-nav="/admin" class="tr-admin" style="display:none"><span class="i">⚙️</span> Admin</a>
-</nav>
-<script>(function(){document.querySelectorAll('.tr-drawer a').forEach(function(a){var dn=a.getAttribute('data-nav'),p=location.pathname;if(dn===p||(dn!=='/'&&p.indexOf(dn+'/')===0))a.classList.add('active')});fetch('/api/me').then(function(r){return r.json()}).then(function(m){if(m&&m.role==='admin'){var el=document.querySelector('.tr-drawer a.tr-admin');if(el)el.style.display=''}}).catch(function(){});document.addEventListener('keydown',function(e){if(e.key==='Escape'){var d=document.querySelector('.tr-drawer'),b=document.querySelector('.tr-drawer-backdrop');if(d)d.classList.remove('open');if(b)b.classList.remove('open')}})})();
-(function(){var el=document.documentElement;var b=document.querySelector('.tr-theme-btn');if(b)b.textContent=el.getAttribute('data-theme')==='light'?'\u{1F319}':'☀️';})();</script>
+
+<nav class="tr-rail" id="trRail" aria-label="Primary navigation"></nav>
+<script>(function(){
+  var P=location.pathname, S='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">';
+  var NAV=[
+    ['/','/','Dashboard','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>'],
+    ['/calendar','/calendar','Calendar','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
+    ['/next-calls','/next-calls','Next calls','<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>'],
+    ['/pipeline/p1','/pipeline','Call pipelines','<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
+    ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
+    ['/pipeline2','/pipeline2','Agency pipeline','<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'],
+    ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
+  ];
+  var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="ic"><img src="/logo.png" alt=""/></span><span class="lbl">Traffic Radius</span></a><div class="tr-rail-nav">';
+  for(var i=0;i<NAV.length;i++){var n=NAV[i];
+    var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
+    h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+  }
+  h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
+  var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+  fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+    if(!m) return;
+    if(m.role==='admin'){var el=document.querySelector('.tr-rail .tr-admin'); if(el) el.style.display='';}
+    var nm=(m.name||m.email||'').trim(); if(!nm) return;
+    var w=document.getElementById('trWho'); if(w) w.textContent=nm;
+    var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);
+    var ini=((parts[0]||'')[0]||'')+((parts[1]||'')[0]||''); if(!ini) ini=(base[0]||'?');
+    var av=document.getElementById('trAv'); if(av) av.textContent=ini.toUpperCase();
+  }).catch(function(){});
+})();</script>
 </body>
 </html>
