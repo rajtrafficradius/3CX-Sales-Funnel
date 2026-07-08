@@ -469,9 +469,26 @@ def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
                q.next_best_time, q.assigned_bde, q.override_by, q.linked_event_id,
                q.status, q.synced_at,
                COALESCE(q.business_name, p.business_name) AS business_name,
-               COALESCE(q.domain, p.domain)               AS domain
+               COALESCE(q.domain, p.domain)               AS domain,
+               -- Best-ever pipeline stage for this prospect (same precedence the whole app uses:
+               -- p5>p2>p1>p3, else p4 fresh) + the last BDE who actually called them (the natural
+               -- owner when nobody has been explicitly assigned). Matched by the indexed company_key.
+               COALESCE(ps.stage, 'p4')                   AS pipeline_stage,
+               ps.last_bde                                AS last_bde
         FROM next_call_queue q
         JOIN prospects p ON p.id = q.prospect_id
+        LEFT JOIN LATERAL (
+          SELECT (CASE WHEN bool_or(cl.pipeline_stage='p5') THEN 'p5'
+                       WHEN bool_or(cl.pipeline='pipeline2_existing_agency') THEN 'p2'
+                       WHEN bool_or(cl.pipeline_stage='p1') THEN 'p1'
+                       WHEN bool_or(cl.pipeline_stage='p3') THEN 'p3'
+                       WHEN count(*) > 0 THEN 'p4'
+                       ELSE NULL END) AS stage,
+                 (array_agg(COALESCE(c.bde_name, c.bde_extension) ORDER BY c.started_at DESC)
+                    FILTER (WHERE COALESCE(c.bde_name, c.bde_extension) IS NOT NULL))[1] AS last_bde
+          FROM classifications cl JOIN calls c ON c.call_id = cl.call_id
+          WHERE c.in_scope AND cl.company_key = 'dom:' || COALESCE(q.domain, p.domain)
+        ) ps ON COALESCE(q.domain, p.domain) IS NOT NULL AND COALESCE(q.domain, p.domain) <> ''
         WHERE {' AND '.join(where)}
         ORDER BY q.score DESC NULLS LAST, q.next_best_time NULLS LAST
         LIMIT %(limit)s

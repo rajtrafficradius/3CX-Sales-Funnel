@@ -105,6 +105,13 @@
   .tier.hot{background:rgba(248,113,113,.14);color:var(--bad)}
   .tier.warm{background:rgba(251,191,36,.16);color:var(--warn)}
   .tier.cool{background:rgba(139,150,166,.12);color:var(--muted)}
+  /* pipeline badge — canonical labels/colours matching the pipeline board + prospect page */
+  .pipe{display:inline-block;padding:3px 10px;border-radius:999px;font-size:var(--t-meta);font-weight:700;white-space:nowrap;border:1px solid transparent;letter-spacing:.1px}
+  .pipe.p1{color:var(--accent);background:var(--accent-soft);border-color:rgba(91,140,255,.26)}
+  .pipe.p2{color:#fb923c;background:rgba(251,146,60,.13);border-color:rgba(251,146,60,.26)}
+  .pipe.p3{color:var(--warn);background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.26)}
+  .pipe.p4{color:var(--good);background:rgba(74,222,128,.13);border-color:rgba(74,222,128,.24)}
+  .pipe.p5{color:#f472b6;background:rgba(244,114,182,.14);border-color:rgba(244,114,182,.26)}
 
   /* score cell + meter */
   .scorecell{width:120px}
@@ -242,6 +249,17 @@
         </select>
       </label>
       <label class="field">
+        <span class="lbl">Pipeline</span>
+        <select id="fPipeline">
+          <option value="">All pipelines</option>
+          <option value="p1">RPC callback</option>
+          <option value="p2">Existing agency</option>
+          <option value="p3">Gatekeeper callback</option>
+          <option value="p4">Fresh worklist</option>
+          <option value="p5">Booked</option>
+        </select>
+      </label>
+      <label class="field">
         <span class="lbl">Timing</span>
         <span class="tglbox"><input type="checkbox" id="fDue"><span id="fDueLbl">Due now only</span></span>
       </label>
@@ -273,6 +291,7 @@
           <tr>
             <th class="num">#</th>
             <th>Prospect</th>
+            <th>Pipeline</th>
             <th>Tier</th>
             <th class="num">Priority</th>
             <th>Why call now</th>
@@ -282,7 +301,7 @@
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td colspan="8"><div class="state"><span class="spin"></span>Loading the call queue…</div></td></tr>
+          <tr><td colspan="9"><div class="state"><span class="spin"></span>Loading the call queue…</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -303,17 +322,21 @@ const TIER = {
   warm: {icon:'⚡', label:'Warm'},
   cool: {icon:'·',  label:'Cool'},
 };
-// Human name for WHY this prospect surfaced (the trigger signal).
+// Human name for WHY this prospect surfaced (the trigger signal). Terminology kept consistent
+// with the canonical pipeline names below (no ad-hoc "Pipeline 1/3" wording).
 const SIGNAL = {
   callback:    'Callback requested',
   rpc_action:  'Open next move',
-  pipeline_p1: 'Interested · Pipeline 1',
-  pipeline_p3: 'Gatekeeper callback · Pipeline 3',
+  pipeline_p1: 'RPC callback due',
+  pipeline_p3: 'Gatekeeper callback due',
   recent_call: 'Recent call · no result yet',
 };
+// Canonical pipeline labels — MUST match _PIPELINE_META (app.py) used everywhere else.
+const PIPE = { p1:'RPC callback', p2:'Existing agency', p3:'Gatekeeper callback', p4:'Fresh worklist', p5:'Booked' };
 
 // filter state
-const state = { bde:'ALL', tier:'', due:false };
+const state = { bde:'ALL', tier:'', due:false, pipeline:'' };
+let LAST = null;   // last fetched payload (for client-side pipeline filtering without a re-fetch)
 let CAN_ASSIGN = false;
 let ROSTER_LOADED = false;
 
@@ -331,7 +354,7 @@ function renderKpis(rows){
   const total = rows.length;
   const hot = rows.filter(r => r.tier==='hot').length;
   const due = rows.filter(isDue).length;
-  const unassigned = rows.filter(r => !r.assigned_bde).length;
+  const unassigned = rows.filter(r => !r.assigned_bde && !r.last_bde).length;
   document.getElementById('kTotal').textContent = total;
   document.getElementById('kHot').textContent = hot;
   document.getElementById('kDue').textContent = due;
@@ -365,10 +388,17 @@ function rowHtml(r, i){
     ? `<span class="duepill">● Due now</span>${r.next_best_time?`<div class="whensub">was ${esc(fmtDate(r.next_best_time))}</div>`:`<div class="whensub">no time set</div>`}`
     : `<div class="whenval">${esc(fmtDate(r.next_best_time))}</div><div class="whensub">scheduled</div>`;
 
-  // Owner.
+  // Pipeline (canonical stage, matching the rest of the app).
+  const stage = r.pipeline_stage || 'p4';
+  const pipeCell = `<span class="pipe ${esc(stage)}">${esc(PIPE[stage] || 'Fresh worklist')}</span>`;
+
+  // Owner — explicit assignment wins; otherwise the LAST BDE who actually called (the natural
+  // owner). Only a prospect nobody has ever called is truly "Unassigned".
   const ownerCell = r.assigned_bde
     ? `<span class="name">${esc(r.assigned_bde)}</span>${r.override_by?`<div class="whensub">manually set</div>`:''}`
-    : `<span class="pill-none">Unassigned</span>`;
+    : (r.last_bde
+        ? `<span class="name">${esc(r.last_bde)}</span><div class="whensub">last caller</div>`
+        : `<span class="pill-none">Unassigned</span>`);
 
   // Manager actions (mirror prospect.html reassignNext / scheduleNext + Done).
   const actions = CAN_ASSIGN
@@ -382,6 +412,7 @@ function rowHtml(r, i){
   return `<tr>
     <td class="rank num">${i+1}</td>
     <td>${nameCell}${meta?`<div class="pmeta">${meta}</div>`:''}</td>
+    <td>${pipeCell}</td>
     <td><span class="tier ${esc(r.tier||'cool')}">${tier.icon} ${tier.label}</span></td>
     <td class="scorecell num">
       <div class="scoreval">${score}<span class="denom">/100</span></div>
@@ -395,8 +426,10 @@ function rowHtml(r, i){
 }
 
 function render(data){
-  const rows = data.rows || [];
-  const colspan = CAN_ASSIGN ? 8 : 7;
+  let rows = data.rows || [];
+  // client-side pipeline filter (pipeline is derived per row, so no re-fetch needed)
+  if(state.pipeline) rows = rows.filter(r => (r.pipeline_stage || 'p4') === state.pipeline);
+  const colspan = CAN_ASSIGN ? 9 : 8;
   const tbody = document.getElementById('rows');
   document.querySelector('.acthead').style.display = CAN_ASSIGN ? '' : 'none';
   document.getElementById('syncBtn').style.display = CAN_ASSIGN ? '' : 'none';
@@ -417,7 +450,7 @@ function render(data){
 }
 
 function renderError(msg){
-  const colspan = CAN_ASSIGN ? 8 : 7;
+  const colspan = CAN_ASSIGN ? 9 : 8;
   document.getElementById('rows').innerHTML =
     `<tr><td colspan="${colspan}"><div class="state err"><div class="big">Couldn’t load the queue</div>${esc(msg||'Please retry.')}</div></td></tr>`;
 }
@@ -446,6 +479,7 @@ async function load(){
       sel.value = state.bde;
       ROSTER_LOADED = true;
     }
+    LAST = data;
     render(data);
     document.getElementById('applyHint').textContent = '';
   }catch(e){
@@ -497,6 +531,8 @@ async function syncQueue(){
 document.getElementById('fBde').addEventListener('change', e => { state.bde = e.target.value; load(); });
 document.getElementById('fTier').addEventListener('change', e => { state.tier = e.target.value; load(); });
 document.getElementById('fDue').addEventListener('change', e => { state.due = e.target.checked; load(); });
+// pipeline filter is client-side (derived per row) → just re-render the last payload, no re-fetch.
+document.getElementById('fPipeline').addEventListener('change', e => { state.pipeline = e.target.value; if(LAST) render(LAST); });
 document.getElementById('syncBtn').addEventListener('click', syncQueue);
 
 load();
