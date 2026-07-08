@@ -1316,9 +1316,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         })
 
     # ---- pipeline tables (distinct prospects per window) ---------------- #
-    _PIPE_WINDOWS = [("today", "Today", 0), ("d3", "Last 3 days", 2),
+    _PIPE_WINDOWS = [("all", "All time", 100000), ("today", "Today", 0), ("d3", "Last 3 days", 2),
                      ("d7", "Last 7 days", 6), ("d14", "Last 14 days", 13),
                      ("d30", "Last 30 days", 29)]
+    _PIPE_MAXOFF = max(o for _k, _l, o in _PIPE_WINDOWS)   # base-window span (covers 'All time')
     _PIPE_ROWS = [("pipeline1_interested", "Pipeline 1 · Interested (callback)"),
                   ("pipeline2_existing_agency", "Pipeline 2 · Already with an agency")]
     # Batch D 5-pipeline board. Prospect-level precedence: a prospect is shown under its
@@ -1434,8 +1435,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"found": False, "rows": [], "pools": {}})
         where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
                  "cl.pipeline_stage IN ('p1','p2','p3','p5')",
-                 "c.started_at >= (%(today)s::date - 29)", "c.started_at < (%(today)s::date + 1)"]
-        params: dict = {"today": today}
+                 "c.started_at >= (%(today)s::date - %(maxoff)s)", "c.started_at < (%(today)s::date + 1)"]
+        params: dict = {"today": today, "maxoff": _PIPE_MAXOFF}
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
