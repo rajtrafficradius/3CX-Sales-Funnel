@@ -2432,11 +2432,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not calls and not master and not companies:
             return JSONResponse({"found": False})
 
-        # BDE scoping: a BDE may only open a prospect they've actually called
-        # (then they DO see every BDE's calls to it — the rotation hand-off).
+        # BDE scoping: a BDE may open a prospect they've CALLED (rotation hand-off — they then see
+        # every BDE's calls to it) OR one that's ASSIGNED to them (their next-call worklist / pipeline
+        # rotation), even before they've dialled it. Without the assignment path a rep can't open the
+        # very prospect they've been told to call next (reported: 385185715 assigned to Bharat but
+        # first called by Syed/Alfred → Bharat got a 403 on his own worklist prospect).
         if _is_bde(request):
             own = _scoped_bde(request, None)
-            if not any((c.get("bde_name") or c.get("bde_extension")) == own for c in calls):
+            allowed = any((c.get("bde_name") or c.get("bde_extension")) == own for c in calls)
+            if not allowed:
+                d9set = {norm} if norm else set()
+                for pn in (master or {}).get("phones_norm") or []:
+                    d9set.add(pn)
+                for c in calls:
+                    dn = re.sub(r"\D", "", c.get("dest_number") or "")
+                    if dn:
+                        d9set.add(dn[-9:])
+                if d9set:
+                    try:
+                        asg = q("SELECT 1 FROM prospect_pipeline WHERE dest9 = ANY(%(d)s) AND assigned_bde = %(b)s "
+                                "UNION ALL SELECT 1 FROM next_call_queue WHERE dest9 = ANY(%(d)s) AND assigned_bde = %(b)s "
+                                "LIMIT 1", {"d": list(d9set), "b": own})
+                        allowed = bool(asg)
+                    except Exception:
+                        allowed = False
+            if not allowed:
                 raise HTTPException(403, "not your prospect")
 
         # Best domain for enrichment: master's, else the most common extracted site.
