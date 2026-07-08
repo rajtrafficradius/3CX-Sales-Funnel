@@ -318,6 +318,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_callback_call
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_fresh_call
   ON calendar_events (right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9))
   WHERE type = 'fresh_call' AND status = 'pending';
+-- One open retry per number (re-call dialed-but-not-converted prospects until pickup/max attempts).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_retry
+  ON calendar_events (dest_number) WHERE type = 'retry' AND status = 'pending';
 
 -- ============================ Master prospect database ============================
 -- The team's known-prospect universe (seeded from DATA_MASTER_FILE), keyed by the

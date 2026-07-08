@@ -1473,6 +1473,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the real 'fresh worklist' size = businesses confirmed running Google Ads (the callable pool)
         ra = q("SELECT count(*) n FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'")
         pools["running_ads"] = int(ra[0]["n"]) if ra else 0
+        # Retry pool — confirmed-ads prospects dialed but NOT converted (no answer / voicemail / not
+        # interested), under the attempt cap. Scoped to GAds when the board asks (gads_only).
+        try:
+            from ..retry import _gather_sql
+            rc = q("SELECT count(*) n FROM (" + _gather_sql(gads_only=bool(gads_only)) + ") rr",
+                   {"maxatt": settings.retry_max_attempts})
+            pools["retry"] = int(rc[0]["n"]) if rc else 0
+        except Exception:
+            pools["retry"] = 0
         return JSONResponse({"found": True, "today": today,
                              "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
                              "rows": out_rows, "pools": pools})
@@ -1560,6 +1569,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "  WHEN t.revenue_musd IS NULL THEN 1 ELSE 2 END, t.revenue_musd DESC NULLS LAST",
                 {"lim": limit})
             for r in rows:
+                r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
+            return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
+                                 "total": int(total), "rows": jsonable_encoder(rows)})
+        # ---- Retry worklist = confirmed-ads prospects dialed but not converted; re-call (same BDE,
+        # different time) until pickup or max attempts. Ordered most-recent-attempt first. ----
+        if pipeline == "retry":
+            from ..retry import _gather_sql
+            g = _gather_sql(gads_only=bool(gads_only))
+            total = q("SELECT count(*) n FROM (" + g + ") rr", {"maxatt": settings.retry_max_attempts})[0]["n"]
+            bde_f = " AND rr.last_bde = %(bde)s" if (bde and bde != "ALL") else ""
+            rows = q(
+                "WITH rr AS (" + g + ") "
+                "SELECT rr.dest_number, rr.company AS prospect_company, rr.last_bde AS bde, "
+                "  rr.attempts AS ncalls, rr.last_attempt AS started_at, pr.business_name, pr.domain, "
+                "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
+                "FROM rr LEFT JOIN prospects pr ON rr.d9 = ANY(pr.phones_norm) "
+                + _NEXT_CALL_LATERAL.replace("%(d9col)s", "rr.d9")
+                + " WHERE true" + bde_f + " ORDER BY rr.last_attempt DESC NULLS LAST LIMIT %(lim)s",
+                {"maxatt": settings.retry_max_attempts, "bde": bde, "lim": limit})
+            for r in rows:
+                r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
             return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
                                  "total": int(total), "rows": jsonable_encoder(rows)})

@@ -121,9 +121,10 @@ const STAGES={
   p1:{label:'RPC callback',blurb:'We reached the decision-maker and they asked us to call back — warm, keep the thread alive and lock the meeting.',icon:'\u{1F4DE}',win:true},
   p3:{label:'Gatekeeper callback',blurb:'We got a gatekeeper, not the decision-maker yet — get through and secure a direct line / callback time.',icon:'\u{1F6E1}️',win:true},
   p4:{label:'Fresh · running ads',blurb:'Not yet worked — prospects CONFIRMED running Google Ads (the callable first-contact pool).',icon:'\u{1F195}',win:false},
+  retry:{label:'Retry calls',blurb:'Dialed but not connected yet — no answer, voicemail or not interested. Re-call at a different time (a fresh 3CX/Aircall line often gets a pickup); stops after the attempt cap.',icon:'\u{1F504}',win:false},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
 };
-const ORDER=['p1','p3','p4','p5'];
+const ORDER=['p1','p3','p4','retry','p5'];
 let stage=(location.pathname.split('/').filter(Boolean)[1]||'p1').toLowerCase();
 if(!STAGES[stage]) stage='p1';
 let bde='ALL', win='all', counts={};
@@ -198,7 +199,7 @@ async function boot(){
       $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.running_ads; }catch(e){}
+  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry;} }catch(e){}
   renderTabs(); renderToolbar(); loadBoard();
 }
 boot();

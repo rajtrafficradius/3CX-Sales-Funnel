@@ -201,6 +201,15 @@ class Settings(BaseSettings):
     # restore multi-source scheduling.
     calls_gads_only: bool = True
 
+    # --- Retry calls (confirmed-Google-Ads prospects we dialed but never converted) ---
+    # Prospects we called but didn't reach the DM / book / get a gatekeeper callback (no answer,
+    # voicemail, or "not interested") aren't dropped — they go on a "retry" list and get re-called at a
+    # DIFFERENT time of day (same BDE), until they pick up or hit retry_max_attempts (then marked dead).
+    retry_enabled: bool = True
+    retry_max_attempts: int = 5
+    retry_cadence_days: int = 3          # min gap before the next retry
+    retry_per_cycle: int = 4000          # cap events touched per refresh cycle
+
     # --- BDE daily calling worklist (AI allocation over the confirmed-Google-Ads pool) ---
     # Each BDE should have this many calls to make per day = their due follow-ups (callbacks/recalls)
     # PLUS fresh confirmed-ads prospects to top up. The allocator fills the remainder with fresh,

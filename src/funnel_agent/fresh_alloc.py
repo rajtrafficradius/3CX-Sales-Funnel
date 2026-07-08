@@ -153,11 +153,11 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
     if not roster:
         return {"skipped": "no_active_bdes", "resolved": resolved}
 
-    # (2) remaining need per BDE = target − ALL their pending calls (follow-ups + fresh). A BDE already
-    #     holding 200 due callbacks/recalls gets no fresh; one with 30 follow-ups gets 170 fresh.
+    # (2) remaining need per BDE = target − ALL their pending calls (follow-ups + retries + fresh). A BDE
+    #     already holding 200 due callbacks/recalls/retries gets no fresh; one with 30 gets 170 fresh.
     pend = {r["bde_name"]: r["n"] for r in _fetch(pool,
         "SELECT bde_name, count(*) n FROM calendar_events "
-        "WHERE status='pending' AND type IN ('callback','recall','fresh_call') GROUP BY bde_name")}
+        "WHERE status='pending' AND type IN ('callback','recall','retry','fresh_call') GROUP BY bde_name")}
     remaining = {b: max(0, target - int(pend.get(b, 0))) for b in roster}
     need = sum(remaining.values())
     if need <= 0:

@@ -736,6 +736,16 @@ def refresh(
         except Exception as exc:
             wr = {"error": str(exc)[:80]}
             log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
+        # Retry calls — re-call confirmed-ads prospects we dialed but never converted (no answer /
+        # voicemail / not interested), same BDE at a different time, until pickup or max attempts.
+        rt = {"scheduled": 0}
+        if settings.retry_enabled:
+            try:
+                from .retry import schedule_retry_calls
+                rt = schedule_retry_calls(ana, settings)
+            except Exception as exc:
+                rt = {"error": str(exc)[:80]}
+                log.warning("schedule_retry_calls_failed", error=str(exc)[:160])
         # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
         # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
         try:
@@ -804,7 +814,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | fresh_calls: {fx} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | fresh_ads: {fa} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | retries: {rt} | fresh_calls: {fx} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | fresh_ads: {fa} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()
