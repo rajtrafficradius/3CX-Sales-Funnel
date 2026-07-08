@@ -269,6 +269,10 @@ and leave the rest at defaults.
 - next_move: ALWAYS fill this — the single best concrete next action given what happened (e.g. "Call
   back after 2pm and ask for Maria by name", "Leave a voicemail, then send an SMS intro", "Re-dial
   immediately (double-tap) then try the mobile", "Mark wrong number and remove"). One short sentence.
+  OUTBOUND REALITY: this is OUR cold-calling worklist — the prospect NEVER rings us back; WE always
+  call THEM. So phrase every next action as something OUR BDE does ("Call Brenton back after his
+  meeting"), NEVER as the prospect doing it ("Brenton to call back", "he'll call back"). If they
+  "asked us to call back", the action is that WE call them back at that time.
 - next_move_channel: ALWAYS set the channel for that move — one of "retry_call", "sms", "voicemail",
   "call_then_sms_vm", "email", or "none" (only if truly nothing more should be done, e.g. wrong number).
 
@@ -370,6 +374,8 @@ CONVERSATION INTELLIGENCE (for coaching — base strictly on the transcript):
   These are prospect-facing TALKING POINTS, NOT the generic BDE-skill coaching in coaching_tips.
   Return [] for wrong-number / flat "not interested" / do-not-contact / pure voicemail. For a
   FIRM booking, give only `logistics` points (confirm + prepare the session — do NOT re-pitch).
+  Phrase each as an action OUR BDE takes on the next call (WE call them) — never "the prospect will
+  call back". next_step likewise describes what WE do next, in our voice.
 - scorecard: rate the BDE 0–5 on opening, discovery, pitch, objection_handling, close. Use 0 when
   a phase did not happen (e.g. no close attempted).
 """

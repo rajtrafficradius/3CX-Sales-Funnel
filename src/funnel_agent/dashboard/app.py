@@ -50,6 +50,38 @@ def _clean_time_noise(s: str | None) -> str:
     return re.sub(r"\s*\([^)]*\btime\b[^)]*\)", "", s).strip(" .,-") or ""
 
 
+# pronouns / generic role words that stand in for the prospect → "them" when we reframe a callback.
+_CALLBACK_PRON = {"he", "she", "they", "prospect", "the prospect", "client", "the client", "customer",
+                  "the customer", "owner", "the owner", "gm", "the gm", "manager", "the manager",
+                  "dm", "the dm", "decision-maker", "the decision-maker", "decision maker",
+                  "the decision maker", "he/she", "contact", "the contact"}
+_OUR_ACTION_RE = re.compile(
+    r"^(?P<who>.+?)\s+(?:is going to|is to|going to|will|would|'ll|to|has to|have to|agreed to|"
+    r"wants to|would like to|is meant to|is supposed to)\s+"
+    r"(?:call|ring|phone|reach out to|get back to)\s+(?:us\s+|me\s+)?(?:back\b)?(?P<rest>.*)$", re.I)
+_ALREADY_OURS_RE = re.compile(
+    r"^(?:we|i|our bde|the bde|call|ring|phone|email|sms|text|send|follow|schedule|book|re-?engage|"
+    r"reconnect|confirm|offer|ask|pitch|share|drop|arrange|set up|line up)\b", re.I)
+
+
+def _our_action(text: str | None) -> str:
+    """SALES REALITY: on outbound cold-calling the PROSPECT never rings us back — WE call THEM. So a
+    next-step phrased as "Brenton to call back after his meeting" or "he'll call back" is really an
+    action for OUR BDE. Reframe it to "Call Brenton back after his meeting" so the worklist reads as
+    a task we do, not a promise we wait on. Conservative — only rewrites explicit callback phrasing,
+    leaves everything already framed as our action untouched."""
+    t = (text or "").strip()
+    if not t or _ALREADY_OURS_RE.match(t):
+        return t
+    m = _OUR_ACTION_RE.match(t)
+    if not m:
+        return t
+    who = m.group("who").strip().rstrip(",.")
+    who = "them" if who.lower() in _CALLBACK_PRON else who
+    rest = (m.group("rest") or "").strip(" .,")
+    return (f"Call {who} back" + (" " + rest if rest else "")).strip()
+
+
 def _winning_next_move(evidence: dict | None) -> dict:
     """A senior-sales BOOKING BRIEFING for the next call — not just 'a next step', but the whole
     play to get the meeting: the primary move, the pain to open on, the objection to pre-empt, the
@@ -63,8 +95,9 @@ def _winning_next_move(evidence: dict | None) -> dict:
         x = ev.get(key)
         return bool(x.get("value")) if isinstance(x, dict) else bool(x)
 
-    # the primary action (prefer the tailored next-call points, then the RPC move / agreed step)
-    move = (pts[0].get("point") if pts else "") or rpc.get("next_move") or ev.get("next_step") or ""
+    # the primary action (prefer the tailored next-call points, then the RPC move / agreed step).
+    # Reframed as OUR action: the prospect never rings us back — WE call them (_our_action).
+    move = _our_action((pts[0].get("point") if pts else "") or rpc.get("next_move") or ev.get("next_step") or "")
     dm = (rpc.get("dm_name") or ev.get("prospect_contact_name") or "").strip()
     channel = (rpc.get("next_move_channel") or "").strip()
     # OPEN ON their pain; PRE-EMPT their live objection; LEVERAGE their strongest buying signal.
@@ -92,7 +125,7 @@ def _winning_next_move(evidence: dict | None) -> dict:
         "engagement": (ev.get("engagement") or "").strip(),
         "why": _clean_time_noise(hook),
         "reason_unavailable": _clean_time_noise(rpc.get("reason_unavailable") or ""),
-        "points": [{"point": _clean_time_noise(p.get("point")), "why": (p.get("why") or "").strip(),
+        "points": [{"point": _our_action(_clean_time_noise(p.get("point"))), "why": (p.get("why") or "").strip(),
                     "kind": (p.get("kind") or "").strip()} for p in pts[:4]],
     }
 
@@ -103,59 +136,126 @@ def _sv(ev: dict, key: str) -> bool:
     return bool(x.get("value")) if isinstance(x, dict) else bool(x)
 
 
+def _looks_dm(who: str | None) -> bool:
+    """Does the free-text `who_answered` describe a decision-maker (not a gatekeeper)?"""
+    w = (who or "").lower()
+    return any(t in w for t in ("decision", "owner", "principal", "director", "proprietor", "founder"))
+
+
+# who_answered values that are NOT a real person (a machine / dead line) — never list these as people.
+_NON_PERSON_WHO = {"", "voicemail", "voice mail", "no answer", "no_answer", "machine", "answering machine",
+                   "ivr", "wrong number", "wrong_number", "unknown", "nobody", "none", "n/a", "engaged", "busy"}
+
+
+def _gk_name(who: str | None) -> str | None:
+    """A clean gatekeeper label from free-text `who_answered`, or None when it's a machine / DM /
+    empty (so we never list 'voicemail' or a decision-maker as a gatekeeper person)."""
+    w = (who or "").strip()
+    if not w or w.lower() in _NON_PERSON_WHO or _looks_dm(w):
+        return None
+    # normalise the common enum-ish tokens to human labels
+    low = w.lower()
+    if low in ("gatekeeper", "receptionist", "reception", "gate_keeper", "gatekeeper/receptionist"):
+        return "Gatekeeper / receptionist"
+    return w[:60]
+
+
 def _call_coaching(evidence: dict | None, call: dict | None = None) -> dict:
     """Per-call BDE coaching from the transcript intelligence: what they did well, what they FAILED
-    to do (the double-tap / ask-for-DM / lock-a-time misses the user asked for), and what to do next
-    time. Read-only synthesis over the classifier evidence — never invents facts not in evidence."""
+    to do, and what to do next. ACCURACY-CRITICAL — it must never invent a miss that didn't happen:
+      • Behavioural coaching only exists for a call where a HUMAN engaged (a real conversation OR a
+        gatekeeper interaction). Voicemail / no-answer / wrong-number → no behavioural coaching.
+      • 'Reached the decision-maker' is driven by rpc_connect (the canonical RPC flag), the DM-typed
+        who_answered, or an explicit rpc_unreached_reason='reached_rpc' — so a call that DID reach the
+        DM is never told it 'only spoke to the gatekeeper'.
+      • Gatekeeper-navigation misses (ask for DM / get name / lock a time) fire ONLY on a genuine
+        gatekeeper-only call.
+    Each miss carries a stable `code` so prospect-level rollups can suppress gaps resolved on a later
+    call (best-ever wins). Returns strings in `missed` (UI) + tagged `missed_items` (aggregation)."""
     ev = evidence or {}
     call = call or {}
     rpc = ev.get("rpc_next_move") if isinstance(ev.get("rpc_next_move"), dict) else {}
-    reached_dm = bool(call.get("rpc_connect")) or bool(rpc.get("dm_name"))
-    answered = bool(call.get("answered"))
+    outcome = (call.get("call_outcome") or ev.get("call_outcome") or "").strip().lower()
+    who = ev.get("who_answered")
+    unreached = (rpc.get("rpc_unreached_reason") or "").strip().lower()
     talk = call.get("talk_seconds") or 0
-    did_well, missed = [], []
 
-    def _has(k):   # field explicitly present in the RPC evidence (distinguish False from 'unknown')
-        return k in rpc and rpc.get(k) is not None
+    reached_dm = (bool(call.get("rpc_connect")) or unreached == "reached_rpc"
+                  or _looks_dm(who) or bool(rpc.get("dm_name")))
+    # a human actually engaged on this call → behaviour is coachable. Everything else (voicemail,
+    # no-answer, wrong number, an 'other' with no engagement signal) is NOT coachable.
+    coachable = (reached_dm or outcome in ("conversation", "gatekeeper")
+                 or unreached in ("gatekeeper_block", "dm_unavailable", "not_decision_maker"))
+    # spoke ONLY to a gatekeeper (never got the DM on this call)
+    gk_only = (not reached_dm) and (outcome == "gatekeeper"
+                                    or unreached in ("gatekeeper_block", "not_decision_maker"))
 
+    def _false(k):   # field explicitly present AND False (distinguish from 'unknown'/None)
+        return k in rpc and rpc.get(k) is False
+
+    got_contact = bool(rpc.get("got_direct_contact") or call.get("prospect_mobile") or call.get("prospect_email"))
+    got_callback = bool(rpc.get("asked_callback_time") or call.get("callback_when") or rpc.get("dm_available_when"))
+
+    do_next = [_our_action(_clean_time_noise(p.get("point"))) for p in (ev.get("next_call_points") or [])
+               if isinstance(p, dict) and p.get("point")][:3]
+    if not do_next and rpc.get("next_move"):
+        do_next = [_our_action(_clean_time_noise(rpc.get("next_move")))]
+    do_next = [d for d in do_next if d]
+
+    if not coachable:
+        # a machine/no-answer call — no behaviour to praise or fault; still offer the game plan.
+        return {"did_well": [], "missed": [], "missed_items": [], "do_next": do_next,
+                "coachable": False, "reached_dm": reached_dm}
+
+    did_well, items = [], []   # items: [{code, text}]
     # ---- what they did well ----
+    if reached_dm:
+        nm = (rpc.get("dm_name") or call.get("prospect_contact_name") or "").strip()
+        did_well.append("Reached the decision-maker" + (f" ({nm})" if nm else ""))
     if rpc.get("asked_for_dm"):
         did_well.append("Asked to be put through to the decision-maker")
-    if rpc.get("dm_name"):
-        did_well.append(f"Captured the decision-maker's name ({rpc.get('dm_name')})")
-    if rpc.get("got_direct_contact") or call.get("prospect_mobile") or call.get("prospect_email"):
+    if rpc.get("dm_name") or call.get("prospect_contact_name"):
+        did_well.append(f"Captured the decision-maker's name ({rpc.get('dm_name') or call.get('prospect_contact_name')})")
+    if got_contact:
         did_well.append("Secured a direct contact (mobile / email) for follow-up")
-    if rpc.get("asked_callback_time") or call.get("callback_when"):
-        did_well.append("Locked a specific time to call back")
-    handled = [o.get("objection") for o in (ev.get("objections") or [])
-               if isinstance(o, dict) and o.get("handled") is True and o.get("objection")]
-    for o in handled[:2]:
+    if got_callback:
+        did_well.append("Locked a specific time / window to call back")
+    if rpc.get("gatekeeper_handled_well") is True:
+        did_well.append("Handled the gatekeeper well")
+    for o in [o.get("objection") for o in (ev.get("objections") or [])
+              if isinstance(o, dict) and o.get("handled") is True and o.get("objection")][:2]:
         did_well.append(f"Handled the objection: “{o}”")
-    # ---- what they failed to do (the coaching gaps) ----
-    if answered and not reached_dm:
-        if _has("asked_for_dm") and rpc.get("asked_for_dm") is False:
-            missed.append("Didn’t ask to be put through to the decision-maker (spoke only to the gatekeeper)")
-        if _has("asked_dm_name") and rpc.get("asked_dm_name") is False and not rpc.get("dm_name"):
-            missed.append("Didn’t get the decision-maker’s name — the next caller starts blind")
-        if _has("asked_callback_time") and rpc.get("asked_callback_time") is False and not call.get("callback_when"):
-            missed.append("Didn’t pin a specific callback time — left the next call to chance")
-    if answered and not (rpc.get("got_direct_contact") or call.get("prospect_mobile") or call.get("prospect_email")):
-        if _has("got_direct_contact") and rpc.get("got_direct_contact") is False:
-            missed.append("Didn’t secure a direct line or email for the decision-maker")
-    unhandled = [o.get("objection") for o in (ev.get("objections") or [])
-                 if isinstance(o, dict) and o.get("handled") is False and o.get("objection")]
-    for o in unhandled[:2]:
-        missed.append(f"Left an objection unaddressed: “{o}”")
-    if answered and talk and talk < 25 and not reached_dm:
-        missed.append(f"Very short call ({int(talk)}s) — hung up too early to probe or build rapport")
 
-    # ---- what to do next time (from the next-call points / winning move) ----
-    pts = [p.get("point") for p in (ev.get("next_call_points") or [])
-           if isinstance(p, dict) and p.get("point")]
-    do_next = [_clean_time_noise(p) for p in pts[:3]]
-    if not do_next and rpc.get("next_move"):
-        do_next = [_clean_time_noise(rpc.get("next_move"))]
-    return {"did_well": did_well, "missed": missed, "do_next": [d for d in do_next if d]}
+    # ---- what they failed to do (gatekeeper-only navigation misses) ----
+    if gk_only:
+        if _false("asked_for_dm"):
+            items.append({"code": "gk_no_ask_dm",
+                          "text": "Didn’t ask to be put through to the decision-maker (spoke only to the gatekeeper)"})
+        if _false("asked_dm_name") and not (rpc.get("dm_name") or call.get("prospect_contact_name")):
+            items.append({"code": "gk_no_dm_name",
+                          "text": "Didn’t get the decision-maker’s name — the next caller starts blind"})
+        if _false("asked_callback_time") and not got_callback:
+            items.append({"code": "gk_no_callback_time",
+                          "text": "Didn’t pin a specific callback time — left the next call to chance"})
+        if rpc.get("gatekeeper_handled_well") is False:
+            note = _clean_time_noise(rpc.get("gatekeeper_notes") or "")
+            items.append({"code": "gk_handled_poor",
+                          "text": "Gatekeeper wasn’t navigated well" + (f" — {note}" if note else "")})
+    # ---- didn't capture a direct contact (applies whether DM or gatekeeper) ----
+    if _false("got_direct_contact") and not got_contact:
+        items.append({"code": "no_direct_contact",
+                      "text": "Didn’t secure a direct line or email for the decision-maker"})
+    # ---- objections left unaddressed (real conversations) ----
+    for o in [o.get("objection") for o in (ev.get("objections") or [])
+              if isinstance(o, dict) and o.get("handled") is False and o.get("objection")][:2]:
+        items.append({"code": "unhandled_objection", "text": f"Left an objection unaddressed: “{o}”"})
+    # ---- hung up too early (only a genuine, very short CONVERSATION) ----
+    if outcome == "conversation" and not reached_dm and talk and talk < 25:
+        items.append({"code": "too_short",
+                      "text": f"Very short call ({int(talk)}s) — hung up too early to probe or build rapport"})
+
+    return {"did_well": did_well, "missed": [i["text"] for i in items], "missed_items": items,
+            "do_next": do_next, "coachable": True, "reached_dm": reached_dm}
 
 
 def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
@@ -173,6 +273,9 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
     best_time = None
     timeline: list[dict] = []
     seen_facts: set[str] = set()
+    # BEST-EVER state across all calls — used to suppress coaching gaps that were RESOLVED on a
+    # later/other call (once we ever reached the DM, "didn't ask for the DM" is no longer a gap).
+    ever = {"dm": False, "name": False, "contact": False, "callback": False}
 
     def _add_person(name, role=None, kind=None, mobile=None, email=None):
         name = (name or "").strip()
@@ -197,10 +300,11 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
         if dm:
             _add_person(dm, role=(rpc.get("dm_role") or "").strip() or "Decision-maker",
                         kind="dm", mobile=c.get("prospect_mobile"), email=c.get("prospect_email"))
-        # gatekeeper (whoever answered, when we did NOT reach the DM)
-        who = (ev.get("who_answered") or "").strip()
-        if who and not c.get("rpc_connect") and who.lower() not in (dm.lower(), "decision maker", "owner"):
-            _add_person(who, role="Gatekeeper / reception", kind="gk")
+        # gatekeeper (only a REAL gatekeeper descriptor, when we did NOT reach the DM — never a
+        # machine token like 'voicemail' and never the decision-maker).
+        gkn = _gk_name(ev.get("who_answered"))
+        if gkn and not c.get("rpc_connect"):
+            _add_person(gkn, role="Gatekeeper / receptionist", kind="gk")
         # standalone captured contact (no name tied) — still record mobile/email
         if (c.get("prospect_mobile") or c.get("prospect_email")) and not dm:
             contacts.append({"mobile": c.get("prospect_mobile"), "email": c.get("prospect_email")})
@@ -225,6 +329,16 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
         bt = (rpc.get("dm_available_when") or c.get("callback_when") or "").strip()
         if bt and not best_time:
             best_time = _clean_time_noise(bt)
+        # per-call coaching (computed once, reused) + best-ever accumulation
+        cch = _call_coaching(ev, c)
+        if cch.get("reached_dm"):
+            ever["dm"] = True
+        if rpc.get("dm_name") or c.get("prospect_contact_name"):
+            ever["name"] = True
+        if c.get("prospect_mobile") or c.get("prospect_email") or rpc.get("got_direct_contact"):
+            ever["contact"] = True
+        if c.get("callback_when") or rpc.get("asked_callback_time") or rpc.get("dm_available_when"):
+            ever["callback"] = True
         # timeline row
         timeline.append({
             "call_id": c.get("call_id"),
@@ -232,10 +346,10 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
             "bde": c.get("bde_name") or c.get("bde_extension"),
             "answered": bool(c.get("answered")),
             "talk_seconds": c.get("talk_seconds"),
-            "reached_dm": bool(c.get("rpc_connect")),
+            "reached_dm": bool(cch.get("reached_dm")),
             "outcome": (c.get("call_outcome") or "").strip(),
             "booked": bool(c.get("meeting_booked")),
-            "coaching": _call_coaching(ev, c),
+            "coaching": cch,
         })
 
     # dedupe standalone contacts against people we already have
@@ -245,12 +359,31 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
     dms = [p for p in people.values() if p["kind"] == "dm"]
     gks = [p for p in people.values() if p["kind"] == "gk"]
     others = [p for p in people.values() if p["kind"] not in ("dm", "gk")]
-    # roll up the coaching across every call → prospect-level "what we keep missing"
-    all_missed: list[str] = []
+    # roll up the coaching across every call → prospect-level "what we keep missing", SUPPRESSING
+    # any gap that was resolved on a later/other call (best-ever wins) so we never tell a manager
+    # "didn't reach the DM" for a prospect we actually connected with.
+    suppress = set()
+    if ever["dm"]:
+        suppress |= {"gk_no_ask_dm", "gk_no_dm_name", "gk_handled_poor", "gk_no_callback_time"}
+    if ever["name"]:
+        suppress |= {"gk_no_dm_name"}
+    if ever["contact"]:
+        suppress |= {"no_direct_contact"}
+    if ever["callback"]:
+        suppress |= {"gk_no_callback_time"}
+    suppress |= {"unhandled_objection"}   # shown in its own "unhandled objections" section
+    gaps: list[str] = []
+    seen_gaps: set = set()
     for t in timeline:
-        for m in t["coaching"]["missed"]:
-            if m not in all_missed:
-                all_missed.append(m)
+        for it in t["coaching"].get("missed_items", []):
+            code = it.get("code")
+            if code in suppress:
+                continue
+            key = (code, it.get("text"))
+            if key in seen_gaps:
+                continue
+            seen_gaps.add(key)
+            gaps.append(it["text"])
     return {
         "decision_makers": dms,
         "gatekeepers": gks,
@@ -260,7 +393,7 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
         "agency": agency,
         "best_time": best_time,
         "timeline": timeline,
-        "coaching_gaps": all_missed[:6],
+        "coaching_gaps": gaps[:6],
     }
 
 

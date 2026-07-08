@@ -181,6 +181,18 @@
 <script>
 const KEY = decodeURIComponent(location.pathname.split('/prospect/')[1]||'');
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// SALES REALITY (mirror of server _our_action): the prospect never rings us back — WE call them.
+// Reframe "Brenton to call back after his meeting" → "Call Brenton back after his meeting".
+const _CB_PRON=new Set(['he','she','they','prospect','the prospect','client','the client','customer','the customer','owner','the owner','gm','the gm','manager','the manager','dm','the dm','decision-maker','the decision-maker','decision maker','the decision maker','contact','the contact']);
+function ourAction(text){
+  let t=(text==null?'':String(text)).trim(); if(!t) return t;
+  if(/^(?:we|i|our bde|the bde|call|ring|phone|email|sms|text|send|follow|schedule|book|re-?engage|reconnect|confirm|offer|ask|pitch|share|drop|arrange|set up|line up)\b/i.test(t)) return t;
+  const m=t.match(/^(.+?)\s+(?:is going to|is to|going to|will|would|'ll|to|has to|have to|agreed to|wants to|would like to|is meant to|is supposed to)\s+(?:call|ring|phone|reach out to|get back to)\s+(?:us\s+|me\s+)?(?:back\b)?(.*)$/i);
+  if(!m) return t;
+  let who=m[1].trim().replace(/[,.]+$/,''); if(_CB_PRON.has(who.toLowerCase())) who='them';
+  const rest=(m[2]||'').trim().replace(/^[.,\s]+|[.,\s]+$/g,'');
+  return ('Call '+who+' back'+(rest?' '+rest:'')).trim();
+}
 const fmtN=n=>(n==null||n===''?'—':Number(n).toLocaleString());
 const fmtDate=s=>{ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}); };
 const TEMP={super_hot:['🔥 SUPER HOT','#ef4444','rgba(239,68,68,.18)'],hot:['🔥 HOT','#fb923c','rgba(251,146,60,.18)'],
@@ -922,11 +934,13 @@ function overallSummary(d){
     ? `<div class="subh">Top unhandled objections</div><ul class="ci">${unhandled.slice(0,4).map(o=>`<li>⚠️ ${esc(o)}</li>`).join('')}</ul>`
     : '';
 
-  // ---- RECOMMENDED NEXT MOVE — latest call's next_step / next_call_points[0] + next_action timing ----
-  let move=null;
-  for(let i=calls.length-1;i>=0;i--){ const ev=calls[i].evidence||{};
+  // ---- RECOMMENDED NEXT MOVE — prefer the server's normalized winning move; else latest call's
+  //      next_step / next_call_points[0]. Always reframed as OUR action (never "prospect will call").
+  let move=(d.next_move&&d.next_move.move)?d.next_move.move:null;
+  if(!move){ for(let i=calls.length-1;i>=0;i--){ const ev=calls[i].evidence||{};
     if(ev.next_step){move=ev.next_step;break;}
-    if(Array.isArray(ev.next_call_points)&&ev.next_call_points[0]&&ev.next_call_points[0].point){move=ev.next_call_points[0].point;break;} }
+    if(Array.isArray(ev.next_call_points)&&ev.next_call_points[0]&&ev.next_call_points[0].point){move=ev.next_call_points[0].point;break;} } }
+  move=ourAction(move);
   const na=d.next_action;
   const timing = (na&&na.when)
     ? (na.parked?'Re-engage '+fmtDate(na.when):'Next call '+fmtDate(na.when))+(na.bde?' · '+esc(na.bde):'')
