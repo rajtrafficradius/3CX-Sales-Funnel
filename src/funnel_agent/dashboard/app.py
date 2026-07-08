@@ -551,7 +551,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/login", response_class=HTMLResponse)
     def login_page() -> str:
-        return _static("login.html")
+        return HTMLResponse(_static("login.html"), headers=_NOCACHE)
 
     @app.post("/login")
     async def login_post(request: Request):
@@ -629,7 +629,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not is_admin(u):
             # Non-admins are bounced back to the dashboard rather than shown the panel.
             return RedirectResponse("/", status_code=302)
-        return _static("admin.html")
+        return HTMLResponse(_static("admin.html"), headers=_NOCACHE)
 
     @app.get("/api/admin/users")
     def admin_list_users(request: Request) -> JSONResponse:
@@ -2459,7 +2459,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/prospect/{key}", response_class=HTMLResponse)
     def prospect_page(key: str) -> str:
-        return _static("prospect.html")
+        return HTMLResponse(_static("prospect.html"), headers=_NOCACHE)
 
     @app.get("/api/prospect/{key}")
     def prospect_detail(request: Request, key: str) -> JSONResponse:
@@ -3135,7 +3135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         u = getattr(request.state, "user", None) or {}
         if not (is_admin(u) or u.get("role") == "bdm"):
             return RedirectResponse("/", status_code=302)
-        return _static("database.html")
+        return HTMLResponse(_static("database.html"), headers=_NOCACHE)
 
     # coverage facet -> `ge` boolean column. Multiple selected facets combine with AND.
     _COV = {"scanned": "ge.scanned", "gate": "ge.gate_pass", "apollo": "ge.has_apollo",
@@ -3437,7 +3437,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- Pipeline 2 assignment board (rotation + cadence) --------------- #
     @app.get("/pipeline2", response_class=HTMLResponse)
     def pipeline2_page() -> str:
-        return _static("pipeline2.html")
+        return HTMLResponse(_static("pipeline2.html"), headers=_NOCACHE)
 
     # ---- Agency & RPC Connected (BDE-sourced reference view, off-calendar) --- #
     @app.get("/agency-rpc", response_class=HTMLResponse)
@@ -3517,7 +3517,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- calendar ------------------------------------------------------- #
     @app.get("/calendar", response_class=HTMLResponse)
     def calendar_page() -> str:
-        return _static("calendar.html")
+        return HTMLResponse(_static("calendar.html"), headers=_NOCACHE)
 
     def _cal_scope(request: Request, requested_bde: str | None) -> str | None:
         """Returns the bde_name to filter events by, or None for all (manager/kiosk)."""
