@@ -399,8 +399,8 @@ def enrich_single(pool: ConnectionPool, settings: Settings, domain: str) -> dict
 
 
 def enrich_domain_full(pool: ConnectionPool, settings: Settings, domain: str, *,
-                       with_dataforseo: bool = True, with_whois: bool = True, force: bool = False,
-                       oai=None, apollo=None, dfs=None) -> dict:
+                       with_dataforseo: bool = True, with_whois: bool = True, with_semrush: bool = True,
+                       force: bool = False, oai=None, apollo=None, dfs=None) -> dict:
     """Populate EVERY prospect-page tab for a single domain, idempotently. This is the one
     place that gives a domain its full intel set, so a 3CX/Aircall call prospect (the moment
     its domain is identified) and the on-demand 'Enrich now' button both fill the same tabs:
@@ -445,7 +445,8 @@ def enrich_domain_full(pool: ConnectionPool, settings: Settings, domain: str, *,
         except Exception as exc:
             log.warning("full_website_failed", domain=domain, error=str(exc)[:160])
     # SEMrush — gap-aware (skip the overview report if the master CSV already has organic metrics).
-    if settings.semrush_api_key and (force or not row.get("semrush")):
+    # DataForSEO is our SEO source of truth, so callers can skip SEMrush entirely (with_semrush=False).
+    if with_semrush and settings.semrush_api_key and (force or not row.get("semrush")):
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT 1 FROM prospects WHERE domain=%s AND organic_traffic IS NOT NULL LIMIT 1", (domain,))
             has_overview = cur.fetchone() is not None
@@ -837,6 +838,88 @@ def enrich_call_prospects(pool: ConnectionPool, settings: Settings, *, limit: in
     remaining = len(_all_call_prospect_domains(pool, require))
     stats = {"processed": len(domains), "ok": ok, "errors": err, "skipped": skip, "remaining": remaining}
     log.info("enrich_call_prospects_done", **stats)
+    return stats
+
+
+# --------------------------------------------------------------------------- #
+# Fresh running-ads pool — GUARANTEE every confirmed Google-Ads prospect is fully enriched
+# --------------------------------------------------------------------------- #
+# The free tabs a confirmed-ads prospect needs on its page + for value ranking. WHOIS and Apollo
+# *people* are filled by their own paced auDA/Apollo-safe trickles (enrich_whois_trickle /
+# enrich_apollo_people_trickle); this runner covers the rest: website + Apollo org + business intel.
+# SEMrush is intentionally EXCLUDED — DataForSEO is our SEO source of truth.
+_FRESH_ADS_REQUIRE = ("website", "apollo", "business_intel")
+
+
+def _pending_fresh_ads_domains(pool: ConnectionPool, require: tuple[str, ...], limit: int) -> list[str]:
+    """CONFIRMED running-Google-Ads domains (Transparency Center) missing any required free tab.
+    Oldest-attempt-first so it rotates through the whole pool. Converges: enrich_domain_full writes
+    each column even on a not-found result, so a processed domain drops out of the pending set."""
+    incomplete = " OR ".join(f"e.{c} IS NULL" for c in require)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT e.domain FROM enrichment e "
+            f"WHERE (e.dataforseo->>'running_google_ads')='true' AND ({incomplete}) "
+            f"ORDER BY e.fetched_at ASC NULLS FIRST LIMIT %s",
+            (limit,))
+        return [r["domain"] for r in cur.fetchall()]
+
+
+def enrich_fresh_ads_pool(pool: ConnectionPool, settings: Settings, *, limit: int = 200,
+                          workers: int = 6, with_whois: bool = False,
+                          with_dataforseo: bool = False, require: tuple[str, ...] | None = None) -> dict:
+    """GUARANTEE the fresh running-Google-Ads pool is fully enriched across every free tab: website +
+    Apollo company/people + business intel (never SEMrush — DataForSEO is our SEO source). WHOIS stays
+    on its own auDA-safe sequential trickle by default (pass with_whois=True for a one-off sweep, which
+    forces single-threaded to respect the registry limit). Idempotent — only domains missing a tab are
+    touched. DataForSEO transparency membership is already present for this pool, so with_dataforseo is
+    off by default (the SEO/competitor audit is a separate paid, on-demand pass)."""
+    require = require or _FRESH_ADS_REQUIRE
+    if with_whois and "whois" not in require:
+        require = require + ("whois",)
+    # Convergence guard: enrich_domain_full only writes the apollo column when an Apollo client exists,
+    # so if Apollo is unavailable (no key) a domain's apollo stays NULL forever and would be re-selected
+    # every pass. Drop apollo from the completeness requirement in that case (the paced apollo-people
+    # trickle backfills it once a key is configured) so the pool actually converges.
+    apollo_ok = bool(settings.apollo_enabled and settings.apollo_api_key)
+    if not apollo_ok and "apollo" in require:
+        require = tuple(c for c in require if c != "apollo")
+    domains = _pending_fresh_ads_domains(pool, require, limit)
+    if not domains:
+        return {"processed": 0, "ok": 0, "errors": 0, "skipped": 0, "remaining": 0}
+
+    from .transcribe import _openai
+    oai = _openai(settings)
+    apollo = ApolloClient(settings) if apollo_ok else None
+    dfs = None
+    if with_dataforseo and settings.dataforseo_enabled:
+        from .enrichment.dataforseo import DataForSEOClient
+        dfs = DataForSEOClient(settings)
+
+    def work(domain: str) -> str:
+        try:
+            r = enrich_domain_full(pool, settings, domain, with_dataforseo=with_dataforseo,
+                                   with_whois=with_whois, with_semrush=False,
+                                   oai=oai, apollo=apollo, dfs=dfs)
+            return "ok" if r.get("ok") else "skip"
+        except Exception as exc:
+            log.warning("enrich_fresh_ads_failed", domain=domain, error=str(exc)[:160])
+            return "error"
+
+    ok = err = skip = 0
+    wk = 1 if with_whois else max(1, workers)   # WHOIS in the require set → sequential (auDA limit)
+    with ThreadPoolExecutor(max_workers=wk) as ex:
+        for i, st in enumerate(ex.map(work, domains), 1):
+            ok += st == "ok"; err += st == "error"; skip += st == "skip"
+            if i % 50 == 0:
+                log.info("enrich_fresh_ads_progress", done=i, total=len(domains), ok=ok, errors=err)
+    if apollo:
+        apollo.close()
+    if dfs:
+        dfs.close()
+    remaining = len(_pending_fresh_ads_domains(pool, require, 1000000))
+    stats = {"processed": len(domains), "ok": ok, "errors": err, "skipped": skip, "remaining": remaining}
+    log.info("enrich_fresh_ads_done", **stats)
     return stats
 
 

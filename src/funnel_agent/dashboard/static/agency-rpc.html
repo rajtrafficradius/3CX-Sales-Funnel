@@ -4,7 +4,7 @@
 <script>(function(){try{var t=localStorage.getItem("tr-theme-v2");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}catch(e){}})();</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Pipeline — 3CX Funnel</title>
+<title>Agency &amp; RPC Connected — 3CX Funnel</title>
 <style>
   :root{
     --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
@@ -18,7 +18,6 @@
     --t-eyebrow:10.5px; --t-cap:12px; --t-body:13px; --t-base:14px; --t-strong:16px; --t-fig:22px;
     --tier-hot:#f87171; --tier-warm:#fbbf24; --tier-cool:#7e8a9c;
   }
-  /* light theme (default) */
   :root[data-theme=light]{
     --bg:#f7f9fc; --panel:#ffffff; --panel2:#f3f6fb; --panel3:#eaf0f7;
     --line:#e2e8f1; --line-soft:#eef2f8; --line2:#d3dbe6; --chip:#f0f4fa;
@@ -40,13 +39,12 @@
   main{max-width:1180px;margin:0 auto;padding:22px}
   .over{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.7px;color:var(--faint);font-weight:800}
   .htitle{font-size:26px;font-weight:800;letter-spacing:-.3px;margin:2px 0 4px}
-  .hblurb{color:var(--muted);font-size:var(--t-cap);max-width:760px;margin:0 0 16px;line-height:1.55}
+  .hblurb{color:var(--muted);font-size:var(--t-cap);max-width:820px;margin:0 0 16px;line-height:1.55}
   .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
   .tab{padding:8px 14px;border-radius:20px;border:1px solid var(--line);background:var(--panel);color:var(--txt-dim);font-weight:700;font-size:var(--t-cap);cursor:pointer}
   .tab:hover{border-color:var(--line2)}
   .tab.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
   .tab .n{opacity:.7;font-weight:600;margin-left:4px}
-  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);overflow:hidden}
   table{width:100%;border-collapse:collapse;font-size:var(--t-cap)}
   thead th{text-align:left;color:var(--faint);font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.5px;font-weight:800;padding:11px 14px;border-bottom:1px solid var(--line);background:var(--panel2);white-space:nowrap}
@@ -57,20 +55,17 @@
   .biz{font-weight:700;color:var(--txt)}
   .dom{color:var(--muted);font-size:11px}
   .num{font-variant-numeric:tabular-nums;color:var(--txt-dim)}
-  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;border:1px solid var(--line)}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;border:1px solid var(--line);white-space:nowrap}
   .t-hot{color:var(--tier-hot);background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.3)}
   .t-warm{color:var(--tier-warm);background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.3)}
   .t-cool,.t-none{color:var(--muted);background:var(--chip)}
-  .next-ok{color:var(--good);font-weight:700}
-  .next-none{color:var(--faint)}
+  .tag-agency{color:var(--warn);background:rgba(251,191,36,.13);border-color:rgba(251,191,36,.32)}
+  .tag-rpc{color:var(--good);background:rgba(74,222,128,.13);border-color:rgba(74,222,128,.32)}
   .muted{color:var(--muted)} .small{font-size:var(--t-cap)}
   .empty{padding:40px;text-align:center;color:var(--muted)}
   .sub{font-size:11px;color:var(--muted)}
-  /* ---- theme toggle + nav drawer (shared) ---- */
   .tr-theme-btn{position:fixed;right:16px;bottom:16px;z-index:90;width:40px;height:40px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-size:17px;cursor:pointer;box-shadow:var(--elev1);display:flex;align-items:center;justify-content:center}
   .tr-theme-btn:hover{border-color:var(--accent)}
-
-  /* ---- persistent icon rail (Claude-style): always-visible slim nav that expands on hover ---- */
   :root{--rail-w:58px;--rail-open:238px}
   body{padding-left:var(--rail-w)}
   html.tv body{padding-left:0}
@@ -101,102 +96,76 @@
 <body>
 <header>
   <a class="brand" href="/"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <div><div class="over">Pipeline board</div><h1 id="ptitle">Pipeline</h1></div>
+  <div><div class="over">BDE-sourced · reference list</div><h1>Agency &amp; RPC Connected</h1></div>
   <span class="spacer"></span>
   <select id="bdeFilter" style="display:none"></select>
   <span class="who" id="who"></span>
 </header>
 <main>
+  <p class="hblurb">Prospects where a BDE <b>reached the decision-maker</b> (RPC connected) — flagged by whether they also <b>work with another agency</b>. These are relationships already in motion, kept here for reference. This list is deliberately <b>off the calling calendar</b>: it is not part of the fresh Google-Ads dialling rotation.</p>
   <div class="tabs" id="tabs"></div>
-  <p class="hblurb" id="blurb"></p>
-  <div class="toolbar" id="toolbar"></div>
   <div class="card"><div id="board"><div class="empty">Loading…</div></div></div>
 </main>
 
 <script>
 const $=s=>document.querySelector(s);
-const STAGES={
-  p1:{label:'RPC callback',blurb:'We reached the decision-maker and they asked us to call back — warm, keep the thread alive and lock the meeting.',icon:'\u{1F4DE}',win:true},
-  p3:{label:'Gatekeeper callback',blurb:'We got a gatekeeper, not the decision-maker yet — get through and secure a direct line / callback time.',icon:'\u{1F6E1}️',win:true},
-  p4:{label:'Fresh · running ads',blurb:'Not yet worked — prospects CONFIRMED running Google Ads (the callable first-contact pool).',icon:'\u{1F195}',win:false},
-  p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
-};
-const ORDER=['p1','p3','p4','p5'];
-const stage=(location.pathname.split('/').filter(Boolean)[1]||'p1').toLowerCase();
-let bde='ALL', win='d30', counts={};
-const WINDOWS=[['d1','Today'],['d3','3d'],['d7','7d'],['d14','14d'],['d30','30d']];
-
+let bde='ALL', filter='all', DATA=[];
 async function api(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-function fmtDate(s){if(!s)return '';try{const d=new Date(s.replace(' ','T'));if(isNaN(d))return s.slice(0,10);return d.toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short'});}catch(e){return s.slice(0,10);}}
+function fmtDate(s){if(!s)return '';try{const d=new Date(s.replace(' ','T'));if(isNaN(d))return s.slice(0,10);return d.toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',year:'numeric'});}catch(e){return s.slice(0,10);}}
 function tierClass(t){t=(t||'').toLowerCase();if(t.includes('super')||t==='hot')return 't-hot';if(t==='warm')return 't-warm';return 't-cool';}
 
-function renderTabs(){
-  $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('')
-    +`<a class="tab" href="/pipeline2">\u{1F501} Existing agency</a>`;
+function renderTabs(counts){
+  const T=[['all','All',counts.all],['agency','\u{1F3E2} Working with an agency',counts.agency],['rpc','\u{1F4DE} RPC connected only',counts.rpc]];
+  $('#tabs').innerHTML=T.map(t=>`<button class="tab${t[0]===filter?' active':''}" onclick="setFilter('${t[0]}')">${t[1]}<span class="n">${t[2]}</span></button>`).join('');
 }
-function renderToolbar(){
-  const meta=STAGES[stage];
-  $('#toolbar').innerHTML = meta.win ? WINDOWS.map(w=>`<button class="tab${w[0]===win?' active':''}" onclick="setWin('${w[0]}')">${w[1]}</button>`).join('') : '';
-}
-window.setWin=function(w){win=w;renderToolbar();loadBoard();};
+window.setFilter=function(f){filter=f;render();};
 
 function row(r){
   const biz=esc(r.business_name||r.prospect_company||r.dest_number||r.domain||'—');
   const key=(r.dest_number||'').replace(/[^0-9]/g,'');
-  const nc=r.next_call_at;
-  const ncTxt=nc?`<span class="next-ok">${esc(fmtDate(nc))}</span>${r.next_call_bde?` <span class="sub">${esc(r.next_call_bde)}</span>`:''}`:'<span class="next-none">—</span>';
   const bizCell=`<td><a href="/prospect/${encodeURIComponent(key||r.domain||'')}"><span class="biz">${biz}</span></a>${r.domain?`<div class="dom">${esc(r.domain)}</div>`:''}</td>`;
-  if(stage==='p4'){   // confirmed-ads pool: business · phone · industry · revenue · next call
-    return `<tr>${bizCell}
-      <td class="num">${esc(r.dest_number||'—')}</td>
-      <td>${r.industry?esc(r.industry):'<span class="muted">—</span>'}</td>
-      <td class="r num">${r.revenue_musd!=null?('$'+Math.round(r.revenue_musd)+'M'):''}</td>
-      <td>${ncTxt}</td>
-    </tr>`;
-  }
+  const statusCell=r.is_agency
+    ? '<span class="pill tag-agency">\u{1F3E2} Agency + RPC</span>'
+    : '<span class="pill tag-rpc">\u{1F4DE} RPC connected</span>';
   const tier=r.lead_temperature;
   const tierCell=tier?`<span class="pill ${tierClass(tier)}">${esc(tier)}</span>`:'';
   return `<tr>${bizCell}
     <td class="num">${esc(r.dest_number||'')}</td>
+    <td>${statusCell}</td>
     <td>${tierCell}</td>
     <td class="r num">${r.ncalls!=null?r.ncalls:''}</td>
     <td class="num">${esc(fmtDate(r.started_at))}</td>
-    <td>${ncTxt}</td>
-    <td>${esc(r.bde||r.next_call_bde||'')}</td>
+    <td>${esc(r.bde||'')}</td>
   </tr>`;
 }
 
-async function loadBoard(){
+function render(){
+  const rows=DATA.filter(r=> filter==='all' ? true : filter==='agency' ? r.is_agency : !r.is_agency);
+  renderTabs({all:DATA.length,agency:DATA.filter(r=>r.is_agency).length,rpc:DATA.filter(r=>!r.is_agency).length});
+  if(!rows.length){$('#board').innerHTML='<div class="empty">No matching prospects'+(bde!=='ALL'?' for '+esc(bde):'')+'.</div>';return;}
+  const head='<th>Prospect</th><th>Phone</th><th>Status</th><th>Temp</th><th class="r">Calls</th><th>Last contact</th><th>BDE</th>';
+  $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`;
+}
+
+async function load(){
   $('#board').innerHTML='<div class="empty">Loading…</div>';
   try{
-    const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}`);
-    const rows=d.rows||[];
-    if(!rows.length){$('#board').innerHTML='<div class="empty">Nothing in this pipeline'+(bde!=='ALL'?' for '+esc(bde):'')+' right now.</div>';return;}
-    const head = stage==='p4'
-      ? '<th>Business</th><th>Phone</th><th>Industry</th><th class="r">Revenue</th><th>Next call</th>'
-      : `<th>Prospect</th><th>Phone</th><th>Temp</th><th class="r">Calls</th><th>Last call</th><th>Next call</th><th>BDE</th>`;
-    const cap = (d.total && d.total>rows.length) ? `<div class="sub" style="padding:10px 14px;border-top:1px solid var(--line-soft)">Showing top ${rows.length} of ${d.total.toLocaleString()} confirmed-ads businesses (by revenue).</div>` : '';
-    $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>${cap}`;
+    const d=await api(`/api/agency-rpc?bde=${encodeURIComponent(bde)}`);
+    DATA=d.rows||[]; render();
   }catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
 }
 
 async function boot(){
-  const meta=STAGES[stage]||STAGES.p1;
-  document.title=meta.label+' — Pipeline';
-  $('#ptitle').textContent=meta.label;
-  $('#blurb').textContent=meta.blurb;
-  // BDE filter + counts
   try{
     const me=await api('/api/me'); $('#who').textContent=(me.name||me.email||'')+' · '+(me.role||'');
     if(me.role==='manager'||me.role==='admin'||me.role==='kiosk'){
       const s=await api('/api/summary');
       $('#bdeFilter').innerHTML=['<option value="ALL">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${esc(b)}</option>`)).join('');
-      $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
+      $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;load();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.running_ads; }catch(e){}
-  renderTabs(); renderToolbar(); loadBoard();
+  load();
 }
 boot();
 </script>

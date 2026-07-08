@@ -24,7 +24,7 @@
     --tier-hot:#f87171;  --tier-hot-bg:rgba(248,113,113,.13);  --tier-hot-soft:rgba(248,113,113,.32);
     --tier-warm:#fbbf24; --tier-warm-bg:rgba(251,191,36,.12);  --tier-warm-soft:rgba(251,191,36,.32);
     --tier-cool:#7e8a9c;
-    --ty-meeting:#4ade80; --ty-callback:#5b8cff; --ty-note:#9aa6b6; --ty-rpc:#c084fc; --ty-next:#fbbf24;
+    --ty-meeting:#4ade80; --ty-callback:#5b8cff; --ty-note:#9aa6b6; --ty-rpc:#c084fc; --ty-next:#fbbf24; --ty-fresh:#fb923c;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);font:var(--t-base)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;-webkit-font-smoothing:antialiased}
@@ -79,6 +79,7 @@
   .ev.rpc_retry{background:rgba(192,132,252,.13);color:var(--ty-rpc)}
   .ev.recall{background:rgba(45,212,191,.14);color:#5eead4}
   .ev.next_call{background:rgba(251,191,36,.12);color:var(--ty-next)}
+  .ev.fresh_call{background:rgba(251,146,60,.14);color:var(--ty-fresh)}
   .ev.tier-hot{border-left-color:var(--tier-hot);box-shadow:inset 0 0 0 1px var(--tier-hot-soft)}
   .ev.tier-warm{border-left-color:var(--tier-warm);box-shadow:inset 0 0 0 1px var(--tier-warm-soft)}
   .ev.tier-cool{border-left-color:var(--tier-cool)}
@@ -140,6 +141,7 @@
   .legend .lg i.type.rpc_retry{background:var(--ty-rpc)}
   .legend .lg i.type.recall{background:#5eead4}
   .legend .lg i.type.next_call{background:var(--ty-next)}
+  .legend .lg i.type.fresh_call{background:var(--ty-fresh)}
   .legend .lg i.type.done{background:#475569}
   .legend .lg i.tier{width:6px;height:14px;border-radius:2px}
   .legend .lg i.tier.hot{background:var(--tier-hot)}
@@ -307,8 +309,8 @@ const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
 const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const MON=['January','February','March','April','May','June','July','August','September','October','November','December'];
-const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝',rpc_retry:'🔁',recall:'🔁',next_call:'⭐'};
-const TYPE_LABEL={callback:'Callback',meeting:'Meeting',note:'Note',rpc_retry:'RPC retry',recall:'Weekly recall',next_call:'Next call'};
+const TYPE_ICON={callback:'📞',meeting:'🤝',note:'📝',rpc_retry:'🔁',recall:'🔁',next_call:'⭐',fresh_call:'🎯'};
+const TYPE_LABEL={callback:'Callback',meeting:'Meeting',note:'Note',rpc_retry:'RPC retry',recall:'Weekly recall',next_call:'Next call',fresh_call:'Fresh · running ads'};
 // evidence.next_call_points[].kind -> short badge label
 const KIND_LABEL={hook:'Hook',question:'Ask',objection:'Objection',value:'Value',logistics:'Logistics'};
 // Priority tier -> css class (hot/warm/cool/none). API sends e.tier ('hot'|'warm'|'cool'|null).
@@ -368,6 +370,7 @@ function renderLegend(){
     `<span class="lg"><i class="type rpc_retry"></i>🔁 RPC retry</span>`+
     `<span class="lg"><i class="type recall"></i>🔁 Weekly recall</span>`+
     `<span class="lg"><i class="type next_call"></i>⭐ Next call</span>`+
+    `<span class="lg"><i class="type fresh_call"></i>🎯 Fresh · running ads</span>`+
     `<span class="lg"><i class="type note"></i>📝 Note</span>`+
     `<span class="lg"><i class="type done"></i>Done</span>`;
   const tiers=`<span class="lgh">Priority</span>`+
@@ -527,6 +530,7 @@ boot().catch(e=>{document.querySelector('main').innerHTML='<div class="muted" st
     ['/pipeline/p1','/pipeline','Call pipelines','<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/pipeline2','/pipeline2','Agency pipeline','<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'],
+    ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];

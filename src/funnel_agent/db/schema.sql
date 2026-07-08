@@ -313,6 +313,11 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_calendar_bde_start ON calendar_events (bde_name, start_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_callback_call
   ON calendar_events (call_id) WHERE type = 'callback' AND call_id IS NOT NULL;
+-- One open fresh-Google-Ads call per physical NUMBER (last-9-digits — the system-wide number identity,
+-- so two phone formats of the same number collide). Idempotent allocation; mirrors idx_calendar_recall.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_fresh_call
+  ON calendar_events (right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9))
+  WHERE type = 'fresh_call' AND status = 'pending';
 
 -- ============================ Master prospect database ============================
 -- The team's known-prospect universe (seeded from DATA_MASTER_FILE), keyed by the

@@ -1469,6 +1469,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "    AND ce.status='pending' ORDER BY (ce.start_at >= now()) DESC, "
         "    CASE WHEN ce.start_at >= now() THEN ce.start_at END ASC, ce.start_at DESC LIMIT 1) nc ON true")
 
+    @app.get("/api/agency-rpc")
+    def agency_rpc(request: Request, bde: str = "ALL", limit: int = 500) -> JSONResponse:
+        """BDE-sourced prospects where the BDE REACHED THE DECISION-MAKER (rpc_connect=true) — the
+        "RPC-connected" set — flagged by whether that prospect also works with another agency. This is
+        purely calls-derived (BDE-sourced) and, by construction, creates NO calendar events and is NOT
+        part of the Fresh-ads calling calendar: it's a reference/relationship view, not a call list."""
+        bde = _scoped_bde(request, bde)
+        limit = max(10, min(int(limit or 500), 2000))
+        scoped = bool(bde and bde != "ALL")
+        bde_rpc = "AND COALESCE(c.bde_name, c.bde_extension) = %(bde)s" if scoped else ""
+        rows = q(
+            # prospects (by phone) with >=1 decision-maker connect; agency status from ALL their calls
+            f"WITH rpc AS (SELECT DISTINCT {_DEST9_SQL} AS dest9 "
+            f"  FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            f"  WHERE c.in_scope AND c.dest_number <> '' AND COALESCE(cl.rpc_connect,false) {bde_rpc}), "
+            f"allc AS (SELECT {_DEST9_SQL} AS dest9, c.dest_number, c.started_at, "
+            f"  COALESCE(c.bde_name, c.bde_extension) AS bde, cl.prospect_company, cl.lead_temperature, "
+            f"  cl.pipeline, cl.has_marketing_agency, cl.rpc_connect "
+            f"  FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            f"  WHERE c.in_scope AND c.dest_number <> '' {bde_rpc} "
+            f"    AND {_DEST9_SQL} IN (SELECT dest9 FROM rpc)), "
+            "agg AS (SELECT dest9, "
+            "  bool_or(pipeline='pipeline2_existing_agency' OR COALESCE(has_marketing_agency,false)) AS is_agency, "
+            "  bool_or(COALESCE(rpc_connect,false)) AS is_rpc, count(*) AS ncalls, "
+            "  max(started_at) AS last_at FROM allc GROUP BY dest9), "
+            "latest AS (SELECT DISTINCT ON (dest9) dest9, dest_number, started_at, bde, prospect_company, "
+            "  lead_temperature FROM allc ORDER BY dest9, started_at DESC) "
+            "SELECT l.dest_number, l.started_at, l.bde, l.prospect_company, l.lead_temperature, "
+            "  a.is_agency, a.is_rpc, a.ncalls, pr.business_name, pr.domain "
+            "FROM agg a JOIN latest l ON l.dest9 = a.dest9 "
+            # single-row prospect match (a number can match multiple phones_norm rows — ANY() would
+            # MULTIPLY rows, inflating counts and evicting prospects past LIMIT). Prefer a domain'd row.
+            "LEFT JOIN LATERAL (SELECT pr.business_name, pr.domain FROM prospects pr "
+            "  WHERE a.dest9 = ANY(pr.phones_norm) ORDER BY (pr.domain IS NOT NULL) DESC, pr.id LIMIT 1) pr ON true "
+            "ORDER BY a.is_agency DESC, l.started_at DESC LIMIT %(lim)s",
+            {"lim": limit, "bde": bde})
+        n_agency = sum(1 for r in rows if r.get("is_agency"))
+        for r in rows:
+            r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
+        return JSONResponse({"count": len(rows), "n_agency": n_agency,
+                             "n_rpc_only": len(rows) - n_agency, "rows": jsonable_encoder(rows)})
+
     @app.get("/api/pipeline5-prospects")
     def pipeline5_prospects(request: Request, pipeline: str, window: str = "d30",
                             bde: str = "ALL", limit: int = 300) -> JSONResponse:
@@ -3292,6 +3334,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/pipeline2", response_class=HTMLResponse)
     def pipeline2_page() -> str:
         return _static("pipeline2.html")
+
+    # ---- Agency & RPC Connected (BDE-sourced reference view, off-calendar) --- #
+    @app.get("/agency-rpc", response_class=HTMLResponse)
+    def agency_rpc_page() -> HTMLResponse:
+        return HTMLResponse(_static("agency-rpc.html"), headers=_NOCACHE)
 
     @app.get("/pipeline/{stage}", response_class=HTMLResponse)
     def pipeline_page(stage: str) -> HTMLResponse:

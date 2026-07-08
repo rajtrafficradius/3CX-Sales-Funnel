@@ -187,6 +187,22 @@ class Settings(BaseSettings):
     # gap over time from the always-on loop (fresh budget vs a one-off bulk run). 0 disables it.
     apollo_people_trickle_per_cycle: int = 6
 
+    # GUARANTEE the fresh running-ads pool is fully enriched: each cycle, top up a few confirmed-ads
+    # prospects that are still missing a free tab (website / Apollo org / business intel). Complements
+    # the WHOIS + Apollo-people trickles above so every confirmed-ads prospect page & value ranking is
+    # complete over time. Business-intel is one LLM call/domain, so keep this modest. 0 disables it.
+    fresh_ads_enrich_per_cycle: int = 20
+    fresh_ads_enrich_workers: int = 6
+
+    # --- Fresh Google-Ads calling calendar (AI daily allocation) ---
+    # The ONLY cold pool that goes on the calendar: prospects CONFIRMED running Google Ads. Each BDE
+    # gets a curated rolling worklist of ~N high-value fresh calls (value×90-day-performance matched),
+    # topped up each cycle as they dial through it. 0 disables the allocator entirely.
+    fresh_alloc_enabled: bool = True
+    fresh_calls_per_day_per_bde: int = 50
+    # empirical-Bayes shrink for 90-day BDE rates (higher = trust low-volume BDEs less; blend to mean).
+    fresh_alloc_perf_shrink_k: int = 40
+
     # --- Roster in-scope rule ---
     # PRIMARY rule (preferred): BDE names. BDEs keep one stable name but rotate across
     # many extensions (mobile, landline, new numbers). Any 3CX line whose name matches

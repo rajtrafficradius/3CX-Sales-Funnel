@@ -237,6 +237,44 @@ def enrich_websites_cmd(
                 break
 
 
+@app.command(name="enrich-fresh-ads")
+def enrich_fresh_ads_cmd(
+    limit: int = typer.Option(100000, help="max confirmed-ads domains to enrich this run"),
+    workers: int = typer.Option(6, help="parallel workers (forced to 1 when --whois)"),
+    whois: bool = typer.Option(False, "--whois", help="also fill WHOIS (sequential — auDA throttles .au)"),
+    dataforseo: bool = typer.Option(False, "--dataforseo", help="also refresh DataForSEO (paid)"),
+    all_: bool = typer.Option(True, "--all/--once", help="keep sweeping in batches until the pool is complete"),
+) -> None:
+    """GUARANTEE the fresh running-Google-Ads pool is fully enriched: website + Apollo company/people +
+    business intel for every confirmed-ads prospect (never SEMrush — DataForSEO is our SEO source).
+    Idempotent; safe to re-run. Run this on RAILWAY (DataForSEO/WHOIS IP-whitelist there). WHOIS stays
+    on its paced loop trickle by default; pass --whois for a sequential one-off sweep."""
+    settings = _settings()
+    with _analytics_pool(settings) as pool:
+        from .enrich import enrich_fresh_ads_pool
+        prev_remaining = None
+        while True:
+            stats = enrich_fresh_ads_pool(pool, settings, limit=limit, workers=workers,
+                                          with_whois=whois, with_dataforseo=dataforseo)
+            typer.echo(f"enrich-fresh-ads: {stats}")
+            # Stop on done, on nothing-left, OR on no forward progress (remaining is monotonically
+            # non-increasing, so a stall = a subset that can't be filled this run — never loop forever).
+            if (not all_ or stats["processed"] == 0 or stats["remaining"] == 0
+                    or stats["remaining"] == prev_remaining):
+                break
+            prev_remaining = stats["remaining"]
+
+
+@app.command(name="schedule-fresh-calls")
+def schedule_fresh_calls_cmd() -> None:
+    """Top up each BDE's fresh-Google-Ads calling worklist (value × 90-day performance). Idempotent;
+    also runs automatically in the refresh loop. Run on RAILWAY (the confirmed-ads pool is cloud-only)."""
+    settings = _settings()
+    with _analytics_pool(settings) as pool:
+        from .fresh_alloc import schedule_fresh_calls
+        typer.echo(f"schedule-fresh-calls: {schedule_fresh_calls(pool, settings)}")
+
+
 @app.command(name="enrich-deep")
 def enrich_deep_cmd(
     limit: int = typer.Option(1000, help="max paid-ads prospects to deep-enrich this run"),
@@ -696,6 +734,16 @@ def refresh(
         except Exception as exc:
             wr = {"error": str(exc)[:80]}
             log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
+        # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
+        # 90-day performance). The ONLY cold pool on the calendar; resolves once a number is dialled.
+        fx = {"scheduled": 0}
+        if settings.fresh_alloc_enabled:
+            try:
+                from .fresh_alloc import schedule_fresh_calls
+                fx = schedule_fresh_calls(ana, settings)
+            except Exception as exc:
+                fx = {"error": str(exc)[:80]}
+                log.warning("schedule_fresh_calls_failed", error=str(exc)[:160])
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}
         if settings.website_scan_per_cycle > 0:
@@ -719,6 +767,16 @@ def refresh(
                 ap = enrich_apollo_people_trickle(ana, settings, limit=settings.apollo_people_trickle_per_cycle)
             except Exception as exc:
                 log.warning("apollo_people_trickle_failed", error=str(exc)[:160])
+        # GUARANTEE the fresh running-ads pool is fully enriched — top up website + Apollo org +
+        # business intel for a few confirmed-ads prospects still missing a free tab each cycle.
+        fa = {"processed": 0, "remaining": 0}
+        if settings.fresh_ads_enrich_per_cycle > 0:
+            from .enrich import enrich_fresh_ads_pool
+            try:
+                fa = enrich_fresh_ads_pool(ana, settings, limit=settings.fresh_ads_enrich_per_cycle,
+                                           workers=settings.fresh_ads_enrich_workers)
+            except Exception as exc:
+                log.warning("fresh_ads_enrich_failed", error=str(exc)[:160])
         # Inbound SMS/chat: capture meeting confirmations a prospect TEXTS to a 3CX number and
         # firm up their prior tentative booking (an SMS-only confirmation the calls pipeline misses).
         # Gated off by default until validated end-to-end (set MESSAGES_ENABLED=true to activate).
@@ -737,7 +795,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | fresh_calls: {fx} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | fresh_ads: {fa} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()
