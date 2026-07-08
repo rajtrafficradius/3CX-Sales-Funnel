@@ -2913,6 +2913,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(502, f"Competitor audit unavailable — {str(exc)[:120]}")
         return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "audit": audit}))
 
+    # ---- Full audit report: generate (paid) + export HTML / PDF / DOCX ---- #
+    def _audit_status(domain: str) -> dict:
+        row = q("SELECT dataforseo FROM enrichment WHERE domain=%s", (domain,))
+        df = (row[0].get("dataforseo") if row else None) or {}
+        return {"base": bool(df.get("rank") or df.get("ads") or df.get("found")),
+                "seo": bool(df.get("audit") and df.get("ranked_kw")),
+                "competitor": bool(df.get("competitor_audit"))}
+
+    @app.post("/api/prospect/{key}/audit/ensure")
+    async def prospect_audit_ensure(request: Request, key: str) -> JSONResponse:
+        """PAID on-demand: make sure this domain has EVERY dataset the full audit report needs — base
+        DataForSEO (rank+ads), the SEO keyword audit (ranked_kw + money keywords), and the competitor
+        gap audit. Runs only the missing pieces (idempotent). BDM / admin / manager only (each fetch
+        costs a few cents); a BDE can then view/download the report for free from cache."""
+        u = getattr(request.state, "user", None) or {}
+        if not can_manage_pipeline(u):
+            raise HTTPException(403, "Generating the audit is paid — restricted to BDM / admin / manager")
+        if not settings.dataforseo_enabled:
+            raise HTTPException(503, "DataForSEO not configured")
+        master, domain, _norm = _resolve_prospect(key)
+        if not domain:
+            return JSONResponse({"error": "no website on file for this prospect"}, status_code=400)
+
+        def _do() -> dict:
+            from ..enrichment.dataforseo import DataForSEOClient, build_seo_audit, brand_tokens
+            from ..enrich import enrich_dataforseo_one
+            from ..competitor import run_competitor_audit
+            did = []
+            if not _audit_status(domain)["base"]:
+                c = DataForSEOClient(settings)
+                try:
+                    enrich_dataforseo_one(pool, c, domain)
+                finally:
+                    c.close()
+                did.append("base")
+            if not _audit_status(domain)["seo"]:
+                c = DataForSEOClient(settings)
+                try:
+                    rk = c.ranked_keywords(domain, limit=100)
+                finally:
+                    c.close()
+                kws = (rk.get("keywords") or [])[:100]
+                brands = brand_tokens(domain, (master or {}).get("company_name")
+                                      or (master or {}).get("name") or "")
+                audit = build_seo_audit(kws, brands=brands)
+                audit["keyword_count_total"] = rk.get("count")
+                audit["fetched_at"] = _dt.now().isoformat()
+                patch = {"audit": audit, "ranked_kw": kws}
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                        "ON CONFLICT (domain) DO UPDATE SET "
+                        "dataforseo = COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
+                        (domain, Json(patch), Json(patch)))
+                    conn.commit()
+                did.append("seo")
+            if not _audit_status(domain)["competitor"]:
+                run_competitor_audit(pool, settings, domain)
+                did.append("competitor")
+            return {"did": did, "status": _audit_status(domain)}
+        try:
+            out = await run_in_threadpool(_do)
+        except Exception as exc:
+            raise HTTPException(502, f"Audit generation failed — {str(exc)[:140]}")
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "ready": True, **out}))
+
+    @app.get("/api/prospect/{key}/audit.{fmt}")
+    async def prospect_audit_export(request: Request, key: str, fmt: str, ticket: int = 2000) -> Response:
+        """Render the full audit report from CACHED data as html | pdf | docx (free — any signed-in
+        user). `ticket` = the prospect's average sale value, which drives every revenue figure."""
+        fmt = (fmt or "").lower()
+        if fmt not in ("html", "pdf", "docx"):
+            raise HTTPException(404, "format must be html, pdf or docx")
+        _master, domain, _norm = _resolve_prospect(key)
+        if not domain:
+            raise HTTPException(400, "no website on file for this prospect")
+        ticket = max(0, min(int(ticket or 2000), 10_000_000))
+
+        def _do():
+            from ..audit import (assemble_audit, embed_ad_images, render_audit_html,
+                                 render_audit_pdf, render_audit_docx)
+            m = assemble_audit(pool, domain, avg_ticket=ticket)
+            if not m:
+                return None
+            m = embed_ad_images(m)
+            if fmt == "docx":
+                return render_audit_docx(m)
+            if fmt == "pdf":
+                return render_audit_pdf(m)
+            return render_audit_html(m, standalone=True)
+        try:
+            out = await run_in_threadpool(_do)
+        except Exception as exc:
+            raise HTTPException(502, f"Could not render audit ({fmt}): {str(exc)[:140]}")
+        if out is None:
+            raise HTTPException(404, "No audit data yet — click ‘Generate audit’ first.")
+        safe = re.sub(r"[^a-z0-9.-]+", "-", domain.lower())
+        if fmt == "html":
+            return HTMLResponse(out)
+        media = ("application/pdf" if fmt == "pdf"
+                 else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        return Response(out, media_type=media,
+                        headers={"Content-Disposition": f'attachment; filename="audit-{safe}.{fmt}"'})
+
     # ---- Smart next-call priority queue (A) ------------------------------ #
     @app.get("/api/next-calls")
     def next_calls(request: Request, bde: str = "ALL", due_only: bool = False,

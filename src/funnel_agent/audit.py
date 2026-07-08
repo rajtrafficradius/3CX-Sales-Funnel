@@ -1273,3 +1273,293 @@ def _gauge(score, label, size=92):
             f'background:conic-gradient({col} {s * 3.6:.0f}deg,#e2e8f0 0)">'
             f'<div class="hole"><span style="color:{col}">{s}</span></div></div>'
             f'<div class="glab">{_esc(label)}</div></div>')
+
+
+# ============================================================================
+# Export renderers — PDF (WeasyPrint, pixel-faithful to the on-screen report)
+# and DOCX (python-docx, a clean editable version built from the model).
+# ============================================================================
+def render_audit_pdf(model: dict) -> bytes:
+    """Render the audit to PDF bytes via WeasyPrint from the same self-contained HTML (embedded
+    data-URI ad images + logo). Ships with the app; the Docker image carries Pango/Cairo."""
+    from weasyprint import HTML
+    html = render_audit_html(model, standalone=True)
+    return HTML(string=html).write_pdf()
+
+
+def _docx_shade(cell, hex_no_hash: str) -> None:
+    """Set a table cell background (python-docx has no direct API for it)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    tcPr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), hex_no_hash)
+    tcPr.append(shd)
+
+
+def render_audit_docx(model: dict) -> bytes:
+    """Build a clean, editable DOCX of the audit from the model (not the HTML). Not pixel-identical
+    to the PDF — it's the professional editable version: headings, KPI lines, and data tables."""
+    import io
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    NAVY = RGBColor(0x0B, 0x1E, 0x46)
+    BLUE = RGBColor(0x25, 0x63, 0xEB)
+    GREEN = RGBColor(0x16, 0xA3, 0x4A)
+    AMBER = RGBColor(0xD9, 0x77, 0x06)
+    RED = RGBColor(0xDC, 0x26, 0x26)
+    MUTED = RGBColor(0x64, 0x74, 0x8B)
+    INK = RGBColor(0x0F, 0x17, 0x2A)
+
+    m = model
+    b = m.get("business") or {}
+    op = m.get("opportunity") or {}
+    ads = m.get("ads") or {}
+    seo = m.get("seo") or {}
+    rev = m.get("revenue") or {}
+    uni = m.get("universe") or {}
+    gen = (m.get("generated") or "")[:10] or date.today().isoformat()
+
+    doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(10.5)
+    normal.font.color.rgb = INK
+
+    def para(text="", *, bold=False, italic=False, size=10.5, color=None, align=None, space_after=6):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(space_after)
+        if align is not None:
+            p.alignment = align
+        if text:
+            r = p.add_run(text)
+            r.bold = bold; r.italic = italic; r.font.size = Pt(size)
+            r.font.color.rgb = color or INK
+        return p
+
+    _secno = [0]
+    def section(title, lead=None, *, number=True):
+        _secno[0] += 1 if number else 0
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(16); p.paragraph_format.space_after = Pt(2)
+        if number:
+            n = p.add_run(f"{_secno[0]}  "); n.bold = True; n.font.size = Pt(15); n.font.color.rgb = BLUE
+        t = p.add_run(title); t.bold = True; t.font.size = Pt(15); t.font.color.rgb = NAVY
+        if lead:
+            para(lead, italic=True, size=10, color=MUTED, space_after=8)
+
+    def kpi_row(items):
+        """items = [(value, label), ...] as a light table row of KPI cards."""
+        if not items:
+            return
+        tbl = doc.add_table(rows=2, cols=len(items))
+        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for i, (val, lab) in enumerate(items):
+            c0 = tbl.cell(0, i); c1 = tbl.cell(1, i)
+            _docx_shade(c0, "F1F5FB"); _docx_shade(c1, "F1F5FB")
+            r = c0.paragraphs[0].add_run(str(val)); r.bold = True; r.font.size = Pt(15); r.font.color.rgb = NAVY
+            r2 = c1.paragraphs[0].add_run(str(lab)); r2.font.size = Pt(8.5); r2.font.color.rgb = MUTED
+        para(space_after=4)
+
+    def data_table(headers, rows, *, aligns=None):
+        if not rows:
+            return
+        tbl = doc.add_table(rows=1, cols=len(headers))
+        tbl.style = "Light Grid Accent 1"
+        for i, h in enumerate(headers):
+            cell = tbl.rows[0].cells[i]
+            run = cell.paragraphs[0].add_run(str(h)); run.bold = True; run.font.size = Pt(8.5)
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        for row in rows:
+            cells = tbl.add_row().cells
+            for i, v in enumerate(row):
+                r = cells[i].paragraphs[0].add_run("" if v is None else str(v))
+                r.font.size = Pt(9)
+                if aligns and i < len(aligns) and aligns[i] == "r":
+                    cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        para(space_after=6)
+
+    # ---- COVER ----
+    para("TRAFFIC RADIUS", bold=True, size=11, color=BLUE, space_after=0)
+    para("Digital Marketing Audit", size=9, color=MUTED, space_after=10)
+    h = doc.add_paragraph(); h.paragraph_format.space_after = Pt(2)
+    rr = h.add_run(m.get("name") or m.get("domain") or ""); rr.bold = True; rr.font.size = Pt(24); rr.font.color.rgb = NAVY
+    para(m.get("domain") or "", size=11, color=BLUE, space_after=8)
+    meta = []
+    if b.get("industry"): meta.append(f"Industry: {b['industry']}")
+    if b.get("location"): meta.append(f"Location: {b['location']}")
+    if b.get("revenue_musd"): meta.append(f"Revenue: ${_n(b['revenue_musd'])}M")
+    if op.get("org_keywords"): meta.append(f"Organic keywords: {_n(op['org_keywords'])}")
+    if meta:
+        para(" · ".join(meta), size=9.5, color=MUTED, space_after=10)
+    r_mo = rev.get("monthly")
+    if r_mo:
+        hp = doc.add_paragraph(); hp.paragraph_format.space_after = Pt(2)
+        big = hp.add_run(f"{_money(r_mo)}/month"); big.bold = True; big.font.size = Pt(20); big.font.color.rgb = GREEN
+        para("in new revenue they're currently missing — quantified inside, at their own average sale value.",
+             italic=True, size=9.5, color=MUTED)
+    para(f"Prepared {gen} · confidential", size=8.5, color=MUTED, space_after=2)
+
+    # ---- HEALTH SCORECARD ----
+    hlth = m.get("health") or {}
+    if hlth:
+        ov = hlth.get("overall") or 0
+        grade = "A" if ov >= 80 else "B" if ov >= 65 else "C" if ov >= 50 else "D" if ov >= 35 else "F"
+        section("Digital health scorecard",
+                "An honest, at-a-glance grade of the business online today — the red gaps are the ground competitors are taking.")
+        para(f"Overall grade: {grade}  ({ov}/100)", bold=True, size=13,
+             color=GREEN if ov >= 65 else AMBER if ov >= 45 else RED)
+        DIMS = [("seo", "Organic visibility"), ("ads", "Paid presence"),
+                ("competitive", "Competitive position"), ("technical", "AI-search readiness")]
+        data_table(["Dimension", "Score / 100", "Target"],
+                   [[lab, int(hlth.get(k) or 0), 80] for k, lab in DIMS], aligns=["l", "r", "r"])
+        if m.get("diagnosis"):
+            para(m["diagnosis"], size=10)
+
+    # ---- EXEC SUMMARY ----
+    if m.get("findings"):
+        section("Executive summary", "The headline findings and the size of the opportunity.")
+        kpis = []
+        if r_mo: kpis.append((f"{_money(r_mo)}", "New revenue / mo"))
+        if op.get("est_org_value") is not None: kpis.append((_money(op["est_org_value"]), "Organic value / mo"))
+        if ads.get("running"): kpis.append((str(ads.get("count") or "Yes"), "Live Google Ads"))
+        if op.get("org_keywords"): kpis.append((_n(op["org_keywords"]), "Ranked keywords"))
+        kpi_row(kpis[:4])
+        for f in m["findings"]:
+            para(f"•  {f.get('text','')}", size=10, space_after=4)
+
+    # ---- REVENUE OPPORTUNITY ----
+    if rev.get("addressable_traffic"):
+        section("The revenue opportunity",
+                "What the missed search traffic is worth in the prospect's own revenue terms.")
+        para(f"Average sale / project value used: {_money(rev.get('avg_ticket'))}", bold=True, size=10)
+        data_table(["Extra visits/mo", "Enquiries/mo", "New sales/mo", "New revenue/mo", "Per year"],
+                   [[_n(rev.get("addressable_traffic")), _n(rev.get("leads_per_mo"), 1),
+                     _n(rev.get("sales_per_mo"), 1), _money(r_mo), _money((r_mo or 0) * 12)]],
+                   aligns=["r", "r", "r", "r", "r"])
+        para(f"Assumes {int((rev.get('visitor_to_lead') or .03)*100)}% visitor→enquiry and "
+             f"{int((rev.get('lead_to_sale') or .25)*100)}% enquiry→sale (conservative service-business rates).",
+             italic=True, size=8.5, color=MUTED)
+
+    # ---- GOOGLE ADS ----
+    if ads.get("running") or ads.get("count"):
+        section("Google Ads audit",
+                "Independently verified from Google's public Ads Transparency Center.")
+        kpi_row([("✓ Confirmed" if ads.get("running") else "—", "Running Google Ads"),
+                 (str(ads.get("count") or "—"), "Live creatives"),
+                 (str(ads.get("since") or "—")[:4] if ads.get("since") else "—", "Advertising since"),
+                 ("Verified" if ads.get("verified") else "—", "Advertiser identity")])
+        if ads.get("formats"):
+            para("Formats: " + " · ".join(f"{k}: {v}" for k, v in ads["formats"].items()), size=9.5, color=MUTED)
+
+    # ---- SEO HEALTH ----
+    t = seo.get("totals") or {}
+    if seo.get("money_keywords") or t:
+        section("Organic SEO health",
+                "Where they rank today, and the high-value 'money' keywords sitting on page 2 (fastest ROI).")
+        kpi_row([(_n(t.get("keywords") or seo.get("keyword_count_total")), "Ranked keywords"),
+                 (_n(t.get("est_organic_traffic")), "Est. visits / mo"),
+                 (_money(t.get("est_traffic_value")), "Est. value / mo"),
+                 (_n(t.get("quick_wins")), "Quick-win keywords")])
+        mk = seo.get("money_keywords") or []
+        if mk:
+            data_table(["Money keyword", "Pos", "Volume", "CPC", "$ value/mo", "Upside $"],
+                       [[k.get("keyword"), _pos(k.get("position")), _n(k.get("search_volume")),
+                         _money(k.get("cpc"), 2), _money(k.get("money_value")), _money(k.get("upside_value"))]
+                        for k in mk[:12]], aligns=["l", "r", "r", "r", "r", "r"])
+
+    # ---- KEYWORD UNIVERSE ----
+    if uni.get("clusters"):
+        fn = uni.get("funnel") or {}
+        section("Keyword universe & marketing funnel",
+                "The money keywords mapped to the buyer funnel and clustered by product / service.")
+        data_table(["Funnel stage", "Keywords", "Searches/mo", "$ value/mo", "Ranked", "Missing"],
+                   [[lab, _n((fn.get(s) or {}).get("keywords")), _n((fn.get(s) or {}).get("volume")),
+                     _money((fn.get(s) or {}).get("value")), _n((fn.get(s) or {}).get("ranked")),
+                     _n((fn.get(s) or {}).get("gap"))]
+                    for s, lab in [("TOFU", "TOFU · Awareness"), ("MOFU", "MOFU · Consideration"), ("BOFU", "BOFU · Ready to buy")]],
+                   aligns=["l", "r", "r", "r", "r", "r"])
+        data_table(["Product / service cluster", "Keywords", "Searches/mo", "$ value/mo", "Coverage"],
+                   [[cl.get("label"), _n(cl.get("keywords")), _n(cl.get("volume")), _money(cl.get("value")),
+                     f"{round(100*(cl.get('ranked') or 0)/max(1, cl.get('keywords') or 1))}%"]
+                    for cl in uni["clusters"][:10]], aligns=["l", "r", "r", "r", "r"])
+
+    # ---- COMPETITOR ----
+    if m.get("competitors"):
+        comps = sorted(m["competitors"][:5], key=lambda c: c.get("est_traffic") or 0, reverse=True)
+        section("Competitor scoreboard & gap",
+                "How they stack up against their real organic rivals — and exactly where money is leaking.")
+        if m.get("sov") is not None:
+            para(f"Share of organic search voice: ~{_n(m.get('sov'), 1)}% "
+                 f"(biggest rival {comps[0].get('domain')} holds "
+                 f"{round(100*(comps[0].get('est_traffic') or 0)/max(1,(m.get('our_traffic') or 0)+sum((c.get('est_traffic') or 0) for c in comps)))}%).",
+                 size=10)
+        data_table(["Domain", "Organic keywords", "Est. traffic/mo", "Avg. position"],
+                   [[f"{m.get('name')} (you)", _n(op.get("org_keywords")), _n(m.get("our_traffic")), "—"]]
+                   + [[c.get("domain"), _n(c.get("organic_keywords")), _n(c.get("est_traffic")),
+                       _pos(c.get("avg_position")) if c.get("avg_position") else "—"] for c in comps],
+                   aligns=["l", "r", "r", "r"])
+        gap = m.get("keyword_gap") or []
+        if gap:
+            para("Keywords rivals win that you don't rank for:", bold=True, size=10, space_after=2)
+            data_table(["Keyword", "Volume", "CPC", "Capturable $/mo"],
+                       [[k.get("keyword"), _n(k.get("volume")), _money(k.get("cpc"), 2), _money(k.get("cap_value"))]
+                        for k in gap[:10]], aligns=["l", "r", "r", "r"])
+
+    # ---- CONTENT GAP ----
+    cg = [x for x in (m.get("content_gap") or []) if isinstance(x, dict)]
+    if cg:
+        cg = sorted(cg, key=lambda x: x.get("total_volume") or 0, reverse=True)[:10]
+        section("Content gap",
+                "High-demand topics competitors publish for and rank on — and this business doesn't.")
+        data_table(["Topic", "Searches/mo", "Related", "Covered by"],
+                   [[(x.get("topic") or x.get("keyword") or "").title(), _n(x.get("total_volume")),
+                     _n(x.get("keyword_count")), x.get("domain") or ""] for x in cg],
+                   aligns=["l", "r", "r", "l"])
+
+    # ---- TECHNICAL / AI READINESS ----
+    geo = m.get("geo_aeo") or {}
+    if geo and geo.get("checks"):
+        section("Technical & AI-search readiness",
+                "Whether AI & answer engines can find, trust and surface the site.")
+        if geo.get("score") is not None:
+            para(f"AI-search readiness score: {geo.get('score')}/100", bold=True, size=11,
+                 color=GREEN if geo["score"] >= 70 else AMBER if geo["score"] >= 45 else RED)
+        for c in (geo.get("checks") or [])[:12]:
+            ok = c.get("pass")
+            para(f"{'✓' if ok else '✗'}  {c.get('label') or c.get('name') or ''}", size=9.5,
+                 color=GREEN if ok else RED, space_after=2)
+
+    # ---- 90-DAY PLAN / RECOMMENDATION ----
+    rec = m.get("recommendation") or {}
+    if rec.get("steps"):
+        section("The opportunity & our recommendation", rec.get("summary"))
+        for i, step in enumerate(rec["steps"], 1):
+            title, detail = (step if isinstance(step, (list, tuple)) else (step, ""))
+            para(f"{i}. {title}", bold=True, size=10.5, color=NAVY, space_after=1)
+            if detail:
+                para(detail, size=9.5, color=INK, space_after=5)
+        if rec.get("total_upside"):
+            para(f"Estimated addressable search upside: {_money(rec['total_upside'])}/mo.",
+                 bold=True, size=10.5, color=GREEN)
+
+    # ---- METHODOLOGY ----
+    asmp = [a for a in (m.get("assumptions") or []) if a]
+    if asmp:
+        section("Methodology & assumptions", number=False)
+        for a in asmp:
+            para(f"•  {a}", size=8.5, color=MUTED, space_after=3)
+
+    para()
+    para(f"Traffic Radius — Digital Marketing Audit for {m.get('name')} ({m.get('domain')}). "
+         f"Generated {gen}. SEO/ads intelligence via DataForSEO & Google Ads Transparency Center; "
+         f"traffic & value figures are estimates. Prepared for a discovery conversation, not a guarantee of results.",
+         italic=True, size=8, color=MUTED)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
