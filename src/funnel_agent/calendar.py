@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from psycopg_pool import ConnectionPool
 
@@ -17,6 +18,45 @@ from .logging import get_logger
 log = get_logger(__name__)
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_MEL = ZoneInfo("Australia/Melbourne")
+
+# Tokens that encode a CONCRETE when. A callback phrase with none of these (and no digit) is VAGUE
+# ("after his meeting", "when he's free", "later") — we must NOT pretend the prospect named a time.
+_CONCRETE_TIME_TOKENS = (
+    "today", "tomorrow", "tonight", "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday", "morning", "afternoon", "evening", "noon", "midday", "week", "fortnight",
+    "month", "january", "february", "march", "april", "june", "july", "august", "september",
+    "october", "november", "december")
+# "after his meeting / call / appointment / lunch …" reads as LATER THE SAME DAY, not next week.
+_SAME_DAY_AFTER = re.compile(
+    r"\bafter\b[^.]*\b(meeting|call|appointment|appt|lunch|break|shift|class|session|surgery|"
+    r"procedure|round|delivery|run|job|site|handover|standup|stand-up|catch[- ]?up)\b", re.I)
+
+
+def callback_time_given(text: str | None) -> bool:
+    """Did the prospect actually give a CONCRETE callback time/day (vs a vague 'after his meeting')?"""
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if re.search(r"\d", t):                       # a digit: '5pm', 'the 27th', 'in 3 days'
+        return True
+    return any(tok in t for tok in _CONCRETE_TIME_TOKENS)
+
+
+def resolve_callback_slot(cbw: str | None, started_at, base: date) -> tuple[datetime, bool]:
+    """(when, time_was_given) for a callback phrase. When a concrete time was stated, trust
+    guess_when. When VAGUE: 'after his meeting/call/etc' → LATER THE SAME DAY (a few hours after this
+    call, kept inside business hours; too late → next business morning) — how a human would actually
+    re-try — otherwise the next-business-day default. `when` is naive local (Australia/Melbourne)."""
+    if callback_time_given(cbw):
+        return guess_when(cbw, base), True
+    if started_at is not None and _SAME_DAY_AFTER.search(cbw or ""):
+        loc = started_at.astimezone(_MEL) if getattr(started_at, "tzinfo", None) else started_at
+        cand = (loc + timedelta(hours=3)).replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        if cand.hour < 16 and cand.weekday() < 5:          # still a sensible business-hours slot today
+            return cand, False
+        return guess_when("tomorrow morning", loc.date()), False   # too late / weekend → next AM
+    return guess_when(cbw, base), False               # generic vague phrase → next-business-day default
 
 
 def _clean_time_noise(s: str | None) -> str:
@@ -183,9 +223,10 @@ def synth_next_call_points_text(evidence: dict | None) -> str:
 
 
 def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
-    """Create a calendar 'callback' for every interested-prospect callback request on
-    `day` that doesn't already have one (idempotent via the call_id unique index).
-    The event notes carry the next-call game plan (W) so the caller is prepped."""
+    """Create/refresh a calendar 'callback' for every interested-prospect callback request on `day`.
+    Idempotent via the call_id unique index; PENDING auto callbacks are also REFRESHED each run so an
+    improved slot/reason (e.g. a vague 'after his meeting' rescheduled honestly) self-heals — but a
+    BDE's manually-rescheduled or completed callback is never overwritten. Notes carry the game plan."""
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
     with pool.connection() as conn, conn.cursor() as cur:
@@ -198,7 +239,8 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
             "FROM calls c JOIN classifications cl ON cl.call_id = c.call_id "
             "LEFT JOIN calendar_events e ON e.call_id = c.call_id AND e.type='callback' "
             "WHERE c.in_scope AND c.started_at >= %s AND c.started_at < %s "
-            "  AND cl.callback_requested AND e.id IS NULL",
+            "  AND cl.callback_requested "
+            "  AND (e.id IS NULL OR (e.created_by='auto' AND e.status='pending'))",
             (start, end),
         )
         pending = cur.fetchall()
@@ -214,29 +256,48 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
             suppressed += 1
             continue
         base = (r["started_at"].date() if r["started_at"] else day)
-        when = guess_when(r["callback_when"], base)
-        who = r["prospect_company"] or r["dest_number"] or "prospect"
         # strip our-side noise like '(Richard's time)' (Richard = a BDE alias) from the display.
         cbw = _clean_time_noise(r["callback_when"])
+        # Resolve the slot HONESTLY: a concrete stated time is trusted; a vague phrase ("after his
+        # meeting") is NOT turned into a fake precise time — it gets a sensible same-day/next-morning
+        # slot and the reason says the time wasn't actually given (so the calendar never lies).
+        when, time_given = resolve_callback_slot(r["callback_when"], r["started_at"], base)
+        who = r["prospect_company"] or r["dest_number"] or "prospect"
         stage = "RPC callback" if reached_dm else "gatekeeper callback"
         prov = "from BDE-sourced data" if bde_sourced else "from curated database"
         when_s = when.strftime("%a %-d %b at %-I:%M %p")
-        title = f"📞 {stage}: {who}" + (f" ({cbw})" if cbw else "")
+        title = f"📞 {stage}: {who}" + (f" ({cbw})" if cbw and time_given else "")
         plan = synth_next_call_points_text(r.get("evidence"))
         # lead with WHY this time + the classification/provenance, then the game plan.
-        reason = (f"They asked us to call back ‘{cbw}’, so it’s booked for {when_s}." if cbw
-                  else f"A callback was requested (no exact time given) — booked for {when_s}.")
+        if time_given:
+            reason = f"They asked us to call back ‘{cbw}’, so it’s booked for {when_s}."
+        elif cbw:
+            reason = (f"No exact callback time was given (they said ‘{cbw}’) — provisionally set for "
+                      f"{when_s}; confirm the time when you reach them.")
+        else:
+            reason = f"No callback time was given — provisionally set for {when_s}; confirm on the call."
         notes = f"⏰ Why this time: {reason}\n🏷️ Classification: {stage} · {prov}.\n\n"
         notes += ("Next-call game plan:\n" + plan + "\n\n") if plan else ""
         notes = notes.strip() or cbw
         try:
-            create_event(pool, bde_name=r["bde_name"], type="callback", title=title,
-                         start_at=when, end_at=when + timedelta(minutes=30),
-                         notes=notes, call_id=r["call_id"],
-                         dest_number=r["dest_number"], created_by="auto")
+            # Upsert: create new, or REFRESH an existing auto+pending callback (updated slot/reason).
+            # The WHERE on the conflict guard means a BDE-edited or completed event is never clobbered.
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO calendar_events (bde_name, type, title, start_at, end_at, notes, "
+                    "  call_id, dest_number, created_by, status) "
+                    "VALUES (%(bde)s,'callback',%(title)s,%(start)s,%(end)s,%(notes)s,%(cid)s,%(dest)s,'auto','pending') "
+                    "ON CONFLICT (call_id) WHERE type='callback' AND call_id IS NOT NULL "
+                    "DO UPDATE SET title=EXCLUDED.title, start_at=EXCLUDED.start_at, "
+                    "  end_at=EXCLUDED.end_at, notes=EXCLUDED.notes, bde_name=EXCLUDED.bde_name "
+                    "WHERE calendar_events.created_by='auto' AND calendar_events.status='pending'",
+                    {"bde": r["bde_name"], "title": title, "start": when,
+                     "end": when + timedelta(minutes=30), "notes": notes,
+                     "cid": r["call_id"], "dest": r["dest_number"]})
+                conn.commit()
             created += 1
         except Exception as exc:  # unique index race / already exists
-            log.warning("callback_create_skip", call_id=r["call_id"], error=str(exc)[:120])
+            log.warning("callback_upsert_skip", call_id=r["call_id"], error=str(exc)[:120])
     if created or suppressed:
         log.info("callbacks_synced", day=str(day), created=created, suppressed_bde_gk=suppressed)
     return {"callbacks": created, "suppressed_bde_gk": suppressed}

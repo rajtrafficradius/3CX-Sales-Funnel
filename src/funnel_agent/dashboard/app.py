@@ -142,20 +142,38 @@ def _looks_dm(who: str | None) -> bool:
     return any(t in w for t in ("decision", "owner", "principal", "director", "proprietor", "founder"))
 
 
-# who_answered values that are NOT a real person (a machine / dead line) — never list these as people.
-_NON_PERSON_WHO = {"", "voicemail", "voice mail", "no answer", "no_answer", "machine", "answering machine",
-                   "ivr", "wrong number", "wrong_number", "unknown", "nobody", "none", "n/a", "engaged", "busy"}
+# machine / dead-line markers — a "who_answered" containing ANY of these is NOT a human we spoke to,
+# so it must never be listed as a gatekeeper (a gatekeeper is by definition a live human screener).
+_MACHINE_WHO = ("voicemail", "voice mail", "voice-mail", "answering machine", "answerphone", "machine",
+                "ivr", "auto attendant", "automated", "recording", "no answer", "no-answer", "engaged",
+                "busy", "wrong number", "wrong_number", "disconnected", "dead line", "beep", "message bank",
+                "messagebank", "unknown", "nobody", "none")
+
+
+def _has_concrete_time(text: str | None) -> bool:
+    """Did a callback/availability phrase name a CONCRETE time/day (vs vague 'after his meeting')?"""
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if re.search(r"\d", t):
+        return True
+    toks = ("today", "tomorrow", "tonight", "monday", "tuesday", "wednesday", "thursday", "friday",
+            "saturday", "sunday", "morning", "afternoon", "evening", "noon", "midday", "week",
+            "fortnight", "month", "january", "february", "march", "april", "june", "july", "august",
+            "september", "october", "november", "december")
+    return any(tok in t for tok in toks)
 
 
 def _gk_name(who: str | None) -> str | None:
-    """A clean gatekeeper label from free-text `who_answered`, or None when it's a machine / DM /
-    empty (so we never list 'voicemail' or a decision-maker as a gatekeeper person)."""
+    """A clean gatekeeper label from free-text `who_answered`, or None when it's a machine (voicemail
+    /IVR/no-answer) or a decision-maker — so we NEVER list 'voicemail' as a gatekeeper. A gatekeeper
+    is a live human screener; anything automated is not a person we spoke to."""
     w = (who or "").strip()
-    if not w or w.lower() in _NON_PERSON_WHO or _looks_dm(w):
-        return None
-    # normalise the common enum-ish tokens to human labels
     low = w.lower()
-    if low in ("gatekeeper", "receptionist", "reception", "gate_keeper", "gatekeeper/receptionist"):
+    if not w or _looks_dm(w) or any(tok in low for tok in _MACHINE_WHO):
+        return None
+    if low in ("gatekeeper", "receptionist", "reception", "gate_keeper", "gatekeeper/receptionist",
+               "staff", "employee", "assistant", "secretary", "gatekeeper / receptionist"):
         return "Gatekeeper / receptionist"
     return w[:60]
 
@@ -271,6 +289,7 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
     contacts: list[dict] = []
     agency = {"has_agency": False, "name": None, "contract_end": None}
     best_time = None
+    best_time_concrete = False
     timeline: list[dict] = []
     seen_facts: set[str] = set()
     # BEST-EVER state across all calls — used to suppress coaching gaps that were RESOLVED on a
@@ -325,10 +344,15 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
         ce = (ev.get("contract_end") or "").strip() if isinstance(ev.get("contract_end"), str) else None
         if ce and not agency["contract_end"]:
             agency["contract_end"] = ce
-        # best time to reach the DM
-        bt = (rpc.get("dm_available_when") or c.get("callback_when") or "").strip()
-        if bt and not best_time:
-            best_time = _clean_time_noise(bt)
+        # best time to reach the DM — PREFER a concrete time ("Tuesday 2pm") over a vague phrase
+        # ("after his meeting"); keep a vague one only as a fallback, clearly flagged as not-set.
+        bt = _clean_time_noise((rpc.get("dm_available_when") or c.get("callback_when") or "").strip())
+        if bt:
+            concrete = _has_concrete_time(bt)
+            if concrete and not best_time_concrete:
+                best_time, best_time_concrete = bt, True
+            elif not best_time:
+                best_time = bt
         # per-call coaching (computed once, reused) + best-ever accumulation
         cch = _call_coaching(ev, c)
         if cch.get("reached_dm"):
@@ -384,6 +408,11 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
                 continue
             seen_gaps.add(key)
             gaps.append(it["text"])
+    # a vague availability ("after his meeting") is shown honestly as not-a-set-time, so nobody
+    # reads it as a firm slot.
+    best_time_out = best_time
+    if best_time and not best_time_concrete:
+        best_time_out = f"{best_time} (no set time given)"
     return {
         "decision_makers": dms,
         "gatekeepers": gks,
@@ -391,7 +420,7 @@ def _prospect_intel(calls: list, enr: dict | None = None) -> dict | None:
         "extra_contacts": contacts[:4],
         "facts": facts[:12],
         "agency": agency,
-        "best_time": best_time,
+        "best_time": best_time_out,
         "timeline": timeline,
         "coaching_gaps": gaps[:6],
     }
