@@ -177,12 +177,12 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         cur.execute("UPDATE calendar_events SET status='cancelled' WHERE type='recall' "
                     "AND status='pending' AND start_at > %s", (horizon,))
         cancelled += cur.rowcount
-        # cancel stray next-day RPC retries on prospects we've identified as WITH AN AGENCY — the
-        # agency rotation (contract-aware cadence) owns their next call, not a double-tap retry.
-        cur.execute("UPDATE calendar_events SET status='cancelled' WHERE type='rpc_retry' "
-                    "AND status='pending' AND right(regexp_replace(COALESCE(dest_number,''),"
-                    "'[^0-9]','','g'),9) IN (SELECT dest9 FROM prospect_pipeline "
-                    "WHERE pipeline='pipeline2_existing_agency')")
+        # POLICY (user-confirmed 2026-07-08): all data is BDE-sourced, so we never chase a number we
+        # didn't reach — cancel ALL pending auto-created RPC retries (they only ever target un-connected
+        # numbers). The only scheduled calls are RPC-connect callbacks + the P2 agency rotation. This
+        # self-heals any retry created before the policy (e.g. the reported daisypoolcovers case).
+        cur.execute("UPDATE calendar_events SET status='cancelled' "
+                    "WHERE type='rpc_retry' AND status='pending' AND COALESCE(created_by,'') <> 'user'")
         cancelled += cur.rowcount
         # SUPERSEDED: a later outbound call happened AFTER a scheduled call/callback/retry, so that
         # scheduled call was overtaken — cancel it (stops the prospect page showing a stale PAST
@@ -254,9 +254,11 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             skipped += 1
             continue
         who = r.get("company") or r.get("pp_name") or r.get("dest_number") or "prospect"
-        # source-based trust (user rule): a curated master/D&B number is higher-trust than one a BDE
-        # dialled ad-hoc (source 'call_capture' / not in the curated DB — may have data-quality issues).
-        high_trust = (r.get("source") == "master_file")
+        # POLICY (user-confirmed 2026-07-08): ALL prospect data is BDE-sourced — the master_file is
+        # Raven's BDE-collected list too, not a curated/high-trust DB. So NOTHING is high-trust, and
+        # we never chase a weekly gatekeeper (P3) recall on any of it; the only scheduled calls are
+        # RPC-connect callbacks (they reached the DM + asked) and the P2 agency contract rotation.
+        high_trust = False
         # BDE-SOURCED GATEKEEPER SUPPRESSION (user rule): on BDE-dialled data we do NOT chase a weekly
         # gatekeeper (P3) recall — the number/decision-maker is unverified. We only pursue such a
         # prospect if we actually reached the DM, which fires a separate RPC-connect 'callback' event

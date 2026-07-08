@@ -2676,9 +2676,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # BDE MUST add it before the next (RPC) call so enrichment can verify the marketing claims.
             "provenance": {
                 "source": ((master or {}).get("source") or "call_capture"),
-                "bde_sourced": ((master or {}).get("source") != "master_file"),
-                "label": ("Curated database (high-trust)"
-                          if (master or {}).get("source") == "master_file" else "BDE-sourced data"),
+                # POLICY (2026-07-08): ALL prospect data is BDE-sourced (master_file = Raven's BDE list).
+                "bde_sourced": True,
+                "label": "BDE-sourced data",
             },
             "website_required": bool(not domain and rollup.get("ever_rpc")),
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),

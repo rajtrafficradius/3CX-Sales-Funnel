@@ -247,12 +247,12 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
     created = 0
     suppressed = 0
     for r in pending:
-        # BDE-SOURCED GATEKEEPER SUPPRESSION (user rule): on BDE-dialled data (source not the curated
-        # master/D&B DB) we only pursue callbacks where we actually reached the decision-maker (an
-        # RPC-connect). A gatekeeper-only "call back later" on unverified BDE data gets no callback.
-        bde_sourced = (r.get("source") != "master_file")
+        # POLICY (user-confirmed 2026-07-08): ALL data is BDE-sourced (master_file = Raven's BDE list
+        # too). We ONLY schedule a callback when we actually reached the decision-maker (an RPC-
+        # connect); a gatekeeper-only "call back later" is never auto-scheduled, whatever the source.
+        bde_sourced = True
         reached_dm = bool(r.get("rpc_connect"))
-        if bde_sourced and not reached_dm:
+        if not reached_dm:
             suppressed += 1
             continue
         base = (r["started_at"].date() if r["started_at"] else day)
