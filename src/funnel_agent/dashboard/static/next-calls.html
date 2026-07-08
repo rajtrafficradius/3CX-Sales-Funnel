@@ -474,6 +474,7 @@ function query(){
   p.set('bde', state.bde || 'ALL');
   if(state.tier) p.set('tier', state.tier);
   if(state.due)  p.set('due_only', 'true');
+  p.set('gads_only', '1');   // calling is scoped to the confirmed-Google-Ads pool
   return p.toString();
 }
 

@@ -447,10 +447,11 @@ def sync_next_call_scores(pool: ConnectionPool, settings: Settings,
 # --------------------------------------------------------------------------- #
 def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
                     due_only: bool = False, tier: str | None = None,
-                    limit: int = 200) -> list[dict]:
+                    gads_only: bool = False, limit: int = 200) -> list[dict]:
     """The ranked next-call worklist for the API. Joins `prospects` for the live
     business_name/domain and orders by score DESC. `due_only` keeps rows whose
-    suggested time has arrived; `bde`/`tier` narrow the list."""
+    suggested time has arrived; `bde`/`tier` narrow the list. `gads_only` scopes to the
+    confirmed-Google-Ads pool (matched by phone or domain)."""
     where = ["q.status = 'open'"]
     params: dict = {"limit": limit}
     if bde:
@@ -461,6 +462,13 @@ def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
         params["tier"] = tier
     if due_only:
         where.append("(q.next_best_time IS NULL OR q.next_best_time <= now())")
+    if gads_only:
+        where.append(
+            "(q.dest9 IN (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
+            "   FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
+            "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'') "
+            " OR COALESCE(q.domain, p.domain) IN "
+            "   (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
     return fetch_all(
         pool,
         f"""

@@ -1333,6 +1333,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # last 9 significant digits of the dialled number = the distinct-prospect key
     _DEST9_SQL = "right(regexp_replace(c.dest_number, '[^0-9]', '', 'g'), 9)"
 
+    # A call (c JOIN classifications cl) is to a CONFIRMED-Google-Ads prospect when its number matches a
+    # GAds business's phone OR its classified website is a GAds domain. Used to scope the pipeline board
+    # + next-call page to the ~7.8k confirmed-ads pool WITHOUT touching the dashboard/reports (they omit
+    # the gads_only flag). See enrichment.dataforseo->>'running_google_ads'.
+    _GADS_CALL_FILTER = (
+        "(right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) IN "
+        "   (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
+        "    FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
+        "    WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'') "
+        " OR lower(COALESCE(cl.prospect_website,'')) IN "
+        "   (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+
     def _pipe_anchor() -> str | None:
         r = q("SELECT max(started_at::date) AS d FROM calls WHERE in_scope")
         return str(r[0]["d"]) if r and r[0]["d"] else None
@@ -1411,10 +1423,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      "WHEN 'p1' THEN 3 WHEN 'p3' THEN 4 END")
 
     @app.get("/api/pipelines5")
-    def pipelines5(request: Request, bde: str = "ALL") -> JSONResponse:
+    def pipelines5(request: Request, bde: str = "ALL", gads_only: bool = False) -> JSONResponse:
         """P1/P2/P3/P5 × today/3d/7d/14d/30d (distinct prospects, prospect-level precedence)
         plus the P4 standing worklist pool. The 5-model view; the legacy /api/pipelines is
-        left untouched."""
+        left untouched. gads_only scopes the counts to the confirmed-Google-Ads pool (the pipeline
+        board passes it; the dashboard does not, so the dashboard is unaffected)."""
         bde = _scoped_bde(request, bde)
         today = _pipe_anchor()
         if not today:
@@ -1426,6 +1439,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        if gads_only:
+            where.append(_GADS_CALL_FILTER)
         # Per prospect, the winning (min) stage-rank within each nested window; then count
         # distinct prospects whose winning rank is this pipeline's rank.
         win_mins = ", ".join(
@@ -1513,10 +1528,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/pipeline5-prospects")
     def pipeline5_prospects(request: Request, pipeline: str, window: str = "d30",
-                            bde: str = "ALL", limit: int = 300) -> JSONResponse:
+                            bde: str = "ALL", limit: int = 300, gads_only: bool = False) -> JSONResponse:
         """Distinct prospects behind a pipeline board — P1/P2/P3/P5 (from calls, prospect-level
         precedence) or P4 (the standing DB worklist). Each row carries the next scheduled call so
-        the board is a full call-list like Pipeline 2."""
+        the board is a full call-list like Pipeline 2. gads_only scopes P1/P2/P3/P5 to the confirmed-
+        Google-Ads pool (P4 is already that pool); the dashboard omits it, so it stays unaffected."""
         bde = _scoped_bde(request, bde)
         limit = max(10, min(int(limit or 300), 1000))
         # ---- P4 Fresh worklist = every business CONFIRMED running Google Ads: the real callable
@@ -1557,6 +1573,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        if gads_only:
+            where.append(_GADS_CALL_FILTER)
         rows = q(
             f"WITH base AS (SELECT {_DEST9_SQL} AS dest9, c.dest_number, c.started_at, "
             f"  COALESCE(c.bde_name, c.bde_extension) AS bde, cl.prospect_company, cl.lead_temperature, "
@@ -3020,12 +3038,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- Smart next-call priority queue (A) ------------------------------ #
     @app.get("/api/next-calls")
     def next_calls(request: Request, bde: str = "ALL", due_only: bool = False,
-                   tier: str = "", limit: int = 200) -> JSONResponse:
-        """The ranked next-call queue (intent x attention x revenue). BDEs see only their own."""
+                   tier: str = "", limit: int = 200, gads_only: bool = False) -> JSONResponse:
+        """The ranked next-call queue (intent x attention x revenue). BDEs see only their own.
+        gads_only scopes the queue to the confirmed-Google-Ads pool (the next-call page passes it)."""
         scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
         from ..next_call import list_next_calls
         rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
-                               due_only=bool(due_only), tier=(tier or None), limit=min(500, max(1, limit)))
+                               due_only=bool(due_only), tier=(tier or None),
+                               gads_only=bool(gads_only), limit=min(500, max(1, limit)))
         u = getattr(request.state, "user", None) or {}
         roster = [r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
                                        "FROM bde_agents WHERE in_scope AND active ORDER BY 1")]

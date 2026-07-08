@@ -173,7 +173,7 @@ function row(r){
 async function loadBoard(){
   $('#board').innerHTML='<div class="empty">Loading…</div>';
   try{
-    const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}`);
+    const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}&gads_only=1`);
     const rows=d.rows||[];
     if(!rows.length){$('#board').innerHTML='<div class="empty">Nothing in this pipeline'+(bde!=='ALL'?' for '+esc(bde):'')+' right now.</div>';return;}
     const head = stage==='p4'
@@ -198,7 +198,7 @@ async function boot(){
       $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.running_ads; }catch(e){}
+  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools)counts.p4=p.pools.running_ads; }catch(e){}
   renderTabs(); renderToolbar(); loadBoard();
 }
 boot();
