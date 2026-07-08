@@ -2343,18 +2343,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             score -= 1
             reasons.append({"source": "call", "sign": "neg",
                             "text": "On the call(s) assessed, the prospect did not indicate any paid advertising or agency"})
-        # 3) Combined verdict + confidence.
-        if score >= 3:
-            verdict, label, conf = "running", "Running paid ads", "high"
-        elif score >= 1:
-            verdict, label, conf = "likely", "Likely running paid ads", "medium"
-        elif score <= -2:
-            verdict, label, conf = "not", "Likely NOT running paid ads", "medium"
-        elif score <= -1:
-            verdict, label, conf = "not", "Probably not running paid ads", "low"
-        else:
-            verdict, label, conf = "unknown", "Not enough signal yet", "low"
+        # 3) AUTHORITATIVE signal — Google Ads Transparency Center (DataForSEO). This is the ONLY
+        # proof of LIVE Google Ads. A Google Ads tag on the site (remarketing/conversion) stays
+        # installed whether or not campaigns are running, so a pixel alone must NEVER read as
+        # "confirmed running Google Ads" — only the Transparency Center confirms that.
+        dfs = (enr or {}).get("dataforseo") or {}
+        _ra = dfs.get("running_google_ads")
+        ra_true = (_ra is True) or (str(_ra).strip().lower() == "true")
+        ra_checked = ("running_google_ads" in dfs) and (_ra is not None) and str(_ra).strip() != ""
+        has_google_pixel = any("google ads" in (p or "").lower() for p in platforms)
+
+        # 4) Verdict — Transparency wins; otherwise it's UNconfirmed and we say so.
+        if ra_true:
+            reasons.insert(0, {"source": "transparency", "sign": "pos",
+                "text": "Google Ads Transparency Center CONFIRMS live Google Ads for this domain — authoritative confirmation of active paid search."})
+            verdict, label, conf = "confirmed", "✓ Confirmed running Google Ads", "confirmed"
+        elif ra_checked:  # transparency ran and found NO live Google ads
+            reasons.insert(0, {"source": "transparency", "sign": "neg",
+                "text": ("Google Ads Transparency Center shows NO live Google Ads for this domain. "
+                         + ("The Google Ads tag on the site is remarketing/conversion tracking, which "
+                            "stays installed even with no active campaigns — it is NOT proof of live ads. "
+                            if has_google_pixel else "")
+                         + "They may still run OTHER paid channels (e.g. Meta).")})
+            # other-channel signals can still make it "likely running paid ads" (just not Google)
+            other = score - (3 if has_google_pixel else 0)
+            if any(c.get("runs_paid_ads") for c in calls) or any("meta" in (p or "").lower() or "facebook" in (p or "").lower() for p in platforms):
+                verdict, label, conf = "likely", "No live Google Ads — may run other channels", "medium"
+            else:
+                verdict, label, conf = "not", "Not running Google Ads (per Ads Transparency)", "high"
+        else:  # transparency NOT checked yet — best-effort, but never claim "confirmed"
+            if score >= 3:
+                verdict, label, conf = "likely", "Likely running paid ads — ad tags present (not yet confirmed via Ads Transparency)", "medium"
+            elif score >= 1:
+                verdict, label, conf = "likely", "Possibly running paid ads", "low"
+            elif score <= -2:
+                verdict, label, conf = "not", "Likely NOT running paid ads", "medium"
+            elif score <= -1:
+                verdict, label, conf = "not", "Probably not running paid ads", "low"
+            else:
+                verdict, label, conf = "unknown", "Not enough signal yet", "low"
+            if has_google_pixel:
+                reasons.append({"source": "transparency", "sign": "none",
+                    "text": "Not yet checked against the Google Ads Transparency Center — run it to confirm whether the ads are actually live (the pixel alone doesn't prove it)."})
         return {"verdict": verdict, "label": label, "confidence": conf,
+                "transparency_confirmed": ra_true, "transparency_checked": ra_checked,
                 "score": score, "platforms": platforms, "reasons": reasons}
 
     @app.get("/prospect/{key}", response_class=HTMLResponse)

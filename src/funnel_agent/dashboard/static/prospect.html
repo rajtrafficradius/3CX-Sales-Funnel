@@ -530,13 +530,14 @@ async function runSeoAudit(){
 //      transcript analysis, with the supporting reasons shown (not just a flag). ----
 function paidAdsVerdict(p){
   if(!p) return '';
-  const V={running:['rgba(63,185,80,.10)','#3fb950','🎯','Running paid ads'],
+  const V={confirmed:['rgba(63,185,80,.14)','#3fb950','✓','Confirmed running Google Ads'],
+           running:['rgba(63,185,80,.10)','#3fb950','🎯','Running paid ads'],
            likely:['rgba(212,167,44,.10)','#d4a72c','📈','Likely running paid ads'],
            not:['rgba(163,113,247,.10)','#a371f7','🚫','Not running paid ads'],
            unknown:['rgba(139,148,158,.10)','#8b949e','❔','Unknown']};
   const v=V[p.verdict]||V.unknown;
-  const CONF={high:'high confidence',medium:'medium confidence',low:'low confidence'};
-  const SRC={website:'🌐 Website',call:'🗣 Call'};
+  const CONF={confirmed:'confirmed · Transparency Center',high:'high confidence',medium:'medium confidence',low:'low confidence'};
+  const SRC={website:'🌐 Website',call:'🗣 Call',transparency:'🔎 Ads Transparency'};
   const SIGN={pos:'#3fb950',neg:'#a371f7',weak:'#d4a72c',none:'#8b949e'};
   const ICON={pos:'✓',neg:'✕',weak:'~',none:'·'};
   const plat=(p.platforms||[]).length?`<div class="small" style="margin-top:6px">Platforms detected: ${(p.platforms||[]).map(x=>`<span class="pill yes">${esc(x)}</span>`).join(' ')}</div>`:'';
@@ -697,7 +698,8 @@ function trackingCodesCard(d){
   if(!w||!w.found) return `<div class="card full"><h2>🎯 Tracking codes available</h2>
     <div class="muted small">No website scan yet — run the scan in the Website information tab to detect GTM/GA4/Google Ads/Meta Pixel/etc.</div></div>`;
   const trk=Object.entries(w.trackers||{}), ids=w.tracker_ids||{}, ads=w.paid_ad_platforms||[];
-  const adsBadge=w.runs_paid_ads?'<span class="pill yes">🎯 Running paid ads</span>':'<span class="pill neutral">No ad pixels detected</span>';
+  // A pixel proves TAGS are installed, not that ads are LIVE — don't call it "running" here.
+  const adsBadge=w.runs_paid_ads?'<span class="pill" style="background:rgba(212,167,44,.14);color:#d4a72c" title="Ad tracking tags are installed — this is NOT confirmation of live ads. The Ads Transparency Center is the source of truth.">🏷️ Ad tags present (unconfirmed)</span>':'<span class="pill neutral">No ad pixels detected</span>';
   const list=trk.length?trk.map(([k,label])=>{const isAd=ads.includes(label);const id=ids[k]?` <span class="muted">(${esc(ids[k])})</span>`:'';
      return `<div class="trk ${isAd?'ads':'tk'}" style="display:inline-block;margin:4px 6px 0 0">${isAd?'🎯':'📊'} ${esc(label)}${id}</div>`;}).join('')
      :'<div class="muted small">No tracking tags found in the homepage source.</div>';
@@ -918,12 +920,13 @@ function overallSummary(d){
   if(dm) chips.push(`<span class="chip">👤 Decision-maker: ${esc(dm)}</span>`);
   // #6 attribution: OUR enrichment is the source of truth for ads; a BDE/prospect CALL claim is
   // shown separately as "claimed, unverified" so a BDE's pitch assertion is never taken as fact.
-  const adsVerified = (d.paid_ads&&['running','likely'].includes(d.paid_ads.verdict))
-    || (((d.enrichment||{}).dataforseo||{}).running_google_ads)
-    || (p5.p4_sub==='fresh_ads');
-  const adsClaimed = calls.some(c=>(c.evidence||{}).runs_paid_ads);
-  if(adsVerified) chips.push('<span class="chip">🎯 Running ads <span style="opacity:.65">· verified (our data)</span></span>');
-  else if(adsClaimed) chips.push('<span class="chip" style="opacity:.9" title="Stated on a call — not confirmed by our SEO/ads data">🎯 Running ads <span style="opacity:.65">· claimed, unverified</span></span>');
+  // CONFIRMED = the Google Ads Transparency Center only. A tracking pixel or a call claim is NOT
+  // confirmation (a remarketing tag stays on the site with no live campaigns) — shown as unconfirmed.
+  const _pa=d.paid_ads||{};
+  const adsConfirmed = _pa.transparency_confirmed || String(((d.enrichment||{}).dataforseo||{}).running_google_ads).toLowerCase()==='true';
+  const adsUnconfirmed = !adsConfirmed && (_pa.verdict==='likely' || calls.some(c=>(c.evidence||{}).runs_paid_ads) || (((d.enrichment||{}).website||{}).runs_paid_ads));
+  if(adsConfirmed) chips.push('<span class="chip">🎯 Running Google Ads <span style="opacity:.65">· confirmed (Transparency Center)</span></span>');
+  else if(adsUnconfirmed) chips.push('<span class="chip" style="opacity:.9" title="Ad tags or a call claim only — NOT confirmed live via the Google Ads Transparency Center (a remarketing pixel persists with no active campaigns)">🎯 Ads likely <span style="opacity:.65">· unconfirmed</span></span>');
   const BANT=[['budget','Budget'],['authority','Authority'],['problem','Problem'],['urgency','Urgency'],['aspiration','Aspiration'],['open_to_listening','Open']];
   const bantSeen=BANT.filter(([k])=>calls.some(c=>{const f=(c.evidence||{})[k]; return f&&f.value;})).map(x=>x[1]);
   if(bantSeen.length) chips.push(`<span class="chip">📊 BANT: ${esc(bantSeen.join(' · '))}</span>`);
