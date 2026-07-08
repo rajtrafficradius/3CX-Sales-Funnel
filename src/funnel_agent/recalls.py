@@ -206,7 +206,15 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             "  AND (e2.start_at > e.start_at OR (e2.start_at = e.start_at AND e2.id > e.id)))")
         cancelled += cur.rowcount
         conn.commit()
-        cur.execute(_GATHER)
+        # Scope the whole recall backlog to the confirmed-Google-Ads pool (matched by phone to
+        # companies→enrichment.running_google_ads). Non-GAds prospects live in the Agency & RPC page.
+        gads_only = bool(getattr(settings, "calls_gads_only", False))
+        gather = _GATHER + (
+            " AND a.d9 IN (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
+            "  FROM enrichment e2 JOIN companies co ON co.domain=e2.domain "
+            "  WHERE (e2.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'')"
+            if gads_only else "")
+        cur.execute(gather)
         rows = cur.fetchall()
 
     best_hours = _best_call_hours(pool, getattr(settings, "tz", "Australia/Melbourne"), hour)
@@ -258,11 +266,11 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         # Raven's BDE-collected list too, not a curated/high-trust DB. So NOTHING is high-trust, and
         # we never chase a weekly gatekeeper (P3) recall on any of it; the only scheduled calls are
         # RPC-connect callbacks (they reached the DM + asked) and the P2 agency contract rotation.
-        high_trust = False
-        # BDE-SOURCED GATEKEEPER SUPPRESSION (user rule): on BDE-dialled data we do NOT chase a weekly
-        # gatekeeper (P3) recall — the number/decision-maker is unverified. We only pursue such a
-        # prospect if we actually reached the DM, which fires a separate RPC-connect 'callback' event
-        # (kept). Curated master/D&B gatekeeper numbers still get the weekly recall.
+        # GAds-CONFIRMED prospects ARE worth pursuing — when the calling universe is the confirmed-
+        # Google-Ads pool (calls_gads_only), a gatekeeper (P3) recall IS scheduled so the BDE keeps
+        # working the number toward the DM (part of their 200/day). Old BDE-sourced (non-GAds) data
+        # stays suppressed (it lives in the Agency & RPC page), preserving the earlier rule.
+        high_trust = gads_only
         if not is_agency and not high_trust:
             suppressed_bde_gk += 1
             continue

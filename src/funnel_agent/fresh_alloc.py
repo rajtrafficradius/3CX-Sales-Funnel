@@ -4,7 +4,7 @@ The ONLY cold pool that goes on the calendar: prospects CONFIRMED running Google
 Center). Every other calendar event is relationship-driven (RPC-connect callbacks, P2 agency rotation);
 this is the one place a never-dialled prospect is scheduled.
 
-Model: each active BDE holds a curated *rolling worklist* of up to `fresh_calls_per_day_per_bde`
+Model: each active BDE holds a curated *rolling worklist* filled to `bde_daily_call_target`
 PENDING `fresh_call` events — their high-value fresh slate — replenished each cycle as they dial through
 it. Allocation is **value × performance matched**: the highest-revenue fresh prospects are routed to the
 highest-performing BDEs (90-day booking / RPC-connect / full-pitch rates), while every BDE is filled to
@@ -80,8 +80,12 @@ def _fresh_candidates(pool: ConnectionPool, limit: int) -> list[dict]:
     d9_calls = _D9.format(col="c.dest_number")
     d9_ce = _D9.format(col="ce.dest_number")
     d9_pp = _D9.format(col="pp.dest9")  # prospect_pipeline.dest9 is already 9-digit; regexp is a no-op
+    # FULLY-ENRICHED gate (user rule): a BDE only calls confirmed-ads prospects whose enrichment is
+    # complete — website + Apollo + business intel present (DataForSEO is implied by pool membership).
     sql = f"""
-    WITH ads AS (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'),
+    WITH ads AS (SELECT domain FROM enrichment
+                 WHERE (dataforseo->>'running_google_ads')='true'
+                   AND website IS NOT NULL AND apollo IS NOT NULL AND business_intel IS NOT NULL),
     picked AS (
       SELECT DISTINCT ON (a.domain) a.domain,
         co.company_name AS business_name,
@@ -119,18 +123,19 @@ def _fresh_candidates(pool: ConnectionPool, limit: int) -> list[dict]:
 
 
 def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
-    """Top up every active BDE's fresh-Google-Ads worklist to the cap, value×performance matched.
+    """Fill every active BDE's daily calling worklist to the target (default 200 calls), value×
+    performance matched. The target is the WHOLE worklist = due follow-ups (callbacks/recalls already
+    scheduled for that BDE) + fresh; this tops up the remainder with fresh confirmed-Google-Ads,
+    fully-enriched prospects so the BDE always has ~200 calls to make.
 
     Each run: (1) resolve pending fresh_calls whose number has since been dialled, (2) compute each
-    BDE's remaining capacity, (3) route the highest-value fresh prospects to the highest-performing
-    BDEs (round-robin through the perf-sorted roster so high performers get the better prospects while
-    everyone is filled), (4) write `fresh_call` events (created_by='auto') spread across business hours.
-    Idempotent. Returns a stats dict."""
+    BDE's remaining need = target − (their pending callbacks + recalls + fresh calls), (3) route the
+    highest-value fresh prospects to the highest-performing BDEs, (4) write `fresh_call` events. Idempotent."""
     if not getattr(settings, "fresh_alloc_enabled", True):
         return {"skipped": "disabled"}
-    cap = int(getattr(settings, "fresh_calls_per_day_per_bde", 50) or 0)
-    if cap <= 0:
-        return {"skipped": "cap=0"}
+    target = int(getattr(settings, "bde_daily_call_target", 200) or 0)
+    if target <= 0:
+        return {"skipped": "target=0"}
     tz = getattr(settings, "tz", "Australia/Melbourne")
 
     with pool.connection() as conn, conn.cursor() as cur:
@@ -148,15 +153,16 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
     if not roster:
         return {"skipped": "no_active_bdes", "resolved": resolved}
 
-    # (2) remaining capacity per BDE = cap − their currently-pending fresh_calls.
+    # (2) remaining need per BDE = target − ALL their pending calls (follow-ups + fresh). A BDE already
+    #     holding 200 due callbacks/recalls gets no fresh; one with 30 follow-ups gets 170 fresh.
     pend = {r["bde_name"]: r["n"] for r in _fetch(pool,
         "SELECT bde_name, count(*) n FROM calendar_events "
-        "WHERE type='fresh_call' AND status='pending' GROUP BY bde_name")}
-    remaining = {b: max(0, cap - int(pend.get(b, 0))) for b in roster}
+        "WHERE status='pending' AND type IN ('callback','recall','fresh_call') GROUP BY bde_name")}
+    remaining = {b: max(0, target - int(pend.get(b, 0))) for b in roster}
     need = sum(remaining.values())
     if need <= 0:
         return {"scheduled": 0, "resolved": resolved, "remaining_capacity": 0,
-                "note": "all BDE worklists already full"}
+                "note": "all BDE worklists already at target"}
 
     # (3) rank prospects by value; rank BDEs by 90-day performance.
     perf, team_mean = _bde_perf_90d(pool, int(getattr(settings, "fresh_alloc_perf_shrink_k", 40)))
@@ -185,10 +191,11 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
             continue
         i += 1
 
-    # (5) write events, spread across business hours per BDE. Guarded by the unique index (skip dupes).
+    # (5) build the rows, spread across business hours per BDE, then ONE batched insert (the worklist
+    #     can be ~200×BDEs rows, so per-row round-trips would be far too slow over the network).
     zone_open = next_best_time(datetime.now(), tz=tz)   # next real business slot (tz-aware)
-    step = max(5, (8 * 60) // cap)                       # minutes between a BDE's calls (09:00–17:00)
-    scheduled = 0
+    step = max(5, (8 * 60) // max(1, target))            # minutes between a BDE's calls (09:00–17:00)
+    to_insert = []
     for b, items in assign.items():
         for j, cand in enumerate(items):
             start = next_best_time(zone_open + timedelta(minutes=step * j), tz=tz)
@@ -197,27 +204,27 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
             title = f"Fresh · running ads — {cand.get('business_name') or cand.get('domain') or cand['dest_number']}"
             notes = (f"Confirmed running Google Ads. Value score {val:.0f}"
                      + (f" (${round(rv)}M)" if rv else "") + f". Matched to {b} (perf {perf.get(b, team_mean):.0f}).")
-            if _insert_fresh_call(pool, bde=b, title=title, start_at=start,
-                                  dest_number=cand["dest_number"], notes=notes):
-                scheduled += 1
+            to_insert.append((b, title, start, cand["dest_number"], notes))
+    scheduled = _insert_fresh_calls_batch(pool, to_insert)
     stats = {"scheduled": scheduled, "resolved": resolved, "bdes": len(roster),
-             "capacity_requested": need, "candidates": len(cands)}
+             "need": need, "candidates": len(cands)}
     log.info("fresh_alloc_done", **stats)
     return stats
 
 
-def _insert_fresh_call(pool, *, bde, title, start_at, dest_number, notes) -> bool:
-    """Insert one pending fresh_call, skipping if this number already has an open one (unique index)."""
+def _insert_fresh_calls_batch(pool, rows: list) -> int:
+    """Batch-insert pending fresh_calls; the partial unique index (normalized d9) skips any number that
+    already has an open fresh_call. Candidates are d9-deduped upstream, so no intra-batch conflicts."""
+    if not rows:
+        return 0
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
+        cur.executemany(
             "INSERT INTO calendar_events (bde_name, type, title, start_at, dest_number, notes, created_by, status) "
             "VALUES (%s,'fresh_call',%s,%s,%s,%s,'auto','pending') "
-            f"ON CONFLICT ({_D9_DEST}) WHERE type='fresh_call' AND status='pending' DO NOTHING "
-            "RETURNING id",
-            (bde, title, start_at, dest_number, notes))
-        got = cur.fetchone()
+            f"ON CONFLICT ({_D9_DEST}) WHERE type='fresh_call' AND status='pending' DO NOTHING",
+            rows)
         conn.commit()
-    return got is not None
+    return len(rows)
 
 
 # --- tiny local DB helpers (avoid importing app-level q) ---

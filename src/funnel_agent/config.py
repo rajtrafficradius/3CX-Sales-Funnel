@@ -194,18 +194,19 @@ class Settings(BaseSettings):
     fresh_ads_enrich_per_cycle: int = 20
     fresh_ads_enrich_workers: int = 6
 
-    # Calendar shows ONLY the Fresh · running-ads calling worklist (+ manual events). The old
-    # BDE-sourced auto-events — RPC-connect callbacks, gatekeeper/weekly recalls — are NOT scheduled
-    # or shown; that data is reached from the pipeline pages instead. Flip off to restore the old
-    # multi-pipeline calendar.
-    calendar_fresh_only: bool = True
+    # The whole CALLING system (calendar + call scheduling: fresh calls, RPC-connect callbacks,
+    # gatekeeper/weekly recalls) operates ONLY on prospects CONFIRMED running Google Ads. The old
+    # BDE-sourced (non-GAds) data is reached from the Agency & RPC page / pipeline pages instead.
+    # Daily-call analysis, reports and the dashboard are UNAFFECTED (they read all calls). Flip off to
+    # restore multi-source scheduling.
+    calls_gads_only: bool = True
 
-    # --- Fresh Google-Ads calling calendar (AI daily allocation) ---
-    # The ONLY cold pool that goes on the calendar: prospects CONFIRMED running Google Ads. Each BDE
-    # gets a curated rolling worklist of ~N high-value fresh calls (value×90-day-performance matched),
-    # topped up each cycle as they dial through it. 0 disables the allocator entirely.
+    # --- BDE daily calling worklist (AI allocation over the confirmed-Google-Ads pool) ---
+    # Each BDE should have this many calls to make per day = their due follow-ups (callbacks/recalls)
+    # PLUS fresh confirmed-ads prospects to top up. The allocator fills the remainder with fresh,
+    # fully-enriched, value×90-day-performance-matched prospects. 0 disables the allocator.
     fresh_alloc_enabled: bool = True
-    fresh_calls_per_day_per_bde: int = 50
+    bde_daily_call_target: int = 200
     # empirical-Bayes shrink for 90-day BDE rates (higher = trust low-volume BDEs less; blend to mean).
     fresh_alloc_perf_shrink_k: int = 40
 

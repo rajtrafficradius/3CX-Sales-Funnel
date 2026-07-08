@@ -115,16 +115,17 @@
 
 <script>
 const $=s=>document.querySelector(s);
-// Calling is focused on the Fresh · running-ads pool; the old BDE-sourced RPC-callback / gatekeeper
-// pipelines are retired from the board (their contacts live in the Agency & RPC page). Kept: the
-// fresh pool + booked meetings, with Existing agency as its own board.
+// The pipelines are the follow-up buckets a fresh Google-Ads call flows into once it's worked.
+// Architecture unchanged; the calling universe is the confirmed-Google-Ads pool.
 const STAGES={
+  p1:{label:'RPC callback',blurb:'We reached the decision-maker and they asked us to call back — warm, keep the thread alive and lock the meeting.',icon:'\u{1F4DE}',win:true},
+  p3:{label:'Gatekeeper callback',blurb:'We got a gatekeeper, not the decision-maker yet — get through and secure a direct line / callback time.',icon:'\u{1F6E1}️',win:true},
   p4:{label:'Fresh · running ads',blurb:'Not yet worked — prospects CONFIRMED running Google Ads (the callable first-contact pool).',icon:'\u{1F195}',win:false},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
 };
-const ORDER=['p4','p5'];
-let stage=(location.pathname.split('/').filter(Boolean)[1]||'p4').toLowerCase();
-if(!STAGES[stage]) stage='p4';   // old p1/p3 links fall back to the fresh pool
+const ORDER=['p1','p3','p4','p5'];
+let stage=(location.pathname.split('/').filter(Boolean)[1]||'p1').toLowerCase();
+if(!STAGES[stage]) stage='p1';
 let bde='ALL', win='d30', counts={};
 const WINDOWS=[['d1','Today'],['d3','3d'],['d7','7d'],['d14','14d'],['d30','30d']];
 
@@ -184,7 +185,7 @@ async function loadBoard(){
 }
 
 async function boot(){
-  const meta=STAGES[stage]||STAGES.p4;
+  const meta=STAGES[stage]||STAGES.p1;
   document.title=meta.label+' — Pipeline';
   $('#ptitle').textContent=meta.label;
   $('#blurb').textContent=meta.blurb;

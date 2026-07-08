@@ -140,13 +140,10 @@ def guess_when(text: str | None, base: date) -> datetime:
 
 
 def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None = None) -> list[dict]:
-    # The calendar is the Fresh · running-ads calling worklist: show ONLY fresh_call events plus any
-    # MANUAL entries a user added (a booked meeting, a note). The old auto-scheduled BDE events —
-    # callbacks, gatekeeper/weekly recalls, rpc retries (all created_by='auto') — are reached from the
-    # pipeline pages instead, not shown here. Cancelled events are never rendered.
-    where = ["e.status <> 'cancelled'",
-             "(e.type = 'fresh_call' OR COALESCE(e.created_by, '') <> 'auto')",
-             "e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
+    # Show every LIVE event (never cancelled — the recall engine cancels/supersedes thousands each
+    # cycle and rendering them floods the board). Scheduling is scoped to the confirmed-Google-Ads pool
+    # upstream, so what lands here is the BDE's GAds calling worklist: fresh calls + due callbacks/recalls.
+    where = ["e.status <> 'cancelled'", "e.start_at >= %(s)s::date", "e.start_at < (%(e)s::date + 1)"]
     params: dict = {"s": start, "e": end}
     if bde_name:
         where.append("e.bde_name = %(b)s")
@@ -242,13 +239,25 @@ def synth_next_call_points_text(evidence: dict | None) -> str:
     return "\n".join(lines)
 
 
-def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
+def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool = False) -> dict:
     """Create/refresh a calendar 'callback' for every interested-prospect callback request on `day`.
     Idempotent via the call_id unique index; PENDING auto callbacks are also REFRESHED each run so an
     improved slot/reason (e.g. a vague 'after his meeting' rescheduled honestly) self-heals — but a
-    BDE's manually-rescheduled or completed callback is never overwritten. Notes carry the game plan."""
+    BDE's manually-rescheduled or completed callback is never overwritten. Notes carry the game plan.
+
+    When gads_only, ONLY prospects in the confirmed-Google-Ads pool are scheduled (matched by phone to
+    companies→enrichment.running_google_ads, or by their classified website domain)."""
     start = datetime.combine(day, time.min)
     end = start + timedelta(days=1)
+    gads_clause = ""
+    if gads_only:
+        gads_clause = (
+            " AND (right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) IN "
+            "        (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
+            "         FROM enrichment e2 JOIN companies co ON co.domain=e2.domain "
+            "         WHERE (e2.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'') "
+            "      OR lower(COALESCE(cl.prospect_website,'')) IN "
+            "        (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT c.call_id, COALESCE(c.bde_name, c.bde_extension) AS bde_name, c.dest_number, "
@@ -260,7 +269,8 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date) -> dict:
             "LEFT JOIN calendar_events e ON e.call_id = c.call_id AND e.type='callback' "
             "WHERE c.in_scope AND c.started_at >= %s AND c.started_at < %s "
             "  AND cl.callback_requested "
-            "  AND (e.id IS NULL OR (e.created_by='auto' AND e.status='pending'))",
+            "  AND (e.id IS NULL OR (e.created_by='auto' AND e.status='pending'))"
+            + gads_clause,
             (start, end),
         )
         pending = cur.fetchall()
