@@ -79,9 +79,6 @@
     background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;
     padding:10px 0;overflow:hidden;transition:width .19s cubic-bezier(.4,0,.2,1),box-shadow .19s}
   .tr-rail:hover,.tr-rail:focus-within{width:var(--rail-open);box-shadow:22px 0 48px -30px rgba(8,12,20,.6)}
-  .tr-rail-brand{display:flex;align-items:center;height:40px;flex:none;text-decoration:none;margin:0 8px 10px;border-radius:10px}
-  .tr-rail-brand .ic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
-  .tr-rail-brand .ic img{width:24px;height:24px;object-fit:contain;border-radius:5px;background:#fff;padding:2px;box-sizing:border-box}
   .tr-rail-nav{display:flex;flex-direction:column;gap:2px;flex:1;overflow-y:auto;overflow-x:hidden}
   .tr-rail-nav::-webkit-scrollbar{width:0}
   .tr-rail-foot{flex:none;display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
@@ -94,7 +91,6 @@
   .tr-rail svg{width:20px;height:20px;flex:none}
   .tr-rail .lbl{opacity:0;transition:opacity .16s;letter-spacing:-.1px}
   .tr-rail:hover .lbl,.tr-rail:focus-within .lbl{opacity:1}
-  .tr-rail-brand .lbl{font-weight:800;font-size:14px;color:var(--txt);letter-spacing:-.2px}
   .tr-rail-user .av{width:28px;height:28px;flex:none;border-radius:50%;background:var(--accent);color:#fff;
     display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
   .tr-rail-user .lbl{font-weight:600;font-size:12.5px;color:var(--txt-dim);overflow:hidden;text-overflow:ellipsis;max-width:150px}
@@ -219,7 +215,7 @@ boot();
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
-  var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="ic"><img src="/logo.png" alt=""/></span><span class="lbl">Traffic Radius</span></a><div class="tr-rail-nav">';
+  var h='<div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
     h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
