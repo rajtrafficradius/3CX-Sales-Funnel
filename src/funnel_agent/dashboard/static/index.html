@@ -268,20 +268,28 @@
      Overflow fix: bar never wraps; the .right cluster can shrink (min-width:0);
      only the livebadge is allowed to flex-shrink; who + logout are pinned to the
      end via order so they are ALWAYS visible at 100% zoom on >=1280px. */
+  /* REFINED-DEPTH app bar (design-panel winner): a crisp multi-stop frosted surface with an inset
+     top hairline for real figure/ground depth; matched inset-highlight elevation on every chip; a
+     34px status rail so brand | nav | controls/status read as one aligned cluster. Overflow rule
+     unchanged: bar never wraps; .right shrinks (min-width:0); only .livebadge flex-shrinks; who +
+     logout pinned to the end (order) so they stay visible at >=1280px. */
   header.appbar{display:flex;align-items:center;gap:14px;flex-wrap:nowrap;min-width:0;padding:10px 22px;
-    background:rgba(11,15,22,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+    background:linear-gradient(180deg,rgba(22,28,39,.82),rgba(13,17,24,.90));
+    backdrop-filter:blur(14px) saturate(1.15);-webkit-backdrop-filter:blur(14px) saturate(1.15);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 1px 0 rgba(0,0,0,.45),0 10px 26px -22px rgba(0,0,0,.9)}
   header.appbar .brandblock{display:flex;align-items:center;gap:11px;flex:none}
   header.appbar .brand{display:flex;align-items:center;background:#fff;border-radius:9px;padding:5px 10px;line-height:0;
-    box-shadow:0 1px 3px rgba(0,0,0,.4)}
+    box-shadow:0 1px 2px rgba(0,0,0,.5),0 0 0 1px rgba(0,0,0,.06)}
   header.appbar .brand img{height:26px;display:block}
-  .appttl{display:flex;flex-direction:column;line-height:1.16}
-  .appttl .t{font-size:var(--t-base);font-weight:700;letter-spacing:-.1px}
-  .appttl .s{font-size:var(--t-meta);color:var(--muted);font-weight:500;letter-spacing:.1px}
-  .vdiv{width:1px;height:26px;background:var(--line2);flex:none}
-  /* segmented nav */
+  .appttl{display:flex;flex-direction:column;line-height:1.14;gap:1px}
+  .appttl .t{font-size:var(--t-base);font-weight:700;letter-spacing:-.15px;color:var(--txt)}
+  .appttl .s{font-size:9.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--muted)}
+  .vdiv{width:1px;height:24px;flex:none;border:0;
+    background:linear-gradient(180deg,transparent,var(--line2) 22%,var(--line2) 78%,transparent)}
+  /* segmented nav — elevated with a whisper of inset highlight */
   nav.appnav{display:flex;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--line);
-    border-radius:var(--r2);padding:3px;flex:none}
+    border-radius:var(--r2);padding:3px;flex:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
   nav.appnav a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:7px;
     font-size:var(--t-cap);font-weight:600;letter-spacing:-.05px;color:var(--muted);text-decoration:none;white-space:nowrap;
     border:1px solid transparent;transition:color .14s,background .14s}
@@ -290,7 +298,7 @@
   /* right-side control cluster — can shrink so the end items stay on screen */
   .appbar .right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:nowrap;min-width:0;flex:1 1 auto;justify-content:flex-end}
   .ctlgroup{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);
-    border-radius:var(--r2);padding:5px 10px;flex:none}
+    border-radius:var(--r2);padding:4px 10px;flex:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
   .ctlgroup label{font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:700}
   .ctlgroup select,.ctlgroup input[type=date]{background:var(--panel2);border:1px solid var(--line);
     border-radius:7px;padding:6px 9px;font-size:var(--t-cap)}
@@ -298,37 +306,71 @@
     text-overflow:ellipsis;white-space:nowrap;order:98;flex:0 1 auto}
   .appbar .iconbtn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
     flex:none;order:99;border-radius:var(--r1);border:1px solid var(--line);background:var(--panel);color:var(--muted);
-    text-decoration:none;font-size:var(--t-base);transition:color .14s,border-color .14s,background .14s}
+    text-decoration:none;font-size:var(--t-base);box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+    transition:color .14s,border-color .14s,background .14s}
   .appbar .iconbtn:hover{color:var(--txt);border-color:var(--line2);background:var(--panel2)}
   .appbar .iconbtn:focus-visible{outline:none;color:var(--txt);box-shadow:var(--ring)}
-  /* header status badges (workday / review) */
-  .badge{background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:5px 11px;flex:none;
+  /* header status badges (workday / review) — 34px rail + inset highlight */
+  .badge{display:inline-flex;align-items:center;height:34px;box-sizing:border-box;
+    background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:0 12px;flex:none;
     color:var(--txt-dim);font-size:var(--t-cap);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap;
-    transition:border-color .14s,background .14s}
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .14s,background .14s}
   .badge b{color:var(--warn);font-weight:700}
   .badge.clickable{cursor:pointer}
   .badge.clickable:hover{border-color:var(--line2);background:var(--panel2)}
   .badge.clickable:focus-visible{outline:none;box-shadow:var(--ring)}
 
-  /* --- live AI badge — quiet hairline language; allowed to SHRINK (not fixed) so
-     the end-cap (who + logout) never overflows on narrower desktop widths --- */
-  .livebadge{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 10px;border-radius:20px;
-    border:1px solid rgba(74,222,128,.30);background:rgba(74,222,128,.08);white-space:nowrap;
-    transition:background .3s,border-color .3s;flex:0 1 248px;min-width:0;width:auto;box-sizing:border-box}
-  .livebadge .lb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--good);
-    box-shadow:0 0 0 0 rgba(74,222,128,.55);animation:lb-pulse 1.6s ease-out infinite}
-  .livebadge .lb-text{flex:none;font-size:var(--t-meta);font-weight:800;letter-spacing:.7px;color:var(--good)}
-  .livebadge .lb-sub{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    font-size:var(--t-meta);color:var(--muted);font-variant-numeric:tabular-nums}
-  .livebadge .lb-spark{flex:none;font-size:var(--t-cap);line-height:1;color:var(--good);animation:lb-twinkle 2.2s ease-in-out infinite}
-  .livebadge.connecting{border-color:rgba(251,191,36,.34);background:rgba(251,191,36,.08)}
-  .livebadge.connecting .lb-dot{background:var(--warn);animation-duration:1s}
+  /* --- AI-LIVE TELEMETRY CHIP (design-panel winner + judge grafts) ---
+     Neutral panel body in ALL states — calm when healthy: only the green LED dot carries colour,
+     the "AI LIVE" label is quiet ink. One --lb-accent var drives the LED; abnormal states tint the
+     label + border amber/red so the chip draws the eye exactly when something is wrong. .lb-spark is
+     repurposed into a fading hairline that segments the LIVE lockup from the changing subline.
+     Shrinks; only .lb-sub truncates → who + logout never overflow at >=1280px. */
+  .livebadge{--lb-accent:var(--good);--lb-border:var(--line);
+    position:relative;display:inline-flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;
+    padding:0 13px;border-radius:999px;border:1px solid var(--lb-border);
+    background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0)),linear-gradient(180deg,var(--panel2),var(--panel));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05),var(--elev1);white-space:nowrap;
+    flex:0 1 250px;min-width:0;width:auto;transition:border-color .3s,box-shadow .3s,background .3s}
+  .livebadge .lb-dot{flex:none;position:relative;width:8px;height:8px;border-radius:50%;animation:none;
+    background:var(--lb-accent);color:var(--lb-accent);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.25);
+    transition:background .3s,color .3s}
+  .livebadge .lb-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;pointer-events:none;
+    background:radial-gradient(circle,currentColor 0%,transparent 62%);opacity:.5;animation:lb-breathe 2.6s ease-in-out infinite}
+  .livebadge .lb-text{flex:none;font-size:var(--t-eyebrow);font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--txt-dim);font-variant-numeric:tabular-nums;transition:color .3s}
+  .livebadge .lb-spark{flex:none;width:1px;height:12px;padding:0;margin:0;border:0;overflow:hidden;
+    font-size:0;line-height:0;color:transparent;align-self:center;animation:none;
+    background:linear-gradient(180deg,transparent,var(--line2) 20%,var(--line2) 80%,transparent)}
+  .livebadge .lb-sub{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:var(--t-meta);line-height:1.1;color:var(--muted);font-variant-numeric:tabular-nums}
+  .livebadge.live{--lb-accent:var(--good);--lb-border:var(--line)}
+  .livebadge.connecting{--lb-accent:var(--warn);--lb-border:rgba(251,191,36,.30)}
   .livebadge.connecting .lb-text{color:var(--warn)}
-  .livebadge.connecting .lb-spark{color:var(--warn)}
-  .livebadge.offline{border-color:rgba(248,113,113,.34);background:rgba(248,113,113,.08)}
-  .livebadge.offline .lb-dot{background:var(--bad);box-shadow:none;animation:none}
+  .livebadge.connecting .lb-dot::after{animation-duration:1.5s}
+  .livebadge.offline{--lb-accent:var(--bad);--lb-border:rgba(248,113,113,.40)}
   .livebadge.offline .lb-text{color:var(--bad)}
-  .livebadge.offline .lb-spark{color:var(--bad);animation:none}
+  .livebadge.offline .lb-dot::after{animation:none;opacity:.28}
+  .livebadge.flash{animation:lb-land .9s ease-out}
+  @keyframes lb-breathe{0%,100%{opacity:.26;transform:scale(.72)}50%{opacity:.62;transform:scale(1.25)}}
+  @keyframes lb-land{0%{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 0 rgba(74,222,128,.5),var(--elev1)}
+    60%{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 6px rgba(74,222,128,0),var(--elev1)}
+    100%{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 0 rgba(74,222,128,0),var(--elev1)}}
+  /* light theme: neutral chip on white; tinted borders keep contrast */
+  :root[data-theme=light] header.appbar{background:linear-gradient(180deg,#ffffff,#f3f6fb);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 1px 0 rgba(20,30,50,.04),0 8px 22px -20px rgba(20,30,50,.4)}
+  :root[data-theme=light] .livebadge{background:linear-gradient(180deg,#ffffff,var(--panel2));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.7),var(--elev1)}
+  :root[data-theme=light] .livebadge.connecting{--lb-border:rgba(192,120,6,.40)}
+  :root[data-theme=light] .livebadge.offline{--lb-border:rgba(220,38,38,.45)}
+  :root[data-theme=light] .livebadge .lb-dot{box-shadow:inset 0 0 0 .5px rgba(0,0,0,.10)}
+  :root[data-theme=light] nav.appnav,:root[data-theme=light] .ctlgroup,
+  :root[data-theme=light] .badge,:root[data-theme=light] .appbar .iconbtn{box-shadow:inset 0 1px 0 rgba(255,255,255,.6)}
+  @media (prefers-reduced-motion:reduce){
+    .livebadge{transition:none}
+    .livebadge .lb-dot::after{animation:none;opacity:.42}
+    .livebadge.flash{animation:none}
+    .lb-ell::after{animation:none;content:'…'}}
 
   /* --- classification progress bar — flat accent fill (no neon/rainbow flow).
      Full-bleed background + divider span the viewport; the INNER content
@@ -722,9 +764,9 @@
         <span className="badge" id="workdayBadge" title="Calling time completed today — 9am start, 8 calling hours (1h lunch)">🕐 <b id="workdayElapsed">—</b></span>
         <span className="badge clickable" id="reviewBadge" onClick=${()=>window.scrollToReview&&window.scrollToReview()} title="Calls awaiting human review">Review <b id="reviewN">0</b></span>
         <div className="livebadge connecting" id="liveBadge" title="Powered by an AI agent — this dashboard analyses calls and updates in real time">
-          <span className="lb-dot"></span>
-          <span className="lb-spark">✦</span>
+          <span className="lb-dot" aria-hidden="true"></span>
           <span className="lb-text" id="lbText">AI LIVE</span>
+          <span className="lb-spark" aria-hidden="true"></span>
           <span className="lb-sub" id="lbSub">connecting…</span>
         </div>
         <span className="who" id="whoami"></span>
