@@ -474,9 +474,14 @@ def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
                -- p5>p2>p1>p3, else p4 fresh) + the last BDE who actually called them (the natural
                -- owner when nobody has been explicitly assigned). Matched by the indexed company_key.
                COALESCE(ps.stage, 'p4')                   AS pipeline_stage,
-               ps.last_bde                                AS last_bde
+               ps.last_bde                                AS last_bde,
+               -- The BDE who will actually make the NEXT call: the owner of the scheduled calendar
+               -- event if one is linked, else the queue assignment, else the last BDE who called.
+               COALESCE(ce.bde_name, q.assigned_bde, ps.last_bde) AS next_call_bde,
+               (ce.id IS NOT NULL)                        AS next_call_scheduled
         FROM next_call_queue q
         JOIN prospects p ON p.id = q.prospect_id
+        LEFT JOIN calendar_events ce ON ce.id = q.linked_event_id AND ce.status = 'pending'
         LEFT JOIN LATERAL (
           SELECT (CASE WHEN bool_or(cl.pipeline_stage='p5') THEN 'p5'
                        WHEN bool_or(cl.pipeline='pipeline2_existing_agency') THEN 'p2'

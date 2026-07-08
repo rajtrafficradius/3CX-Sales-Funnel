@@ -133,6 +133,10 @@
   .duepill{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:4px 11px;font-size:var(--t-meta);font-weight:700;white-space:nowrap}
   .whenval{font-size:var(--t-cap);color:var(--txt-dim);font-variant-numeric:tabular-nums;white-space:nowrap}
   .whensub{font-size:var(--t-micro);color:var(--faint);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .whenbde{font-size:var(--t-cap);color:var(--txt);font-weight:700;margin-top:5px;white-space:nowrap}
+  .whenbde.none{color:var(--faint);font-weight:500}
+  .callink{display:inline-block;margin-top:5px;font-size:var(--t-meta);font-weight:600;color:var(--accent);text-decoration:none;white-space:nowrap}
+  .callink:hover{text-decoration:underline}
   .owner .name{font-weight:700;color:var(--txt-dim);font-size:var(--t-cap)}
   .pill-none{display:inline-block;background:rgba(139,150,166,.10);color:var(--muted);border-radius:999px;padding:3px 10px;font-size:var(--t-meta);font-weight:600}
 
@@ -382,11 +386,20 @@ function rowHtml(r, i){
     + (drivers ? `<div class="drivers">${drivers}</div>` : '')
     + bd;
 
-  // Best time to call.
+  // Best time to call — WHEN + the BDE who will make that next call.
   const due = isDue(r);
-  const whenCell = due
+  const nbde = r.next_call_bde
+    ? `<div class="whenbde">📞 ${esc(r.next_call_bde)}${r.next_call_scheduled?'':' <span class="whensub" style="font-weight:500">(suggested)</span>'}</div>`
+    : `<div class="whenbde none">📞 no BDE yet</div>`;
+  // "View on calendar" — deep-links to the scheduled event's drill-down (only when a live/pending
+  // call is actually booked; a suggested-time row has no calendar event to open).
+  const calLink = (r.next_call_scheduled && r.linked_event_id)
+    ? `<a class="callink" href="/calendar?event=${encodeURIComponent(r.linked_event_id)}" title="Open this scheduled call on the calendar">📅 View on calendar</a>`
+    : '';
+  const whenCell = (due
     ? `<span class="duepill">● Due now</span>${r.next_best_time?`<div class="whensub">was ${esc(fmtDate(r.next_best_time))}</div>`:`<div class="whensub">no time set</div>`}`
-    : `<div class="whenval">${esc(fmtDate(r.next_best_time))}</div><div class="whensub">scheduled</div>`;
+    : `<div class="whenval">${esc(fmtDate(r.next_best_time))}</div><div class="whensub">${r.next_call_scheduled?'scheduled':'suggested'}</div>`)
+    + nbde + calLink;
 
   // Pipeline (canonical stage, matching the rest of the app).
   const stage = r.pipeline_stage || 'p4';
