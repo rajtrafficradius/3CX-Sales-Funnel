@@ -198,8 +198,13 @@ def derive_pipeline_stage(v: CallClassification) -> str:
     at COUNT time (aggregate.py / _STAGE_COND), NOT here, so the stored value is a pure
     per-call signal that mirrors aggregate.py's "new booking" flag.
     """
+    # A tentative-with-a-time counts as a NEW booking ONLY if it isn't really a callback: a prospect
+    # who says "call me back tomorrow at 11" to continue a cold call is a CALLBACK (p1), not a booked
+    # meeting — the classifier often tags that as booking_status='tentative' with a time, so exclude it.
     new_booking = (
-        (v.meeting_booked.value or (v.booking_status == "tentative" and _has_meeting_time(v.meeting_datetime)))
+        (v.meeting_booked.value
+         or (v.booking_status == "tentative" and _has_meeting_time(v.meeting_datetime)
+             and not v.callback_requested.value))
         and not v.meeting_confirmation_only.value
         and not v.meeting_rescheduled.value
         and not v.booking_already_exists.value

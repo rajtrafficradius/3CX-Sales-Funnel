@@ -484,7 +484,7 @@ def aggregate(date_: str = typer.Option(..., "--date", help="YYYY-MM-DD")) -> No
 # no LLM). Used to backfill classifications.pipeline_stage over history. Precedence p5>p2>p1>p3.
 _PIPELINE_STAGE_CASE = """
 CASE
-  WHEN (meeting_booked OR (booking_status='tentative' AND meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday'))
+  WHEN (meeting_booked OR (booking_status='tentative' AND meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(callback_requested,false)))
        AND NOT COALESCE(meeting_confirmation, false)
        AND NOT COALESCE(meeting_rescheduled, false)
        AND NOT COALESCE(booking_already_exists, false)

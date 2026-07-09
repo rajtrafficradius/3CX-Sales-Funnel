@@ -1781,7 +1781,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                       "right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) "
                       "OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key)) AND pc.started_at < c.started_at "
                       "AND pc.answered AND pc.talk_seconds >= %(thr)s AND COALESCE(pcl.call_outcome,'')<>'voicemail' "
-                      "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) "
+                      "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))) "
                       "AND NOT COALESCE(pcl.meeting_confirmation,false) "
                       "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))")
     # A booking = firm OR a TENTATIVE meeting WITH a proposed date/time (rule B), honouring a BDM
@@ -1789,7 +1789,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # drill-down list equals the KPI count.
     _BO = "(SELECT qo.booking_outcome FROM qualification_overrides qo WHERE qo.call_id=c.call_id)"
     _BOOKED = (f"(CASE WHEN {_BO}='counts' THEN true WHEN {_BO}='not_booking' THEN false "
-               "ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) END)")
+               "ELSE (cl.meeting_booked OR (cl.booking_status='tentative' AND cl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(cl.callback_requested,false))) END)")
     # Meeting Booked = ANY genuinely NEW booking the BDE made (no decision-maker/qualified
     # gate). EXCLUDES confirmation-only, reschedules, AND duplicate bookings of the same
     # prospect (only the first booked call per number counts). Batch D's P5 pipeline REUSES
@@ -2219,7 +2219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WHERE pc.in_scope AND pc.call_id <> %(cid)s AND pc.started_at < cur.started_at "
                     "AND (right(regexp_replace(pc.dest_number,'[^0-9]','','g'),9)=right(regexp_replace(cur.dest_number,'[^0-9]','','g'),9) "
                     "     OR (%(ck)s::text IS NOT NULL AND pcl.company_key = %(ck)s::text)) "
-                    "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday')) "
+                    "AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))) "
                     "AND NOT COALESCE(pcl.meeting_confirmation,false) "
                     "AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false) LIMIT 1",
                     {"cid": call_id, "ck": c0.get("company_key")})
