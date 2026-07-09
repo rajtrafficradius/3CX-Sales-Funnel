@@ -1476,12 +1476,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Retry pool — confirmed-ads prospects dialed but NOT converted (no answer / voicemail / not
         # interested), under the attempt cap. Scoped to GAds when the board asks (gads_only).
         try:
-            from ..retry import _gather_sql
+            from ..retry import _gather_sql, reached_no_next_sql
             rc = q("SELECT count(*) n FROM (" + _gather_sql(gads_only=bool(gads_only)) + ") rr",
                    {"maxatt": settings.retry_max_attempts})
             pools["retry"] = int(rc[0]["n"]) if rc else 0
+            # reached the DM but no callback/booking (warm, worked manually) — its own tab.
+            rn = q("SELECT count(*) n FROM (" + reached_no_next_sql(gads_only=bool(gads_only)) + ") xx")
+            pools["reached"] = int(rn[0]["n"]) if rn else 0
         except Exception:
             pools["retry"] = 0
+            pools["reached"] = 0
         return JSONResponse({"found": True, "today": today,
                              "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
                              "rows": out_rows, "pools": pools})
@@ -1588,6 +1592,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "rr.d9")
                 + " WHERE true" + bde_f + " ORDER BY rr.last_attempt DESC NULLS LAST LIMIT %(lim)s",
                 {"maxatt": settings.retry_max_attempts, "bde": bde, "lim": limit})
+            for r in rows:
+                r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
+                r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
+            return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
+                                 "total": int(total), "rows": jsonable_encoder(rows)})
+        # ---- Reached the DM but no next step (warm; worked manually) ----
+        if pipeline == "reached":
+            from ..retry import reached_no_next_sql
+            g = reached_no_next_sql(gads_only=bool(gads_only))
+            total = q("SELECT count(*) n FROM (" + g + ") xx")[0]["n"]
+            bde_f = " AND xx.last_bde = %(bde)s" if (bde and bde != "ALL") else ""
+            rows = q(
+                "WITH xx AS (" + g + ") "
+                "SELECT xx.dest_number, xx.company AS prospect_company, xx.last_bde AS bde, "
+                "  xx.attempts AS ncalls, xx.last_attempt AS started_at, pr.business_name, pr.domain, "
+                "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
+                "FROM xx LEFT JOIN prospects pr ON xx.d9 = ANY(pr.phones_norm) "
+                + _NEXT_CALL_LATERAL.replace("%(d9col)s", "xx.d9")
+                + " WHERE true" + bde_f + " ORDER BY xx.last_attempt DESC NULLS LAST LIMIT %(lim)s",
+                {"bde": bde, "lim": limit})
             for r in rows:
                 r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None

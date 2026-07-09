@@ -66,6 +66,39 @@ def _gather_sql(gads_only: bool) -> str:
     """
 
 
+def reached_no_next_sql(gads_only: bool) -> str:
+    """Prospects we REACHED THE DECISION-MAKER on but who left no next step — no callback, no booking,
+    not an agency (typically a soft 'not interested' or 'send me info'). Warmer than a cold no-answer, so
+    they get their OWN board tab and are worked manually (not auto-scheduled). GAds-scoped when asked."""
+    gads = f" AND a.d9 IN ({_GADS_D9})" if gads_only else ""
+    return f"""
+    WITH agg AS (
+      SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) AS d9,
+             (array_agg(c.dest_number ORDER BY c.started_at DESC))[1]        AS dest_number,
+             bool_or(cl.rpc_connect IS TRUE)                                 AS ever_dm,
+             bool_or(cl.pipeline_stage='p5')                                 AS ever_booked,
+             bool_or(cl.pipeline_stage IN ('p1','p3'))                       AS ever_callback,
+             bool_or(cl.pipeline='pipeline2_existing_agency')                AS ever_agency,
+             max(c.started_at)                                              AS last_attempt,
+             (array_agg(COALESCE(c.bde_name,c.bde_extension) ORDER BY c.started_at DESC)
+                FILTER (WHERE COALESCE(c.bde_name,c.bde_extension) IS NOT NULL))[1] AS last_bde,
+             (array_agg(cl.prospect_company ORDER BY c.started_at DESC)
+                FILTER (WHERE cl.prospect_company IS NOT NULL))[1]           AS company,
+             count(*)                                                       AS attempts
+      FROM calls c JOIN classifications cl ON cl.call_id=c.call_id
+      WHERE c.in_scope AND lower(c.direction)='outbound'
+      GROUP BY 1
+    )
+    SELECT a.d9, a.dest_number, a.last_attempt, a.last_bde, a.company, a.attempts
+    FROM agg a LEFT JOIN prospect_pipeline pp ON pp.dest9=a.d9
+    WHERE length(a.d9)=9 AND COALESCE(pp.dnd,false)=false
+      AND COALESCE(a.ever_dm,false)=true
+      AND COALESCE(a.ever_booked,false)=false
+      AND COALESCE(a.ever_callback,false)=false
+      AND COALESCE(a.ever_agency,false)=false{gads}
+    """
+
+
 def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
     """Ensure each retry-eligible prospect has ONE open `retry` event (same BDE, varied time). Cancels
     retries superseded by a later call. Idempotent; safe every cycle. Returns {scheduled, candidates}."""

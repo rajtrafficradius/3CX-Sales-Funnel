@@ -121,10 +121,11 @@ const STAGES={
   p1:{label:'RPC callback',blurb:'We reached the decision-maker and they asked us to call back — warm, keep the thread alive and lock the meeting.',icon:'\u{1F4DE}',win:true},
   p3:{label:'Gatekeeper callback',blurb:'We got a gatekeeper, not the decision-maker yet — get through and secure a direct line / callback time.',icon:'\u{1F6E1}️',win:true},
   p4:{label:'Fresh · running ads',blurb:'Not yet worked — prospects CONFIRMED running Google Ads (the callable first-contact pool).',icon:'\u{1F195}',win:false},
-  retry:{label:'Retry calls',blurb:'Dialed but not connected yet — no answer, voicemail or not interested. Re-call at a different time (a fresh 3CX/Aircall line often gets a pickup); stops after the attempt cap.',icon:'\u{1F504}',win:false},
+  retry:{label:'Retry calls',blurb:'Dialed but never connected — no answer, voicemail. Re-call at a different time (a fresh 3CX/Aircall line often gets a pickup); stops after the attempt cap.',icon:'\u{1F504}',win:false},
+  reached:{label:'Reached DM · no next step',blurb:'We spoke to the decision-maker but they left no callback or booking (often a soft “not interested” or “send me info”). Warmer than a cold no-answer — keep calling (different time / a different BDE) until they show interest; every call carries the full history.',icon:'\u{1F464}',win:false},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
 };
-const ORDER=['p1','p3','p4','retry','p5'];
+const ORDER=['p1','p3','p4','retry','reached','p5'];
 let stage=(location.pathname.split('/').filter(Boolean)[1]||'p1').toLowerCase();
 if(!STAGES[stage]) stage='p1';
 let bde='ALL', win='all', counts={};
@@ -137,7 +138,7 @@ function tierClass(t){t=(t||'').toLowerCase();if(t.includes('super')||t==='hot')
 
 function renderTabs(){
   $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('')
-    +`<a class="tab" href="/pipeline2">\u{1F501} Existing agency</a>`;
+    +`<a class="tab" href="/pipeline2">\u{1F501} Existing agency${counts.p2!=null?`<span class="n">${counts.p2}</span>`:''}</a>`;
 }
 function renderToolbar(){
   const meta=STAGES[stage];
@@ -199,7 +200,7 @@ async function boot(){
       $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry;} }catch(e){}
+  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached;} }catch(e){}
   renderTabs(); renderToolbar(); loadBoard();
 }
 boot();
