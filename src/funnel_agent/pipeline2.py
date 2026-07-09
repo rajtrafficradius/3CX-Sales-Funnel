@@ -37,6 +37,19 @@ def active_bdes(pool: ConnectionPool) -> list[str]:
     )]
 
 
+def calling_bdes(pool: ConnectionPool, settings=None) -> list[str]:
+    """Active BDEs eligible for a COLD-CALLING worklist — active_bdes minus non-calling names (the BDM,
+    e.g. Ben, who only does verification/oversight). Used by every calling allocator so a BDM is never
+    auto-assigned fresh/retry/reached calls. (They still show in analysis/reports.)"""
+    exclude = set()
+    raw = getattr(settings, "non_calling_names", "") if settings is not None else ""
+    for n in (raw or "").split(","):
+        n = n.strip().lower()
+        if n:
+            exclude.add(n)
+    return [b for b in active_bdes(pool) if (b or "").strip().lower() not in exclude]
+
+
 def _pick_next_bde(roster: list[str], last_bde: str | None, counts: dict[str, int],
                    load: dict[str, int] | None = None) -> str | None:
     """Choose the next BDE to call. Priorities:

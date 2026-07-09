@@ -22,7 +22,7 @@ from psycopg_pool import ConnectionPool
 from .config import Settings
 from .logging import get_logger
 from .next_call import _revenue_score, next_best_time
-from .pipeline2 import active_bdes
+from .pipeline2 import calling_bdes
 
 log = get_logger(__name__)
 
@@ -149,7 +149,7 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
         f"(SELECT 1 FROM calls c WHERE c.in_scope AND {_D9.format(col='c.dest_number')} "
         f"= {_D9.format(col='e.dest_number')})")
 
-    roster = active_bdes(pool)
+    roster = calling_bdes(pool, settings)   # excludes the BDM (non-calling) names
     if not roster:
         return {"skipped": "no_active_bdes", "resolved": resolved}
 
@@ -157,7 +157,7 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
     #     already holding 200 due callbacks/recalls/retries gets no fresh; one with 30 gets 170 fresh.
     pend = {r["bde_name"]: r["n"] for r in _fetch(pool,
         "SELECT bde_name, count(*) n FROM calendar_events "
-        "WHERE status='pending' AND type IN ('callback','recall','retry','fresh_call') GROUP BY bde_name")}
+        "WHERE status='pending' AND type IN ('callback','recall','retry','reached_call','fresh_call') GROUP BY bde_name")}
     remaining = {b: max(0, target - int(pend.get(b, 0))) for b in roster}
     need = sum(remaining.values())
     if need <= 0:

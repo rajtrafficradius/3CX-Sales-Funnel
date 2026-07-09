@@ -746,6 +746,15 @@ def refresh(
             except Exception as exc:
                 rt = {"error": str(exc)[:80]}
                 log.warning("schedule_retry_calls_failed", error=str(exc)[:160])
+        # Reached-DM-no-next-step — re-call warm prospects rotating the BDE (fresh voice) until interest.
+        rd = {"scheduled": 0}
+        if settings.reached_enabled:
+            try:
+                from .retry import schedule_reached_calls
+                rd = schedule_reached_calls(ana, settings)
+            except Exception as exc:
+                rd = {"error": str(exc)[:80]}
+                log.warning("schedule_reached_calls_failed", error=str(exc)[:160])
         # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
         # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
         try:
@@ -814,7 +823,7 @@ def refresh(
         from .whatsapp import schedule_due_bookings, process_due
         schedule_due_bookings(ana, settings, lookback_days=settings.daily_lookback_days)
         wa = process_due(ana, settings)
-    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | retries: {rt} | fresh_calls: {fx} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | fresh_ads: {fa} | messages: {msg} | whatsapp: {wa}")
+    typer.echo(f"refresh {start}..{today}: {totals} | captured: {cap} | pipeline2: {p2} | pipelines5: {pl5} | next_call: {nc} | recalls: {wr} | retries: {rt} | reached: {rd} | fresh_calls: {fx} | websites: {ws} | whois: {wh} | apollo_dm: {ap} | fresh_ads: {fa} | messages: {msg} | whatsapp: {wa}")
 
 
 @app.command()

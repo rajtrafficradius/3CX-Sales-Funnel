@@ -3521,7 +3521,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/pipeline/{stage}", response_class=HTMLResponse)
     def pipeline_page(stage: str) -> HTMLResponse:
-        # generic detailed board for P1/P3/P4/P5 (stage read client-side); P2 keeps its own page.
+        # generic detailed board for the pipeline STAGES (stage read client-side); P2 keeps its own page.
+        return HTMLResponse(_static("pipeline.html"), headers=_NOCACHE)
+
+    @app.get("/datapool", response_class=HTMLResponse)
+    def datapool_page() -> HTMLResponse:
+        # Fresh · running ads is a DATA POOL (the confirmed-Google-Ads source universe), not a pipeline
+        # stage — it gets its own URL. Same board, reads the pool view client-side.
         return HTMLResponse(_static("pipeline.html"), headers=_NOCACHE)
 
     @app.get("/api/pipeline2")

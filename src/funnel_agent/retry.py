@@ -138,11 +138,24 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
         conn.commit()
 
     best_hours = _best_call_hours(pool, tz, 11) or [11, 14, 10]
+    # calling roster (excludes the BDM); if the LAST caller was the BDM, the retry is reassigned to a
+    # real BDE (least-loaded) so a BDM is never given a calling worklist.
+    from .pipeline2 import calling_bdes
+    callers = calling_bdes(pool, settings)
+    callers_set = set(callers)
+    rload = {r["bde_name"]: r["n"] for r in _fetch(pool,
+        "SELECT bde_name, count(*) n FROM calendar_events WHERE type='retry' AND status='pending' GROUP BY bde_name")}
     rows = _fetch(pool, _gather_sql(gads_only), {"maxatt": maxatt})[:limit]
     to_upsert = []
     for i, r in enumerate(rows):
-        if not r.get("last_bde") or not r.get("dest_number"):
+        if not r.get("dest_number"):
             continue
+        bde = r.get("last_bde")
+        if bde not in callers_set:                       # BDM (or unknown) last caller → hand to a BDE
+            if not callers:
+                continue
+            bde = min(callers, key=lambda b: (rload.get(b, 0), b))
+            rload[bde] = rload.get(bde, 0) + 1
         last = r.get("last_attempt") or now
         last_hour = getattr(last, "hour", 11)
         # vary the time-of-day: a top pick-up hour DIFFERENT from the last attempt's hour
@@ -160,11 +173,100 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
                 "A fresh 3CX/Aircall line often gets a screener to answer — reassign to another BDE if "
                 "it keeps ringing out.")
         notes = _context_note(r, att, maxatt, lead=lead)
-        to_upsert.append((r["last_bde"], title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
+        to_upsert.append((bde, title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
     scheduled = _upsert_batch(pool, to_upsert)
     stats = {"scheduled": scheduled, "candidates": len(rows)}
     log.info("retry_calls_done", **stats)
     return stats
+
+
+_ENSURE_REACHED_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_reached "
+    "ON calendar_events (dest_number) WHERE type='reached_call' AND status='pending'")
+
+
+def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
+    """Re-call REACHED-DM-but-no-next-step prospects, ROTATING the BDE (a fresh voice/line often turns a
+    soft 'not interested' around) at a varied time, until they show interest or hit reached_max_attempts.
+    One open `reached_call` per number; a new attempt (rotated BDE) is created only after the prior one
+    is superseded by an actual call. Every event carries the full call context."""
+    if not getattr(settings, "reached_enabled", True):
+        return {"skipped": "disabled"}
+    maxatt = int(getattr(settings, "reached_max_attempts", 8) or 8)
+    cadence = int(getattr(settings, "retry_cadence_days", 3) or 3)
+    gads_only = bool(getattr(settings, "calls_gads_only", False))
+    tz = getattr(settings, "tz", "Australia/Melbourne")
+    now = datetime.now()
+    from .pipeline2 import calling_bdes
+    roster = calling_bdes(pool, settings)   # excludes the BDM (non-calling) names
+    if not roster:
+        return {"skipped": "no_active_bdes"}
+
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(_ENSURE_REACHED_INDEX)
+        cur.execute(
+            "UPDATE calendar_events e SET status='cancelled' "
+            "WHERE e.type='reached_call' AND e.status='pending' AND EXISTS (SELECT 1 FROM calls c "
+            "  WHERE c.in_scope AND lower(c.direction)='outbound' "
+            "  AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) "
+            "     = right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) "
+            "  AND c.started_at > e.start_at + interval '2 hours')")
+        conn.commit()
+
+    # current open reached_call load per BDE, for round-robin balancing of the rotation
+    load = {r["bde_name"]: r["n"] for r in _fetch(pool,
+        "SELECT bde_name, count(*) n FROM calendar_events "
+        "WHERE type='reached_call' AND status='pending' GROUP BY bde_name")}
+    best_hours = _best_call_hours(pool, tz, 11) or [11, 14, 10]
+    rows = _fetch(pool, reached_no_next_sql(gads_only))
+    to_insert = []
+    for i, r in enumerate(rows):
+        att = int(r.get("attempts") or 0)
+        if att >= maxatt or not r.get("dest_number"):
+            continue
+        # ROTATE: pick an active BDE who hasn't called this prospect (and isn't the last caller); fall
+        # back to the least-loaded BDE other than the last caller. This puts a fresh voice on the line.
+        priors = set(r.get("prior_bdes") or [])
+        last = r.get("last_bde")
+        cands = [b for b in roster if b != last] or list(roster)
+        fresh = [b for b in cands if b not in priors] or cands
+        bde = min(fresh, key=lambda b: (load.get(b, 0), b))
+        load[bde] = load.get(b, 0) + 1
+        la = r.get("last_attempt") or now
+        last_hour = getattr(la, "hour", 11)
+        hour = next((h for h in best_hours if h != last_hour), best_hours[i % len(best_hours)])
+        base = getattr(la, "date", lambda: now.date())() + timedelta(days=cadence)
+        while base < now.date():
+            base += timedelta(days=cadence)
+        if base.weekday() >= 5:
+            base += timedelta(days=7 - base.weekday())
+        when = datetime.combine(base, time(hour=min(max(hour, 8), 17)))
+        who = r.get("company") or r.get("dest_number")
+        title = f"👤 Reached DM · retry ({att + 1}/{maxatt}): {who}"
+        lead = (f"We reached the decision-maker but they left no next step — {bde} takes it now (a fresh "
+                f"voice/line) at ~{hour}:00 for a different angle.")
+        notes = _context_note(r, att, maxatt, lead=lead)
+        to_insert.append((bde, title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
+    scheduled = _insert_reached_batch(pool, to_insert)
+    stats = {"scheduled": scheduled, "candidates": len(rows)}
+    log.info("reached_calls_done", **stats)
+    return stats
+
+
+def _insert_reached_batch(pool, rows: list) -> int:
+    """Insert reached_call events; ON CONFLICT DO NOTHING keeps the open one (rotation happens on the
+    NEXT attempt, after a real call supersedes the current event) so the BDE isn't reshuffled each cycle."""
+    if not rows:
+        return 0
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO calendar_events (bde_name, type, title, start_at, end_at, notes, "
+            "  dest_number, created_by, status) "
+            "VALUES (%s,'reached_call',%s,%s,%s,%s,%s,'auto','pending') "
+            "ON CONFLICT (dest_number) WHERE type='reached_call' AND status='pending' DO NOTHING",
+            rows)
+        conn.commit()
+    return len(rows)
 
 
 def _upsert_batch(pool, rows: list) -> int:

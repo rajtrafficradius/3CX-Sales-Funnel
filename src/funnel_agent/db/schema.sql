@@ -321,6 +321,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_fresh_call
 -- One open retry per number (re-call dialed-but-not-converted prospects until pickup/max attempts).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_retry
   ON calendar_events (dest_number) WHERE type = 'retry' AND status = 'pending';
+-- One open reached_call per number (re-call reached-DM-no-next-step prospects, rotating BDE).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_reached
+  ON calendar_events (dest_number) WHERE type = 'reached_call' AND status = 'pending';
 
 -- ============================ Master prospect database ============================
 -- The team's known-prospect universe (seeded from DATA_MASTER_FILE), keyed by the

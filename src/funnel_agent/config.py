@@ -194,6 +194,11 @@ class Settings(BaseSettings):
     fresh_ads_enrich_per_cycle: int = 20
     fresh_ads_enrich_workers: int = 6
 
+    # Names that are NOT cold-calling BDEs and must never be auto-assigned a calling worklist — e.g.
+    # the BDM (Ben), who only does verification calls / oversight. CSV of names; matched to the roster
+    # by canonical name. They still appear in analysis/reports (they do make some calls).
+    non_calling_names: str = "Ben"
+
     # The whole CALLING system (calendar + call scheduling: fresh calls, RPC-connect callbacks,
     # gatekeeper/weekly recalls) operates ONLY on prospects CONFIRMED running Google Ads. The old
     # BDE-sourced (non-GAds) data is reached from the Agency & RPC page / pipeline pages instead.
@@ -209,6 +214,12 @@ class Settings(BaseSettings):
     retry_max_attempts: int = 5
     retry_cadence_days: int = 3          # min gap before the next retry
     retry_per_cycle: int = 4000          # cap events touched per refresh cycle
+
+    # Reached-the-DM-but-no-next-step prospects (warm): keep re-calling with a DIFFERENT BDE (fresh
+    # voice/line) + time until they show interest, up to reached_max_attempts. Each call carries the
+    # full history so the new BDE isn't calling blind.
+    reached_enabled: bool = True
+    reached_max_attempts: int = 8
 
     # --- BDE daily calling worklist (AI allocation over the confirmed-Google-Ads pool) ---
     # Each BDE should have this many calls to make per day = their due follow-ups (callbacks/recalls)
