@@ -3102,44 +3102,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from ..enrichment.dataforseo import DataForSEOClient, build_seo_audit, brand_tokens
             from ..enrich import enrich_dataforseo_one
             from ..competitor import run_competitor_audit
-            did = []
+            # Each dataset is fetched INDEPENDENTLY: a failure in one (e.g. a domain with no organic
+            # footprint choking the competitor audit) must not abort the others — we save what succeeds
+            # and report exactly what failed, so the report is still viewable with partial data.
+            did, errors = [], []
             if not _audit_status(domain)["base"]:
-                c = DataForSEOClient(settings)
                 try:
-                    enrich_dataforseo_one(pool, c, domain)
-                finally:
-                    c.close()
-                did.append("base")
+                    c = DataForSEOClient(settings)
+                    try:
+                        enrich_dataforseo_one(pool, c, domain)
+                    finally:
+                        c.close()
+                    did.append("base")
+                except Exception as exc:
+                    errors.append(f"base rank/ads: {str(exc)[:160]}")
             if not _audit_status(domain)["seo"]:
-                c = DataForSEOClient(settings)
                 try:
-                    rk = c.ranked_keywords(domain, limit=100)
-                finally:
-                    c.close()
-                kws = (rk.get("keywords") or [])[:100]
-                brands = brand_tokens(domain, (master or {}).get("company_name")
-                                      or (master or {}).get("name") or "")
-                audit = build_seo_audit(kws, brands=brands)
-                audit["keyword_count_total"] = rk.get("count")
-                audit["fetched_at"] = _dt.now().isoformat()
-                patch = {"audit": audit, "ranked_kw": kws}
-                with pool.connection() as conn, conn.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
-                        "ON CONFLICT (domain) DO UPDATE SET "
-                        "dataforseo = COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
-                        (domain, Json(patch), Json(patch)))
-                    conn.commit()
-                did.append("seo")
+                    c = DataForSEOClient(settings)
+                    try:
+                        rk = c.ranked_keywords(domain, limit=100)
+                    finally:
+                        c.close()
+                    kws = (rk.get("keywords") or [])[:100]
+                    brands = brand_tokens(domain, (master or {}).get("company_name")
+                                          or (master or {}).get("name") or "")
+                    audit = build_seo_audit(kws, brands=brands)
+                    audit["keyword_count_total"] = rk.get("count")
+                    audit["fetched_at"] = _dt.now().isoformat()
+                    patch = {"audit": audit, "ranked_kw": kws}
+                    with pool.connection() as conn, conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                            "ON CONFLICT (domain) DO UPDATE SET "
+                            "dataforseo = COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
+                            (domain, Json(patch), Json(patch)))
+                        conn.commit()
+                    did.append("seo")
+                except Exception as exc:
+                    errors.append(f"SEO keywords: {str(exc)[:160]}")
             if not _audit_status(domain)["competitor"]:
-                run_competitor_audit(pool, settings, domain)
-                did.append("competitor")
-            return {"did": did, "status": _audit_status(domain)}
+                try:
+                    run_competitor_audit(pool, settings, domain)
+                    did.append("competitor")
+                except Exception as exc:
+                    errors.append(f"competitor gap: {str(exc)[:160]}")
+            return {"did": did, "errors": errors, "status": _audit_status(domain)}
         try:
             out = await run_in_threadpool(_do)
         except Exception as exc:
-            raise HTTPException(502, f"Audit generation failed — {str(exc)[:140]}")
-        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "ready": True, **out}))
+            raise HTTPException(502, f"Audit generation failed — {str(exc)[:160]}")
+        st = out.get("status") or {}
+        # The report is renderable whenever ANY data is present (base gives ads + a light report).
+        ready = bool(st.get("base") or st.get("seo") or _audit_status(domain)["base"])
+        return JSONResponse(jsonable_encoder({"ok": True, "domain": domain, "ready": ready, **out}))
 
     @app.get("/api/prospect/{key}/audit.{fmt}")
     async def prospect_audit_export(request: Request, key: str, fmt: str, ticket: int = 2000) -> Response:
