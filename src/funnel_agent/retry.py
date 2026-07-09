@@ -33,6 +33,16 @@ _GADS_D9 = (
     "FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
     "WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>''")
 
+# per-prospect CONTEXT for the calling BDE: last call outcome + what was discussed (problem_summary,
+# else the evidence prospect-summary) + every BDE who has called. Aggregated in the gather's `agg` CTE.
+_SUMM = "COALESCE(NULLIF(cl.problem_summary,''), NULLIF(cl.evidence->>'prospect_summary',''))"
+_CTX = (
+    f"(array_agg(cl.call_outcome ORDER BY c.started_at DESC) "
+    f"   FILTER (WHERE cl.call_outcome IS NOT NULL))[1] AS last_outcome, "
+    f"(array_agg({_SUMM} ORDER BY c.started_at DESC) FILTER (WHERE {_SUMM} IS NOT NULL))[1] AS last_summary, "
+    f"array_agg(DISTINCT COALESCE(c.bde_name,c.bde_extension)) "
+    f"   FILTER (WHERE COALESCE(c.bde_name,c.bde_extension) IS NOT NULL) AS prior_bdes,")
+
 
 def _gather_sql(gads_only: bool) -> str:
     """Dialed-but-not-converted prospects: never reached the DM, never a gatekeeper callback, never
@@ -51,12 +61,14 @@ def _gather_sql(gads_only: bool) -> str:
                 FILTER (WHERE COALESCE(c.bde_name,c.bde_extension) IS NOT NULL))[1] AS last_bde,
              (array_agg(cl.prospect_company ORDER BY c.started_at DESC)
                 FILTER (WHERE cl.prospect_company IS NOT NULL))[1]         AS company,
+             {_CTX}
              count(*)                                                      AS attempts
       FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id
       WHERE c.in_scope AND lower(c.direction)='outbound'
       GROUP BY 1
     )
-    SELECT a.d9, a.dest_number, a.last_attempt, a.last_bde, a.company, a.attempts
+    SELECT a.d9, a.dest_number, a.last_attempt, a.last_bde, a.company, a.attempts,
+           a.last_outcome, a.last_summary, a.prior_bdes
     FROM agg a LEFT JOIN prospect_pipeline pp ON pp.dest9=a.d9
     WHERE length(a.d9)=9 AND COALESCE(pp.dnd,false)=false
       AND COALESCE(a.ever_booked,false)=false
@@ -84,12 +96,14 @@ def reached_no_next_sql(gads_only: bool) -> str:
                 FILTER (WHERE COALESCE(c.bde_name,c.bde_extension) IS NOT NULL))[1] AS last_bde,
              (array_agg(cl.prospect_company ORDER BY c.started_at DESC)
                 FILTER (WHERE cl.prospect_company IS NOT NULL))[1]           AS company,
+             {_CTX}
              count(*)                                                       AS attempts
       FROM calls c JOIN classifications cl ON cl.call_id=c.call_id
       WHERE c.in_scope AND lower(c.direction)='outbound'
       GROUP BY 1
     )
-    SELECT a.d9, a.dest_number, a.last_attempt, a.last_bde, a.company, a.attempts
+    SELECT a.d9, a.dest_number, a.last_attempt, a.last_bde, a.company, a.attempts,
+           a.last_outcome, a.last_summary, a.prior_bdes
     FROM agg a LEFT JOIN prospect_pipeline pp ON pp.dest9=a.d9
     WHERE length(a.d9)=9 AND COALESCE(pp.dnd,false)=false
       AND COALESCE(a.ever_dm,false)=true
@@ -142,9 +156,10 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
         att = int(r.get("attempts") or 0)
         who = r.get("company") or r.get("dest_number")
         title = f"🔄 Retry ({att + 1}/{maxatt}): {who}"
-        notes = (f"Dialed {att} time(s), not connected yet — retry at ~{hour}:00 (a top pick-up hour, "
-                 f"a different time than last). Tip: a fresh 3CX/Aircall line often gets a screener to "
-                 f"answer, so reassign to another BDE if it keeps ringing out.")
+        lead = (f"No pickup yet — retry at ~{hour}:00 (a top pick-up hour, a different time than last). "
+                "A fresh 3CX/Aircall line often gets a screener to answer — reassign to another BDE if "
+                "it keeps ringing out.")
+        notes = _context_note(r, att, maxatt, lead=lead)
         to_upsert.append((r["last_bde"], title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
     scheduled = _upsert_batch(pool, to_upsert)
     stats = {"scheduled": scheduled, "candidates": len(rows)}
@@ -167,6 +182,24 @@ def _upsert_batch(pool, rows: list) -> int:
             rows)
         conn.commit()
     return len(rows)
+
+
+def _context_note(r: dict, att: int, maxatt: int, *, lead: str) -> str:
+    """Full context for whichever BDE picks up the call: which attempt this is, everyone who has
+    called before, and the last call's outcome + what was actually discussed (so a fresh BDE isn't
+    calling blind). The complete history + AI 'what to say' is one click away on the prospect page."""
+    priors = ", ".join(dict.fromkeys(r.get("prior_bdes") or [])) or (r.get("last_bde") or "")
+    summ = (r.get("last_summary") or "").strip()
+    if len(summ) > 260:
+        summ = summ[:257] + "…"
+    outcome = (r.get("last_outcome") or "").replace("_", " ")
+    lines = [f"Attempt {att + 1}" + (f" of {maxatt}" if maxatt else "") + ".", lead]
+    if priors:
+        lines.append(f"Called before by: {priors}.")
+    if outcome or summ:
+        lines.append(f"Last call{(' — ' + outcome) if outcome else ''}: {summ or '(no notes captured)'}")
+    lines.append("Full call history + what-to-say → open the prospect page.")
+    return "\n".join(x for x in lines if x)
 
 
 def _fetch(pool: ConnectionPool, sql: str, params=None) -> list[dict]:

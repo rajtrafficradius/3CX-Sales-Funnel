@@ -46,6 +46,17 @@
   .tab:hover{border-color:var(--line2)}
   .tab.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
   .tab .n{opacity:.7;font-weight:600;margin-left:4px}
+  /* Fresh · running ads = the DATA POOL (source universe), shown on top, distinct from the stages */
+  #pool{margin-bottom:14px}
+  .pool-card{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;cursor:pointer;
+    background:linear-gradient(120deg,var(--accent-soft),transparent);border:1px solid var(--accent);
+    border-radius:var(--r3);padding:13px 18px;transition:box-shadow .15s}
+  .pool-card:hover{box-shadow:var(--ring)}
+  .pool-card.active{box-shadow:var(--ring)}
+  .pool-card .pl{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.7px;color:var(--accent);font-weight:800}
+  .pool-card .pv{font-size:var(--t-strong);font-weight:800;color:var(--txt)}
+  .pool-card .pv b{color:var(--accent);font-variant-numeric:tabular-nums}
+  .pool-card .ps{font-size:var(--t-cap);color:var(--muted);flex:1 1 260px;min-width:180px}
   .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);overflow:hidden}
   table{width:100%;border-collapse:collapse;font-size:var(--t-cap)}
@@ -107,6 +118,8 @@
   <span class="who" id="who"></span>
 </header>
 <main>
+  <div id="pool"></div>
+  <div class="over" style="margin:2px 0 8px">Pipeline stages</div>
   <div class="tabs" id="tabs"></div>
   <p class="hblurb" id="blurb"></p>
   <div class="toolbar" id="toolbar"></div>
@@ -125,7 +138,9 @@ const STAGES={
   reached:{label:'Reached DM · no next step',blurb:'We spoke to the decision-maker but they left no callback or booking (often a soft “not interested” or “send me info”). Warmer than a cold no-answer — keep calling (different time / a different BDE) until they show interest; every call carries the full history.',icon:'\u{1F464}',win:false},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
 };
-const ORDER=['p1','p3','p4','retry','reached','p5'];
+// Fresh · running ads (p4) is the DATA POOL (the confirmed-Google-Ads source universe), not a
+// pipeline stage — it's rendered separately on top. The pipeline STAGES a prospect flows through:
+const ORDER=['p1','p3','retry','reached','p5'];
 let stage=(location.pathname.split('/').filter(Boolean)[1]||'p1').toLowerCase();
 if(!STAGES[stage]) stage='p1';
 let bde='ALL', win='all', counts={};
@@ -136,6 +151,15 @@ function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;'
 function fmtDate(s){if(!s)return '';try{const d=new Date(s.replace(' ','T'));if(isNaN(d))return s.slice(0,10);return d.toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short'});}catch(e){return s.slice(0,10);}}
 function tierClass(t){t=(t||'').toLowerCase();if(t.includes('super')||t==='hot')return 't-hot';if(t==='warm')return 't-warm';return 't-cool';}
 
+function renderPool(){
+  const n = counts.p4!=null ? Number(counts.p4).toLocaleString() : '…';
+  $('#pool').innerHTML =
+    `<div class="pool-card${stage==='p4'?' active':''}" onclick="location.href='/pipeline/p4'" title="Open the fresh calling worklist">
+      <span class="pl">\u{1F4CA} Data pool · confirmed Google Ads</span>
+      <span class="pv">\u{1F3AF} Fresh · running ads <b>${n}</b></span>
+      <span class="ps">The calling universe — never-called prospects that feed every pipeline stage below.</span>
+    </div>`;
+}
 function renderTabs(){
   $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('')
     +`<a class="tab" href="/pipeline2">\u{1F501} Existing agency${counts.p2!=null?`<span class="n">${counts.p2}</span>`:''}</a>`;
@@ -201,7 +225,7 @@ async function boot(){
     }
   }catch(e){}
   try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached;} }catch(e){}
-  renderTabs(); renderToolbar(); loadBoard();
+  renderPool(); renderTabs(); renderToolbar(); loadBoard();
 }
 boot();
 </script>
