@@ -1423,13 +1423,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _P5_RANK_CASE = ("CASE cl.pipeline_stage WHEN 'p5' THEN 1 WHEN 'p2' THEN 2 "
                      "WHEN 'p1' THEN 3 WHEN 'p3' THEN 4 END")
 
+    _pipe5_cache: dict = {}   # (bde, gads_only) -> (monotonic_ts, payload). Counts change slowly.
+
     @app.get("/api/pipelines5")
     def pipelines5(request: Request, bde: str = "ALL", gads_only: bool = False) -> JSONResponse:
         """P1/P2/P3/P5 × today/3d/7d/14d/30d (distinct prospects, prospect-level precedence)
         plus the P4 standing worklist pool. The 5-model view; the legacy /api/pipelines is
         left untouched. gads_only scopes the counts to the confirmed-Google-Ads pool (the pipeline
-        board passes it; the dashboard does not, so the dashboard is unaffected)."""
+        board passes it; the dashboard does not, so the dashboard is unaffected). The 5 heavy count
+        queries are cached ~45s (keyed by bde+scope) so the board's tab counts don't re-run them on
+        every open — the board ROWS are always live (separate endpoint)."""
+        from time import monotonic
         bde = _scoped_bde(request, bde)
+        _ckey = (bde, bool(gads_only))
+        _hit = _pipe5_cache.get(_ckey)
+        if _hit and (monotonic() - _hit[0]) < 45:
+            return JSONResponse(_hit[1])
         today = _pipe_anchor()
         if not today:
             return JSONResponse({"found": False, "rows": [], "pools": {}})
@@ -1505,9 +1514,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pools["p2"] = int(pa[0]["n"]) if pa else 0
         except Exception:
             pass
-        return JSONResponse({"found": True, "today": today,
-                             "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
-                             "rows": out_rows, "pools": pools})
+        payload = {"found": True, "today": today,
+                   "windows": [[k, lbl] for k, lbl, _o in _PIPE_WINDOWS],
+                   "rows": out_rows, "pools": pools}
+        _pipe5_cache[_ckey] = (monotonic(), payload)
+        return JSONResponse(payload)
 
     # LATERAL: the soonest UPCOMING pending calendar event for a prospect (else the latest past),
     # so a pipeline board can show each prospect's next scheduled call like the P2 board does.

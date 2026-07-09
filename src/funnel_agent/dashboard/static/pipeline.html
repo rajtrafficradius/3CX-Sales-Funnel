@@ -77,6 +77,14 @@
   .muted{color:var(--muted)} .small{font-size:var(--t-cap)}
   .empty{padding:40px;text-align:center;color:var(--muted)}
   .sub{font-size:11px;color:var(--muted)}
+  /* loading spinner + skeleton */
+  .loadwrap{padding:46px 20px;text-align:center;color:var(--muted);font-size:var(--t-cap)}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line2);border-top-color:var(--accent);
+    border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px;margin-right:9px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media(prefers-reduced-motion:reduce){.spin{animation:none}}
+  .tab .n.ldg{opacity:.35;animation:tabpulse 1.1s ease-in-out infinite}
+  @keyframes tabpulse{50%{opacity:.7}}
   /* pagination */
   .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
     padding:11px 14px;border-top:1px solid var(--line-soft);background:var(--panel2)}
@@ -137,7 +145,7 @@
   <div class="tabs" id="tabs"></div>
   <p class="hblurb" id="blurb"></p>
   <div class="toolbar" id="toolbar"></div>
-  <div class="card"><div id="board"><div class="empty">Loading…</div></div></div>
+  <div class="card"><div id="board"><div class="loadwrap"><span class="spin"></span>Loading…</div></div></div>
 </main>
 
 <script>
@@ -263,7 +271,7 @@ function p2Row(r){
   return `<tr class="${due?'':''}">${cells}</tr>`;
 }
 async function loadBoardP2(){
-  $('#board').innerHTML='<div class="empty">Loading…</div>';
+  $('#board').innerHTML='<div class="loadwrap"><span class="spin"></span>Loading…</div>';
   try{
     const d=await api(`/api/pipeline2?bde=${encodeURIComponent(bde)}&window=${win}`);
     P2.can=!!d.can_assign; P2.roster=d.roster||[];
@@ -293,7 +301,7 @@ document.addEventListener('click', async e=>{
 
 async function loadBoard(){
   if(stage==='p2') return loadBoardP2();
-  $('#board').innerHTML='<div class="empty">Loading…</div>';
+  $('#board').innerHTML='<div class="loadwrap"><span class="spin"></span>Loading…</div>';
   try{
     const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}&limit=${PAGE}&offset=${page*PAGE}&gads_only=1`);
     const rows=d.rows||[];
@@ -312,17 +320,24 @@ async function boot(){
   document.title=meta.label+' — Pipeline';
   $('#ptitle').textContent=meta.label;
   $('#blurb').textContent=meta.blurb;
-  // BDE filter + counts
-  try{
-    const me=await api('/api/me'); $('#who').textContent=(me.name||me.email||'')+' · '+(me.role||'');
+  // Render the chrome + START the board rows fetch IMMEDIATELY. The tab counts and BDE filter load
+  // in PARALLEL (they used to block the board for ~4s) and fill in as they arrive.
+  renderPool(); renderTabs(); renderToolbar();
+  loadBoard();
+  api('/api/me').then(me=>{
+    $('#who').textContent=(me.name||me.email||'')+' · '+(me.role||'');
     if(me.role==='manager'||me.role==='admin'||me.role==='kiosk'){
-      const s=await api('/api/summary');
-      $('#bdeFilter').innerHTML=['<option value="ALL">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${esc(b)}</option>`)).join('');
-      $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;page=0;loadBoard();};
+      api('/api/summary').then(s=>{
+        $('#bdeFilter').innerHTML=['<option value="ALL">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${esc(b)}</option>`)).join('');
+        $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;page=0;loadBoard();};
+      }).catch(()=>{});
     }
-  }catch(e){}
-  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached; if(p.pools.p2!=null)counts.p2=p.pools.p2;} }catch(e){}
-  renderPool(); renderTabs(); renderToolbar(); loadBoard();
+  }).catch(()=>{});
+  api('/api/pipelines5?gads_only=1').then(p=>{
+    (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;});
+    if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached; if(p.pools.p2!=null)counts.p2=p.pools.p2;}
+    renderPool(); renderTabs();
+  }).catch(()=>{});
 }
 boot();
 </script>
