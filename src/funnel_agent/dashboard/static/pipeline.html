@@ -77,6 +77,17 @@
   .muted{color:var(--muted)} .small{font-size:var(--t-cap)}
   .empty{padding:40px;text-align:center;color:var(--muted)}
   .sub{font-size:11px;color:var(--muted)}
+  /* pagination */
+  .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    padding:11px 14px;border-top:1px solid var(--line-soft);background:var(--panel2)}
+  .pager .pgi{font-size:var(--t-cap);color:var(--muted)}
+  .pager .pgi b{color:var(--txt-dim);font-variant-numeric:tabular-nums}
+  .pager .pgc{display:flex;align-items:center;gap:10px}
+  .pager .pgn{font-size:var(--t-cap);color:var(--muted);font-variant-numeric:tabular-nums}
+  .pgbtn{background:var(--panel);color:var(--txt-dim);border:1px solid var(--line);border-radius:var(--r1);
+    padding:6px 12px;font:inherit;font-size:var(--t-cap);font-weight:700;cursor:pointer}
+  .pgbtn:hover:not([disabled]){border-color:var(--accent);color:var(--accent)}
+  .pgbtn[disabled]{opacity:.4;cursor:not-allowed}
   /* ---- theme toggle + nav drawer (shared) ---- */
   .tr-theme-btn{position:fixed;right:16px;bottom:16px;z-index:90;width:40px;height:40px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-size:17px;cursor:pointer;box-shadow:var(--elev1);display:flex;align-items:center;justify-content:center}
   .tr-theme-btn:hover{border-color:var(--accent)}
@@ -137,18 +148,20 @@ const STAGES={
   retry:{label:'Retry calls',blurb:'Dialed but never connected — no answer, voicemail. Re-call at a different time (a fresh 3CX/Aircall line often gets a pickup); stops after the attempt cap.',icon:'\u{1F504}',win:true},
   reached:{label:'Reached DM · no next step',blurb:'We spoke to the decision-maker but they left no callback or booking (often a soft “not interested” or “send me info”). Warmer than a cold no-answer — keep calling (different time / a different BDE) until they show interest; every call carries the full history.',icon:'\u{1F464}',win:true},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
+  p2:{label:'Existing agency',blurb:'Already working with another agency — nurture until their contract is up, and stay top-of-mind for the switch. Same Google-Ads-confirmed data as the Agency pipeline assignment board.',icon:'\u{1F501}',win:true},
 };
 // Fresh · running ads (p4) is the DATA POOL (the confirmed-Google-Ads source universe), not a
 // pipeline stage — it's rendered separately on top. The pipeline STAGES a prospect flows through:
-const ORDER=['p1','p3','retry','reached','p5'];
+const ORDER=['p1','p3','retry','reached','p5','p2'];
 // Human-readable URL slug per stage: /pipeline/gatekeeper-callback instead of /pipeline/p3.
-const SLUG={p1:'rpc-callback',p3:'gatekeeper-callback',retry:'retry-calls',reached:'reached-no-next-step',p5:'booked'};
+const SLUG={p1:'rpc-callback',p3:'gatekeeper-callback',retry:'retry-calls',reached:'reached-no-next-step',p5:'booked',p2:'existing-agency'};
 const BY_SLUG=Object.fromEntries(Object.entries(SLUG).map(([k,v])=>[v,k]));
 // /datapool = the Fresh data pool (p4); /pipeline/<slug> = a pipeline stage (legacy /pipeline/p1 codes still work).
 let seg=(location.pathname.split('/').filter(Boolean)[1]||'').toLowerCase();
 let stage=(location.pathname==='/datapool')?'p4':(BY_SLUG[seg]||seg||'p1');
 if(!STAGES[stage]) stage='p1';
-let bde='ALL', win='all', counts={};
+let bde='ALL', win='all', counts={}, page=0;
+const PAGE=100;   // rows per page — the board paginates so EVERY prospect is reachable
 const WINDOWS=[['all','All time'],['today','Today'],['d3','3d'],['d7','7d'],['d14','14d'],['d30','30d']];
 
 async function api(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
@@ -166,14 +179,15 @@ function renderPool(){
     </div>`;
 }
 function renderTabs(){
-  $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${SLUG[s]||s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('')
-    +`<a class="tab" href="/pipeline2">\u{1F501} Existing agency${counts.p2!=null?`<span class="n">${counts.p2}</span>`:''}</a>`;
+  // Every stage (incl. Existing agency = p2) is an in-board tab now: /pipeline/<slug>. The standalone
+  // /pipeline2 assignment board is still reachable from the left nav ("Agency pipeline").
+  $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${SLUG[s]||s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('');
 }
 function renderToolbar(){
   const meta=STAGES[stage];
   $('#toolbar').innerHTML = meta.win ? WINDOWS.map(w=>`<button class="tab${w[0]===win?' active':''}" onclick="setWin('${w[0]}')">${w[1]}</button>`).join('') : '';
 }
-window.setWin=function(w){win=w;renderToolbar();loadBoard();};
+window.setWin=function(w){win=w;page=0;renderToolbar();loadBoard();};
 
 function row(r){
   // Name column: company name, else classified company, else domain. NEVER the phone number
@@ -203,17 +217,32 @@ function row(r){
   </tr>`;
 }
 
+function pager(total){
+  // total = full count for this stage (server-provided). Page through it so every prospect is reachable.
+  if(!total || total<=PAGE) return '';
+  const pages=Math.ceil(total/PAGE), from=page*PAGE+1, to=Math.min(total,(page+1)*PAGE);
+  return `<div class="pager">
+    <span class="pgi">Showing <b>${from.toLocaleString()}–${to.toLocaleString()}</b> of <b>${total.toLocaleString()}</b></span>
+    <span class="pgc">
+      <button class="pgbtn" ${page<=0?'disabled':''} onclick="goPage(${page-1})">‹ Prev</button>
+      <span class="pgn">Page ${page+1} / ${pages}</span>
+      <button class="pgbtn" ${page>=pages-1?'disabled':''} onclick="goPage(${page+1})">Next ›</button>
+    </span></div>`;
+}
+window.goPage=function(p){ if(p<0)return; page=p; loadBoard(); window.scrollTo({top:0,behavior:'smooth'}); };
+
 async function loadBoard(){
   $('#board').innerHTML='<div class="empty">Loading…</div>';
   try{
-    const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}&gads_only=1`);
+    const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}&limit=${PAGE}&offset=${page*PAGE}&gads_only=1`);
     const rows=d.rows||[];
+    const total=(d.total!=null)?d.total:rows.length;
+    if(!rows.length && page>0){ page=0; return loadBoard(); }   // ran past the last page → snap back
     if(!rows.length){$('#board').innerHTML='<div class="empty">Nothing in this pipeline'+(bde!=='ALL'?' for '+esc(bde):'')+' right now.</div>';return;}
     const head = stage==='p4'
       ? '<th>Business</th><th>Phone</th><th>Industry</th><th class="r">Revenue</th><th>Next call</th>'
       : `<th>Prospect</th><th>Phone</th><th>Temp</th><th class="r">Calls</th><th>Last call</th><th>Next call</th><th>BDE</th>`;
-    const cap = (d.total && d.total>rows.length) ? `<div class="sub" style="padding:10px 14px;border-top:1px solid var(--line-soft)">Showing top ${rows.length} of ${d.total.toLocaleString()} confirmed-ads businesses (by revenue).</div>` : '';
-    $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>${cap}`;
+    $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>${pager(total)}`;
   }catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
 }
 
@@ -228,7 +257,7 @@ async function boot(){
     if(me.role==='manager'||me.role==='admin'||me.role==='kiosk'){
       const s=await api('/api/summary');
       $('#bdeFilter').innerHTML=['<option value="ALL">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${esc(b)}</option>`)).join('');
-      $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
+      $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;page=0;loadBoard();};
     }
   }catch(e){}
   try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached; if(p.pools.p2!=null)counts.p2=p.pools.p2;} }catch(e){}

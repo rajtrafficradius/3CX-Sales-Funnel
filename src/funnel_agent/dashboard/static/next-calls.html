@@ -354,11 +354,19 @@ function isDue(r){
 function prospectKey(r){ return r.dest9 || r.domain || ''; }
 
 // ---------- render ----------
-function renderKpis(rows){
-  const total = rows.length;
-  const hot = rows.filter(r => r.tier==='hot').length;
-  const due = rows.filter(isDue).length;
-  const unassigned = rows.filter(r => !r.assigned_bde && !r.last_bde).length;
+// KPIs reflect the WHOLE Google-Ads queue via the server summary (fixes the old bug where they
+// counted only the returned/capped page). When a client-side pipeline filter is active we recompute
+// from the filtered rows (all rows are loaded), so the KPIs match the visible subset.
+function renderKpis(rows, summary){
+  let total, hot, due, unassigned;
+  if(state.pipeline || !summary){
+    total = rows.length;
+    hot = rows.filter(r => r.tier==='hot').length;
+    due = rows.filter(isDue).length;
+    unassigned = rows.filter(r => !r.assigned_bde && !r.last_bde).length;
+  } else {
+    total = summary.total; hot = summary.hot; due = summary.due; unassigned = summary.unassigned;
+  }
   document.getElementById('kTotal').textContent = total;
   document.getElementById('kHot').textContent = hot;
   document.getElementById('kDue').textContent = due;
@@ -448,9 +456,11 @@ function render(data){
   document.querySelector('.acthead').style.display = CAN_ASSIGN ? '' : 'none';
   document.getElementById('syncBtn').style.display = CAN_ASSIGN ? '' : 'none';
 
-  renderKpis(rows);
+  renderKpis(rows, data.summary);
   const n = rows.length;
-  document.getElementById('hdrCount').textContent = n ? (n + (n===1?' prospect':' prospects') + ' queued') : '';
+  // Header count = the true queue size (server summary) unless a client-side pipeline filter narrows it.
+  const shownTotal = (!state.pipeline && data.summary) ? data.summary.total : n;
+  document.getElementById('hdrCount').textContent = shownTotal ? (shownTotal + (shownTotal===1?' prospect':' prospects') + ' queued') : '';
   document.getElementById('boardSub').textContent = n ? 'Highest priority first' : '';
 
   if(!n){
@@ -476,6 +486,7 @@ function query(){
   if(state.tier) p.set('tier', state.tier);
   if(state.due)  p.set('due_only', 'true');
   p.set('gads_only', '1');   // calling is scoped to the confirmed-Google-Ads pool
+  p.set('limit', '5000');    // load the whole queue so KPIs + client-side pipeline filter are exact
   return p.toString();
 }
 

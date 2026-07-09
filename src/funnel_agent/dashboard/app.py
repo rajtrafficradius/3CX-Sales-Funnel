@@ -1566,13 +1566,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/pipeline5-prospects")
     def pipeline5_prospects(request: Request, pipeline: str, window: str = "d30",
-                            bde: str = "ALL", limit: int = 300, gads_only: bool = False) -> JSONResponse:
+                            bde: str = "ALL", limit: int = 300, offset: int = 0,
+                            gads_only: bool = False) -> JSONResponse:
         """Distinct prospects behind a pipeline board — P1/P2/P3/P5 (from calls, prospect-level
-        precedence) or P4 (the standing DB worklist). Each row carries the next scheduled call so
-        the board is a full call-list like Pipeline 2. gads_only scopes P1/P2/P3/P5 to the confirmed-
-        Google-Ads pool (P4 is already that pool); the dashboard omits it, so it stays unaffected."""
+        precedence), the existing-agency assignment board, or P4 (the standing DB worklist). Each row
+        carries the next scheduled call so the board is a full call-list like Pipeline 2. gads_only
+        scopes to the confirmed-Google-Ads pool (P4 is already that pool); the dashboard omits it, so
+        it stays unaffected. Every branch returns a `total` so the board can paginate (limit/offset)."""
         bde = _scoped_bde(request, bde)
         limit = max(10, min(int(limit or 300), 1000))
+        offset = max(0, int(offset or 0))
         # Optional time window (by last-attempt date) for the retry/reached boards, matching the
         # p1/p3/p5 window filter. 'all' (or an unknown window) = no time filter.
         _woff = dict((k, o) for k, _l, o in _PIPE_WINDOWS).get(window)
@@ -1598,14 +1601,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # targets) sink to the bottom. Only callable (has a phone) rows.
                 "top AS (SELECT * FROM picked WHERE dest_number IS NOT NULL "
                 "  ORDER BY CASE WHEN revenue_musd BETWEEN 1 AND 50 THEN 0 WHEN revenue_musd IS NULL "
-                "    THEN 1 ELSE 2 END, revenue_musd DESC NULLS LAST LIMIT %(lim)s) "
+                "    THEN 1 ELSE 2 END, revenue_musd DESC NULLS LAST LIMIT %(lim)s OFFSET %(off)s) "
                 "SELECT t.domain, t.business_name, t.dest_number, t.industry, t.revenue_musd, "
                 "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
                 "FROM top t "
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "right(regexp_replace(COALESCE(t.dest_number,''),'[^0-9]','','g'),9)")
                 + " ORDER BY CASE WHEN t.revenue_musd BETWEEN 1 AND 50 THEN 0 "
                 "  WHEN t.revenue_musd IS NULL THEN 1 ELSE 2 END, t.revenue_musd DESC NULLS LAST",
-                {"lim": limit})
+                {"lim": limit, "off": offset})
             for r in rows:
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
             return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
@@ -1629,8 +1632,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "FROM rr LEFT JOIN prospects pr ON rr.d9 = ANY(pr.phones_norm) "
                 + _CO_NAME_LATERAL.replace("%(d9col)s", "rr.d9")
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "rr.d9")
-                + " WHERE true" + bde_f + wf + " ORDER BY rr.last_attempt DESC NULLS LAST LIMIT %(lim)s",
-                {"maxatt": settings.retry_max_attempts, "bde": bde, "lim": limit, **wp})
+                + " WHERE true" + bde_f + wf + " ORDER BY rr.last_attempt DESC NULLS LAST "
+                "LIMIT %(lim)s OFFSET %(off)s",
+                {"maxatt": settings.retry_max_attempts, "bde": bde, "lim": limit, "off": offset, **wp})
             for r in rows:
                 r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
@@ -1653,8 +1657,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "FROM xx LEFT JOIN prospects pr ON xx.d9 = ANY(pr.phones_norm) "
                 + _CO_NAME_LATERAL.replace("%(d9col)s", "xx.d9")
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "xx.d9")
-                + " WHERE true" + bde_f + wf + " ORDER BY xx.last_attempt DESC NULLS LAST LIMIT %(lim)s",
-                {"bde": bde, "lim": limit, **wp})
+                + " WHERE true" + bde_f + wf + " ORDER BY xx.last_attempt DESC NULLS LAST "
+                "LIMIT %(lim)s OFFSET %(off)s",
+                {"bde": bde, "lim": limit, "off": offset, **wp})
+            for r in rows:
+                r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
+                r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
+            return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
+                                 "total": int(total), "rows": jsonable_encoder(rows)})
+        # ---- Existing agency, rendered IN the pipeline board (same GAds-confirmed data as the
+        # standalone /pipeline2 assignment page: prospect_pipeline, gads-scoped). Intercept BEFORE the
+        # p1/p3/p5 classifications branch, since 'p2' is also a classifications stage-rank. ----
+        if pipeline in ("existing-agency", "p2"):
+            from ..pipeline2 import _GADS_P2_FILTER, _P2
+            wf, wp = _win_clause("pp.last_call_at")
+            w = " WHERE pp.pipeline=%(p)s"
+            p2params = {"p": _P2, "lim": limit, "off": offset, **wp}
+            if gads_only:
+                w += " AND " + _GADS_P2_FILTER
+            w += wf
+            if bde and bde != "ALL":
+                w += " AND COALESCE(pp.assigned_bde, pp.last_bde) = %(bde)s"
+                p2params["bde"] = bde
+            total = q("SELECT count(*) n FROM prospect_pipeline pp "
+                      "LEFT JOIN prospects pr ON pp.prospect_id=pr.id" + w, p2params)[0]["n"]
+            rows = q(
+                "SELECT pp.dest_number, pp.last_call_at AS started_at, "
+                "  COALESCE(pp.assigned_bde, pp.last_bde) AS bde, "
+                "  NULL AS prospect_company, NULL AS lead_temperature, pp.attempts AS ncalls, "
+                "  COALESCE(pp.business_name, co.company_name) AS business_name, "
+                "  COALESCE(pr.domain, co.domain) AS domain, "
+                "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
+                "FROM prospect_pipeline pp LEFT JOIN prospects pr ON pp.prospect_id=pr.id "
+                + _CO_NAME_LATERAL.replace("%(d9col)s", "pp.dest9")
+                + _NEXT_CALL_LATERAL.replace("%(d9col)s", "pp.dest9")
+                + w
+                + " ORDER BY COALESCE(pp.dnd,false) ASC, pp.last_call_at DESC NULLS LAST "
+                "LIMIT %(lim)s OFFSET %(off)s",
+                p2params)
             for r in rows:
                 r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
@@ -1667,7 +1707,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         where = ["c.in_scope", "c.dest_number IS NOT NULL", "c.dest_number <> ''",
                  "cl.pipeline_stage IN ('p1','p2','p3','p5')",
                  "c.started_at >= (%(today)s::date - %(off)s)", "c.started_at < (%(today)s::date + 1)"]
-        params: dict = {"today": today, "off": off, "want": _STAGE_RANK[pipeline], "lim": limit}
+        params: dict = {"today": today, "off": off, "want": _STAGE_RANK[pipeline],
+                        "lim": limit, "poff": offset}
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
@@ -1684,18 +1725,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "SELECT l.dest_number, l.started_at, l.bde, l.prospect_company, l.lead_temperature, "
             "  w.ncalls, COALESCE(pr.business_name, co.company_name) AS business_name, "
             "  COALESCE(pr.domain, co.domain) AS domain, "
+            "  count(*) OVER() AS _total, "
             "  nc.start_at AS next_call_at, nc.bde_name AS next_call_bde, nc.type AS next_call_type "
             "FROM win w JOIN latest l ON l.dest9 = w.dest9 "
             "LEFT JOIN prospects pr ON w.dest9 = ANY(pr.phones_norm) "
             + _CO_NAME_LATERAL.replace("%(d9col)s", "l.dest9")
             + _NEXT_CALL_LATERAL.replace("%(d9col)s", "l.dest9")
-            + " WHERE w.wr = %(want)s ORDER BY l.started_at DESC LIMIT %(lim)s",
+            + " WHERE w.wr = %(want)s ORDER BY l.started_at DESC LIMIT %(lim)s OFFSET %(poff)s",
             params,
         )
+        total = int(rows[0]["_total"]) if rows else 0
         for r in rows:
+            r.pop("_total", None)
             r["started_at"] = str(r["started_at"]) if r["started_at"] else None
             r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
-        return JSONResponse({"pipeline": pipeline, "window": window,
+        return JSONResponse({"pipeline": pipeline, "window": window, "total": total,
                              "count": len(rows), "rows": jsonable_encoder(rows)})
 
     @app.get("/api/review-queue")
@@ -3138,18 +3182,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- Smart next-call priority queue (A) ------------------------------ #
     @app.get("/api/next-calls")
     def next_calls(request: Request, bde: str = "ALL", due_only: bool = False,
-                   tier: str = "", limit: int = 200, gads_only: bool = False) -> JSONResponse:
+                   tier: str = "", limit: int = 200, offset: int = 0,
+                   gads_only: bool = False) -> JSONResponse:
         """The ranked next-call queue (intent x attention x revenue). BDEs see only their own.
-        gads_only scopes the queue to the confirmed-Google-Ads pool (the next-call page passes it)."""
+        gads_only scopes the queue to the confirmed-Google-Ads pool (the next-call page passes it).
+        Returns page rows (limit/offset) PLUS a summary counted over the WHOLE filtered queue so the
+        KPIs (In queue / Hot / Due now / Unassigned) show real totals, not a capped sample."""
         scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
         from ..next_call import list_next_calls
+        # Load the WHOLE Google-Ads queue (cap high) so the page KPIs (In queue / Hot / Due / Unassigned)
+        # are exact — the old default cap of 200 made those stats undercount. The client computes the
+        # KPIs from the full row set; `total` is the true queue size for the header.
+        lim = min(5000, max(1, limit))
+        off = max(0, int(offset or 0))
         rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
                                due_only=bool(due_only), tier=(tier or None),
-                               gads_only=bool(gads_only), limit=min(500, max(1, limit)))
+                               gads_only=bool(gads_only), limit=lim, offset=off)
         u = getattr(request.state, "user", None) or {}
         roster = [r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
                                        "FROM bde_agents WHERE in_scope AND active ORDER BY 1")]
-        return JSONResponse(jsonable_encoder({"rows": rows, "can_assign": can_manage_pipeline(u), "roster": roster}))
+        return JSONResponse(jsonable_encoder({
+            "rows": rows, "can_assign": can_manage_pipeline(u), "roster": roster,
+            "limit": lim, "offset": off, "total": len(rows)}))
 
     @app.post("/api/next-calls/sync")
     async def next_calls_sync(request: Request) -> JSONResponse:
@@ -3587,10 +3641,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if window != "all" and woff is not None and anchor:
             since = (_date.fromisoformat(anchor) - timedelta(days=woff))
         rows = list_pipeline2(pool, bde=(None if scope == "ALL" else scope), due_only=due_only,
-                              gads_only=bool(gads_only), since=since)
+                              gads_only=bool(gads_only), since=since, limit=5000)
         u = getattr(request.state, "user", None) or {}
         return JSONResponse(jsonable_encoder({
-            "rows": rows, "can_assign": can_manage_pipeline(u),
+            "rows": rows, "total": len(rows), "can_assign": can_manage_pipeline(u),
             "roster": [r["bde_name"] for r in q(
                 "SELECT DISTINCT COALESCE(bde_name, extension) AS bde_name FROM bde_agents "
                 "WHERE in_scope AND active ORDER BY 1")],

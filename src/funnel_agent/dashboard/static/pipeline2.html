@@ -257,8 +257,8 @@
 
   <div class="section-head">
     <span class="eyebrow">Call queue</span>
-    <h2>Prospects &amp; their next call</h2>
-    <p>One row per prospect. Rows tinted amber are due to be called now — open a prospect to see full history.</p>
+    <h2>Prospects &amp; their next call <span id="pcount" class="muted" style="font-weight:600;font-size:var(--t-cap)"></span></h2>
+    <p>One row per prospect. Rows tinted amber are due to be called now — open a prospect to see full history. Google-Ads-confirmed prospects only.</p>
   </div>
 
   <div class="table-wrap">
@@ -295,6 +295,8 @@ async function load(){
   }
   if(!CAN){ $('#bdeFilter').parentElement.style.display='none'; }
 
+  const cnt = (d.total!=null) ? d.total : d.rows.length;
+  $('#pcount').textContent = cnt ? `· ${cnt.toLocaleString()} prospect${cnt===1?'':'s'}` : '';
   const cols = CAN
     ? ['Prospect','Last caller','Next BDE','Due','Contract / cadence','Attempts','Status','Reassign']
     : ['Prospect','Last caller','Due','Contract / cadence','Attempts','Status'];

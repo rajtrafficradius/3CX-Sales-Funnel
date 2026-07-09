@@ -445,15 +445,19 @@ def sync_next_call_scores(pool: ConnectionPool, settings: Settings,
 # --------------------------------------------------------------------------- #
 # Read + mutate helpers for the API
 # --------------------------------------------------------------------------- #
-def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
-                    due_only: bool = False, tier: str | None = None,
-                    gads_only: bool = False, limit: int = 200) -> list[dict]:
-    """The ranked next-call worklist for the API. Joins `prospects` for the live
-    business_name/domain and orders by score DESC. `due_only` keeps rows whose
-    suggested time has arrived; `bde`/`tier` narrow the list. `gads_only` scopes to the
-    confirmed-Google-Ads pool (matched by phone or domain)."""
+# GAds scope for the next-call queue: the prospect's dialled number matches a confirmed-Google-Ads
+# business phone, OR its domain is a GAds domain. companies.phone_norm is already last-9-digits and
+# indexed (idx_companies_phone) -> match it directly, no regexp.
+_NC_GADS_FILTER = (
+    "(q.dest9 IN (SELECT co.phone_norm FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
+    "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone_norm,'') <> '') "
+    " OR COALESCE(q.domain, p.domain) IN "
+    "   (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+
+
+def _nc_where(bde, tier, due_only, gads_only, params):
+    """Shared WHERE for the next-call list + summary so both count the SAME set."""
     where = ["q.status = 'open'"]
-    params: dict = {"limit": limit}
     if bde:
         where.append("q.assigned_bde = %(bde)s")
         params["bde"] = bde
@@ -463,12 +467,19 @@ def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
     if due_only:
         where.append("(q.next_best_time IS NULL OR q.next_best_time <= now())")
     if gads_only:
-        where.append(
-            "(q.dest9 IN (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
-            "   FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
-            "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'') "
-            " OR COALESCE(q.domain, p.domain) IN "
-            "   (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+        where.append(_NC_GADS_FILTER)
+    return where
+
+
+def list_next_calls(pool: ConnectionPool, *, bde: str | None = None,
+                    due_only: bool = False, tier: str | None = None,
+                    gads_only: bool = False, limit: int = 200, offset: int = 0) -> list[dict]:
+    """The ranked next-call worklist for the API. Joins `prospects` for the live
+    business_name/domain and orders by score DESC. `due_only` keeps rows whose
+    suggested time has arrived; `bde`/`tier` narrow the list. `gads_only` scopes to the
+    confirmed-Google-Ads pool (matched by phone or domain). `offset` paginates."""
+    params: dict = {"limit": limit, "offset": offset}
+    where = _nc_where(bde, tier, due_only, gads_only, params)
     return fetch_all(
         pool,
         f"""
