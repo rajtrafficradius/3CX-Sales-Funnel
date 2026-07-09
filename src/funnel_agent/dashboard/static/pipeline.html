@@ -134,15 +134,19 @@ const STAGES={
   p1:{label:'RPC callback',blurb:'We reached the decision-maker and they asked us to call back — warm, keep the thread alive and lock the meeting.',icon:'\u{1F4DE}',win:true},
   p3:{label:'Gatekeeper callback',blurb:'We got a gatekeeper, not the decision-maker yet — get through and secure a direct line / callback time.',icon:'\u{1F6E1}️',win:true},
   p4:{label:'Fresh · running ads',blurb:'The full confirmed-Google-Ads data pool — every callable business. Those already worked flow into the pipeline stages above; the rest are fresh first-contacts.',icon:'\u{1F195}',win:false},
-  retry:{label:'Retry calls',blurb:'Dialed but never connected — no answer, voicemail. Re-call at a different time (a fresh 3CX/Aircall line often gets a pickup); stops after the attempt cap.',icon:'\u{1F504}',win:false},
-  reached:{label:'Reached DM · no next step',blurb:'We spoke to the decision-maker but they left no callback or booking (often a soft “not interested” or “send me info”). Warmer than a cold no-answer — keep calling (different time / a different BDE) until they show interest; every call carries the full history.',icon:'\u{1F464}',win:false},
+  retry:{label:'Retry calls',blurb:'Dialed but never connected — no answer, voicemail. Re-call at a different time (a fresh 3CX/Aircall line often gets a pickup); stops after the attempt cap.',icon:'\u{1F504}',win:true},
+  reached:{label:'Reached DM · no next step',blurb:'We spoke to the decision-maker but they left no callback or booking (often a soft “not interested” or “send me info”). Warmer than a cold no-answer — keep calling (different time / a different BDE) until they show interest; every call carries the full history.',icon:'\u{1F464}',win:true},
   p5:{label:'Booked',blurb:'Meeting secured — confirm and prepare the session.',icon:'✅',win:true},
 };
 // Fresh · running ads (p4) is the DATA POOL (the confirmed-Google-Ads source universe), not a
 // pipeline stage — it's rendered separately on top. The pipeline STAGES a prospect flows through:
 const ORDER=['p1','p3','retry','reached','p5'];
-// /datapool = the Fresh data pool (p4); /pipeline/<stage> = a pipeline stage.
-let stage=(location.pathname==='/datapool')?'p4':(location.pathname.split('/').filter(Boolean)[1]||'p1').toLowerCase();
+// Human-readable URL slug per stage: /pipeline/gatekeeper-callback instead of /pipeline/p3.
+const SLUG={p1:'rpc-callback',p3:'gatekeeper-callback',retry:'retry-calls',reached:'reached-no-next-step',p5:'booked'};
+const BY_SLUG=Object.fromEntries(Object.entries(SLUG).map(([k,v])=>[v,k]));
+// /datapool = the Fresh data pool (p4); /pipeline/<slug> = a pipeline stage (legacy /pipeline/p1 codes still work).
+let seg=(location.pathname.split('/').filter(Boolean)[1]||'').toLowerCase();
+let stage=(location.pathname==='/datapool')?'p4':(BY_SLUG[seg]||seg||'p1');
 if(!STAGES[stage]) stage='p1';
 let bde='ALL', win='all', counts={};
 const WINDOWS=[['all','All time'],['today','Today'],['d3','3d'],['d7','7d'],['d14','14d'],['d30','30d']];
@@ -162,7 +166,7 @@ function renderPool(){
     </div>`;
 }
 function renderTabs(){
-  $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('')
+  $('#tabs').innerHTML=ORDER.map(s=>`<a class="tab${s===stage?' active':''}" href="/pipeline/${SLUG[s]||s}">${STAGES[s].icon} ${STAGES[s].label}${counts[s]!=null?`<span class="n">${counts[s]}</span>`:''}</a>`).join('')
     +`<a class="tab" href="/pipeline2">\u{1F501} Existing agency${counts.p2!=null?`<span class="n">${counts.p2}</span>`:''}</a>`;
 }
 function renderToolbar(){
@@ -172,7 +176,9 @@ function renderToolbar(){
 window.setWin=function(w){win=w;renderToolbar();loadBoard();};
 
 function row(r){
-  const biz=esc(r.business_name||r.prospect_company||r.dest_number||r.domain||'—');
+  // Name column: company name, else classified company, else domain. NEVER the phone number
+  // (it's already shown in its own column) — falling back to it made the board show phone-as-name.
+  const biz=esc(r.business_name||r.prospect_company||r.domain||'—');
   const key=(r.dest_number||'').replace(/[^0-9]/g,'');
   const nc=r.next_call_at;
   const ncTxt=nc?`<span class="next-ok">${esc(fmtDate(nc))}</span>${r.next_call_bde?` <span class="sub">${esc(r.next_call_bde)}</span>`:''}`:'<span class="next-none">—</span>';
@@ -225,7 +231,7 @@ async function boot(){
       $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;loadBoard();};
     }
   }catch(e){}
-  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached;} }catch(e){}
+  try{ const p=await api('/api/pipelines5?gads_only=1'); (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;}); if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached; if(p.pools.p2!=null)counts.p2=p.pools.p2;} }catch(e){}
   renderPool(); renderTabs(); renderToolbar(); loadBoard();
 }
 boot();
@@ -239,7 +245,7 @@ boot();
     ['/','/','Dashboard','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>'],
     ['/calendar','/calendar','Calendar','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
     ['/next-calls','/next-calls','Next calls','<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>'],
-    ['/pipeline/p1','/pipeline','Call pipelines','<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
+    ['/pipeline/rpc-callback','/pipeline','Call pipelines','<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/pipeline2','/pipeline2','Agency pipeline','<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'],
     ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],

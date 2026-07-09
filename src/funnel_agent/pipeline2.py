@@ -259,15 +259,33 @@ def assign_prospect(pool: ConnectionPool, dest9: str, bde: str, *, by: str,
     return bool(ok)
 
 
+# Existing-agency prospect is in the confirmed-Google-Ads calling pool when its number (last-9) matches
+# a GAds business's phone, or its domain is a GAds domain. Keeps the board in step with the pipeline
+# board's GAds tab count (the calling layer only works the confirmed-ads pool).
+_GADS_P2_FILTER = (
+    "(pp.dest9 IN (SELECT co.phone_norm "
+    "   FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
+    "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone_norm,'') <> '') "
+    " OR lower(COALESCE(pr.domain,'')) IN (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+
+
 def list_pipeline2(pool: ConnectionPool, *, bde: str | None = None, due_only: bool = False,
-                   limit: int = 500) -> list[dict]:
+                   limit: int = 500, gads_only: bool = False, since=None) -> list[dict]:
     """Pipeline-2 assignment board. `bde` filters to one owner; `due_only` to
-    prospects whose next_action_at has arrived (the actionable call list)."""
+    prospects whose next_action_at has arrived (the actionable call list).
+    `gads_only` scopes to the confirmed-Google-Ads pool so the board matches the
+    pipeline board's Existing-agency tab count (the calling layer only works that pool).
+    `since` (a date) keeps only prospects last called on/after it — the window filter."""
     where = ["pp.pipeline=%(p)s"]
     params: dict = {"p": _P2, "lim": limit}
     if bde and bde != "ALL":
         where.append("pp.assigned_bde=%(bde)s")
         params["bde"] = bde
+    if gads_only:
+        where.append(_GADS_P2_FILTER)
+    if since is not None:
+        where.append("pp.last_call_at::date >= %(since)s")
+        params["since"] = since
     if due_only:
         # DND prospects are NEVER due (they're excluded from the call list entirely).
         where.append("NOT COALESCE(pp.dnd, false) AND pp.next_action_at <= now()")
