@@ -269,6 +269,14 @@ _GADS_P2_FILTER = (
     " OR lower(COALESCE(pr.domain,'')) IN (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
 
 
+# A prospect that has since BOOKED a meeting (any p5 classification wins over "existing agency")
+# is dropped from the agency list so it shows in ONE place only (the Booked pipeline).
+_NOT_BOOKED = (
+    "pp.dest9 NOT IN (SELECT right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) "
+    "  FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+    "  WHERE c.in_scope AND c.dest_number <> '' AND cl.pipeline_stage='p5')")
+
+
 def list_pipeline2(pool: ConnectionPool, *, bde: str | None = None, due_only: bool = False,
                    limit: int = 500, gads_only: bool = False, since=None) -> list[dict]:
     """Pipeline-2 assignment board. `bde` filters to one owner; `due_only` to
@@ -276,7 +284,7 @@ def list_pipeline2(pool: ConnectionPool, *, bde: str | None = None, due_only: bo
     `gads_only` scopes to the confirmed-Google-Ads pool so the board matches the
     pipeline board's Existing-agency tab count (the calling layer only works that pool).
     `since` (a date) keeps only prospects last called on/after it — the window filter."""
-    where = ["pp.pipeline=%(p)s"]
+    where = ["pp.pipeline=%(p)s", _NOT_BOOKED]
     params: dict = {"p": _P2, "lim": limit}
     if bde and bde != "ALL":
         where.append("pp.assigned_bde=%(bde)s")

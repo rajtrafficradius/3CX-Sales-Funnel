@@ -1490,11 +1490,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # "Existing agency" tab count matches the rows the /pipeline2 page actually shows (they were
         # different sources before: classifications vs prospect_pipeline).
         try:
-            from ..pipeline2 import _GADS_P2_FILTER, _P2
+            from ..pipeline2 import _GADS_P2_FILTER, _P2, _NOT_BOOKED
             gclause = (" AND " + _GADS_P2_FILTER) if gads_only else ""
             pa = q("SELECT count(*) n FROM prospect_pipeline pp "
                    "LEFT JOIN prospects pr ON pp.prospect_id=pr.id "
-                   "WHERE pp.pipeline=%(p)s" + gclause, {"p": _P2})
+                   "WHERE pp.pipeline=%(p)s AND " + _NOT_BOOKED + gclause, {"p": _P2})
             pools["p2"] = int(pa[0]["n"]) if pa else 0
         except Exception:
             pass
@@ -1669,9 +1669,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # standalone /pipeline2 assignment page: prospect_pipeline, gads-scoped). Intercept BEFORE the
         # p1/p3/p5 classifications branch, since 'p2' is also a classifications stage-rank. ----
         if pipeline in ("existing-agency", "p2"):
-            from ..pipeline2 import _GADS_P2_FILTER, _P2
+            from ..pipeline2 import _GADS_P2_FILTER, _P2, _NOT_BOOKED
             wf, wp = _win_clause("pp.last_call_at")
-            w = " WHERE pp.pipeline=%(p)s"
+            w = " WHERE pp.pipeline=%(p)s AND " + _NOT_BOOKED
             p2params = {"p": _P2, "lim": limit, "off": offset, **wp}
             if gads_only:
                 w += " AND " + _GADS_P2_FILTER
