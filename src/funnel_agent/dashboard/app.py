@@ -1517,7 +1517,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _CO_NAME_LATERAL = (
         "LEFT JOIN LATERAL (SELECT co.company_name, co.domain FROM companies co "
         "  WHERE co.phone_norm = %(d9col)s AND COALESCE(co.company_name,'') <> '' "
-        "  ORDER BY co.revenue_musd DESC NULLS LAST LIMIT 1) co ON true")
+        "  ORDER BY co.revenue_musd DESC NULLS LAST LIMIT 1) co ON true ")
 
     @app.get("/api/agency-rpc")
     def agency_rpc(request: Request, bde: str = "ALL", limit: int = 500) -> JSONResponse:
