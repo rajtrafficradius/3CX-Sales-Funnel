@@ -1473,15 +1473,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the real 'fresh worklist' size = businesses confirmed running Google Ads (the callable pool)
         ra = q("SELECT count(*) n FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'")
         pools["running_ads"] = int(ra[0]["n"]) if ra else 0
+        # When a BDE is viewing (or a manager filters to one BDE), the retry/reached/agency tab counts
+        # must reflect THAT BDE's prospects — matching the board rows, which filter by last/assigned BDE.
+        bde_scoped = bool(bde and bde != "ALL")
         # Retry pool — confirmed-ads prospects dialed but NOT converted (no answer / voicemail / not
         # interested), under the attempt cap. Scoped to GAds when the board asks (gads_only).
         try:
             from ..retry import _gather_sql, reached_no_next_sql
-            rc = q("SELECT count(*) n FROM (" + _gather_sql(gads_only=bool(gads_only)) + ") rr",
-                   {"maxatt": settings.retry_max_attempts})
+            rf = " WHERE rr.last_bde = %(bde)s" if bde_scoped else ""
+            rc = q("SELECT count(*) n FROM (" + _gather_sql(gads_only=bool(gads_only)) + ") rr" + rf,
+                   {"maxatt": settings.retry_max_attempts, "bde": bde})
             pools["retry"] = int(rc[0]["n"]) if rc else 0
             # reached the DM but no callback/booking (warm, worked manually) — its own tab.
-            rn = q("SELECT count(*) n FROM (" + reached_no_next_sql(gads_only=bool(gads_only)) + ") xx")
+            xf = " WHERE xx.last_bde = %(bde)s" if bde_scoped else ""
+            rn = q("SELECT count(*) n FROM (" + reached_no_next_sql(gads_only=bool(gads_only)) + ") xx" + xf,
+                   {"bde": bde})
             pools["reached"] = int(rn[0]["n"]) if rn else 0
         except Exception:
             pools["retry"] = 0
@@ -1492,9 +1498,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             from ..pipeline2 import _GADS_P2_FILTER, _P2, _NOT_BOOKED
             gclause = (" AND " + _GADS_P2_FILTER) if gads_only else ""
+            bclause = " AND COALESCE(pp.assigned_bde, pp.last_bde) = %(bde)s" if bde_scoped else ""
             pa = q("SELECT count(*) n FROM prospect_pipeline pp "
                    "LEFT JOIN prospects pr ON pp.prospect_id=pr.id "
-                   "WHERE pp.pipeline=%(p)s AND " + _NOT_BOOKED + gclause, {"p": _P2})
+                   "WHERE pp.pipeline=%(p)s AND " + _NOT_BOOKED + gclause + bclause, {"p": _P2, "bde": bde})
             pools["p2"] = int(pa[0]["n"]) if pa else 0
         except Exception:
             pass
@@ -2145,7 +2152,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   "  AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%(d)s "
                   "  AND COALESCE(c.bde_name, c.bde_extension)=%(b)s "
                   "UNION ALL SELECT 1 FROM prospect_pipeline WHERE dest9=%(d)s AND assigned_bde=%(b)s "
-                  "UNION ALL SELECT 1 FROM next_call_queue WHERE dest9=%(d)s AND assigned_bde=%(b)s LIMIT 1",
+                  "UNION ALL SELECT 1 FROM next_call_queue WHERE dest9=%(d)s AND assigned_bde=%(b)s "
+                  # a pending calendar call (fresh-ads / retry / callback) assigned to this BDE — so a rep
+                  # can open the very prospect their calendar told them to ring, even with no calls yet.
+                  "UNION ALL SELECT 1 FROM calendar_events WHERE bde_name=%(b)s AND status='pending' "
+                  "  AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%(d)s LIMIT 1",
                   {"d": d9, "b": own})
             return bool(r)
         except Exception:
@@ -3639,9 +3650,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(jsonable_encoder({**r, "coverage": cov, "token": token}))
 
     # ---- Pipeline 2 assignment board (rotation + cadence) --------------- #
-    @app.get("/pipeline2", response_class=HTMLResponse)
-    def pipeline2_page() -> str:
-        return HTMLResponse(_static("pipeline2.html"), headers=_NOCACHE)
+    @app.get("/pipeline2")
+    def pipeline2_page():
+        # The standalone assignment board was merged INTO the pipeline board's "Existing agency" tab
+        # (one place for the agency list + assign/DND/cadence/sync). Old links redirect there.
+        return RedirectResponse("/pipeline/existing-agency", status_code=307)
 
     # ---- Agency & RPC Connected (BDE-sourced reference view, off-calendar) --- #
     @app.get("/agency-rpc", response_class=HTMLResponse)
