@@ -173,6 +173,17 @@ real conversation; no meeting_confirmation_only or meeting_rescheduled without m
 meeting_confirmation_only and meeting_rescheduled are mutually exclusive (never both TRUE). When
 the transcript is too short or garbled to judge, prefer false + low confidence.
 
+NOT A PROSPECT (check FIRST). Set not_a_prospect=TRUE when this call is not a sales-prospect call at
+all — judge by its PURPOSE, not stray words:
+- RECRUITMENT / HR: our agent is calling a JOB CANDIDATE — about a role/position, their application,
+  resume/CV or LinkedIn profile, "expanding our team", "join our team", an interview, their career.
+  (Our own BDEs sometimes make hiring calls on behalf of HR. A call OFFERING someone a JOB is
+  recruitment, NOT a marketing pitch — even if we introduce ourselves as a digital-marketing company.)
+- INTERNAL / colleague / supplier / vendor / personal / test call.
+When not_a_prospect=TRUE, the call is EXCLUDED from the sales funnel: it is NOT a booking, lead, RPC,
+full pitch or any pipeline — set meeting_booked, is_lead, qualified, rpc_connect, full_pitch to false,
+booking_status="none", pipeline="none". For a genuine sales call to a business prospect, leave it FALSE.
+
 LEAD QUALIFICATION — BANT + AO. Judge each from what the PROSPECT actually revealed on THIS call.
 Quote real evidence; if a signal is neither confirmed nor contradicted, set value=false + low
 confidence (do NOT assume) — EXCEPT where the auto-validation rule below applies.

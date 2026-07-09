@@ -152,6 +152,8 @@ WITH base AS (
     LEFT JOIN classifications cl ON cl.call_id = c.call_id
     LEFT JOIN qualification_overrides qo ON qo.call_id = c.call_id
     WHERE c.in_scope
+      -- recruitment/internal/personal calls are not sales-prospect calls -> out of the funnel entirely
+      AND NOT COALESCE(cl.not_a_prospect, false)
       AND c.started_at >= %(start)s AND c.started_at < %(end)s
 )
 SELECT

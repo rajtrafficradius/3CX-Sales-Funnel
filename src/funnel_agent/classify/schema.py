@@ -66,6 +66,13 @@ class CallClassification(BaseModel):
     # before committing to the per-stage verdicts below. This materially improves
     # accuracy on the judgement stages.
     analysis: str
+    # TRUE when this call is NOT a sales-prospect call at all — judge by the call's PURPOSE:
+    #   * RECRUITMENT / HR: our BDE is calling a JOB CANDIDATE about a role, their application/resume/
+    #     LinkedIn profile, joining our team, an interview — i.e. hiring, not selling.
+    #   * INTERNAL / colleague / supplier / personal / test call.
+    # These are excluded from the sales funnel ENTIRELY — never a booking, lead, RPC, or prospect. When
+    # TRUE, all the sales verdicts below (meeting_booked, is_lead, rpc_connect, pipeline …) are ignored.
+    not_a_prospect: bool
     who_answered: str  # e.g. "owner/decision-maker", "gatekeeper/receptionist", "voicemail", "wrong number"
     prospect_summary: str  # what the PROSPECT said: their business, needs, objections, commitments
     bde_summary: str       # what the BDE (our agent) said/did: intro, pitch, offer, next step secured

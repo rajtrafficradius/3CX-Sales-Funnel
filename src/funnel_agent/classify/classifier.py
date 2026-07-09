@@ -201,6 +201,9 @@ def derive_pipeline_stage(v: CallClassification) -> str:
     # A tentative-with-a-time counts as a NEW booking ONLY if it isn't really a callback: a prospect
     # who says "call me back tomorrow at 11" to continue a cold call is a CALLBACK (p1), not a booked
     # meeting — the classifier often tags that as booking_status='tentative' with a time, so exclude it.
+    # A non-prospect call (recruitment / internal / personal) is NEVER a pipeline stage.
+    if getattr(v, "not_a_prospect", False):
+        return "none"
     new_booking = (
         (v.meeting_booked.value
          or (v.booking_status == "tentative" and _has_meeting_time(v.meeting_datetime)
@@ -321,6 +324,7 @@ def _all_false_verdict(outcome: str, note: str) -> CallClassification:
     )
     return CallClassification(
         analysis=note,
+        not_a_prospect=False,   # an unanswered/voicemail dial — nothing to judge
         who_answered="n/a",
         prospect_summary="",
         bde_summary="",
@@ -484,6 +488,7 @@ class Classifier:
             "prospect_mobile": v.prospect_mobile or None,
             "prospect_email": v.prospect_email or None,
             "call_outcome": v.call_outcome,
+            "not_a_prospect": bool(getattr(v, "not_a_prospect", False)),
             "evidence": v.model_dump(),
             "model": model,
             "needs_human_review": needs_review,
@@ -510,7 +515,7 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 pipeline, pipeline_stage, callback_requested, callback_when, contract_end, recommended_cadence_days,
                 prospect_company, prospect_website, prospect_industry,
                 prospect_contact_name, prospect_mobile, prospect_email,
-                call_outcome, evidence, model, classified_at, needs_human_review)
+                call_outcome, not_a_prospect, evidence, model, classified_at, needs_human_review)
             VALUES (
                 %(call_id)s, %(rpc_connect)s, %(rpc_confidence)s, %(full_pitch)s, %(pitch_confidence)s,
                 %(is_lead)s, %(lead_confidence)s, %(qualified)s, %(qual_confidence)s, %(meeting_booked)s,
@@ -523,7 +528,7 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 %(pipeline)s, %(pipeline_stage)s, %(callback_requested)s, %(callback_when)s, %(contract_end)s, %(recommended_cadence_days)s,
                 %(prospect_company)s, %(prospect_website)s, %(prospect_industry)s,
                 %(prospect_contact_name)s, %(prospect_mobile)s, %(prospect_email)s,
-                %(call_outcome)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
+                %(call_outcome)s, %(not_a_prospect)s, %(evidence)s, %(model)s, %(classified_at)s, %(needs_human_review)s)
             ON CONFLICT (call_id) DO UPDATE SET
                 rpc_connect = EXCLUDED.rpc_connect, rpc_confidence = EXCLUDED.rpc_confidence,
                 full_pitch = EXCLUDED.full_pitch, pitch_confidence = EXCLUDED.pitch_confidence,
@@ -553,6 +558,7 @@ def upsert_classification(pool: ConnectionPool, rec: dict) -> None:
                 prospect_contact_name = EXCLUDED.prospect_contact_name,
                 prospect_mobile = EXCLUDED.prospect_mobile, prospect_email = EXCLUDED.prospect_email,
                 call_outcome = EXCLUDED.call_outcome,
+                not_a_prospect = EXCLUDED.not_a_prospect,
                 evidence = EXCLUDED.evidence, model = EXCLUDED.model,
                 classified_at = EXCLUDED.classified_at,
                 needs_human_review = EXCLUDED.needs_human_review

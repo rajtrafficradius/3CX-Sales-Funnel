@@ -77,12 +77,16 @@ CREATE TABLE IF NOT EXISTS classifications (
   prospect_website   text,       -- bare domain; enrichment cache key
   prospect_industry  text,
   call_outcome       text,
+  -- TRUE when the call is NOT a sales-prospect call (recruitment/HR, internal, personal) — excluded
+  -- from the funnel + pipelines entirely. See classify.schema.CallClassification.not_a_prospect.
+  not_a_prospect     boolean NOT NULL DEFAULT false,
   evidence           jsonb,
   model              text,
   classified_at      timestamptz,
   needs_human_review boolean NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_class_review ON classifications (needs_human_review);
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS not_a_prospect boolean NOT NULL DEFAULT false;
 -- Forward-compatible: add new columns on existing DBs.
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS meeting_confirmation boolean;
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS meeting_rescheduled boolean;
