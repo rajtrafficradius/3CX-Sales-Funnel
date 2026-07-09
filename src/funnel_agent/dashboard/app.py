@@ -3079,9 +3079,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _audit_status(domain: str) -> dict:
         row = q("SELECT dataforseo FROM enrichment WHERE domain=%s", (domain,))
         df = (row[0].get("dataforseo") if row else None) or {}
+        # 'done' = the dataset was FETCHED (key present), NOT that it's non-empty — a domain with 0
+        # organic keywords still yields a valid (empty) SEO audit, and must count as done or the ensure
+        # re-fetches forever and the report never shows as complete.
         return {"base": bool(df.get("rank") or df.get("ads") or df.get("found")),
-                "seo": bool(df.get("audit") and df.get("ranked_kw")),
-                "competitor": bool(df.get("competitor_audit"))}
+                "seo": ("audit" in df),
+                "competitor": ("competitor_audit" in df)}
 
     @app.post("/api/prospect/{key}/audit/ensure")
     async def prospect_audit_ensure(request: Request, key: str) -> JSONResponse:
