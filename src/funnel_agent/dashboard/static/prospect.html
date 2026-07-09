@@ -1128,7 +1128,11 @@ async function load(){
   try{ const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)); d=await r.json(); if(!r.ok) throw new Error(d.error||r.status); }
   catch(e){ document.getElementById('main').innerHTML='<div class="card full">Could not load prospect ('+esc(e.message)+')</div>'; return; }
   if(!d.found){ document.getElementById('main').innerHTML='<div class="card full">No prospect or calls found for <b>'+esc(KEY)+'</b>.</div>'; return; }
-  document.querySelector('header h1').textContent = (d.master&&d.master.business_name)||d.domain||KEY;
+  // Name: master-file name → D&B company name (fresh/data-pool prospects only live in `companies`)
+  // → domain → the dialled number as a last resort.
+  const _co0=(d.companies&&d.companies[0])||null;
+  document.querySelector('header h1').textContent =
+    (d.master&&d.master.business_name) || (_co0&&(_co0.company_name||_co0.business_name)) || d.domain || KEY;
   // The 6 sections exactly as requested.
   function messagesCard(d){
     const ms=(d.messages||[]);

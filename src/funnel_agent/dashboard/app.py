@@ -2474,10 +2474,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return master, (master["domain"] if master else domain), None
         norm = _norm_phone(key)
         master = None
+        domain = None
         if norm:
             m = q("SELECT * FROM prospects WHERE %s = ANY(phones_norm) LIMIT 1", (norm,))
             master = m[0] if m else None
-        return master, (master["domain"] if master else None), norm
+            domain = master["domain"] if master else None
+            if not domain:
+                # Fresh-ads / data-pool prospects (e.g. an auto-scheduled "Fresh · running ads" call)
+                # live only in the D&B `companies` table, not in `prospects`. Resolve their domain by
+                # phone so the page shows the business + enrichment + audit instead of a bare number.
+                # Prefer a confirmed-Google-Ads domain (matches the fresh call that was scheduled).
+                co = q("SELECT co.domain FROM companies co LEFT JOIN enrichment e ON e.domain=co.domain "
+                       "WHERE co.phone_norm=%s AND COALESCE(co.domain,'')<>'' "
+                       "ORDER BY (COALESCE(e.dataforseo->>'running_google_ads','')='true') DESC, "
+                       "co.revenue_musd DESC NULLS LAST LIMIT 1", (norm,))
+                domain = co[0]["domain"] if co else None
+        return master, domain, norm
 
     _whois_inflight: set = set()
     _whois_lock = threading.Lock()
