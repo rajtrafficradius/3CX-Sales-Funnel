@@ -15,7 +15,8 @@ DataForSEO membership (running_google_ads) is populated only on Railway, so this
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from psycopg_pool import ConnectionPool
 
@@ -153,61 +154,61 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
     if not roster:
         return {"skipped": "no_active_bdes", "resolved": resolved}
 
-    # (2) remaining need per BDE = target − ALL their pending calls (follow-ups + retries + fresh). A BDE
-    #     already holding 200 due callbacks/recalls/retries gets no fresh; one with 30 gets 170 fresh.
-    pend = {r["bde_name"]: r["n"] for r in _fetch(pool,
-        "SELECT bde_name, count(*) n FROM calendar_events "
-        "WHERE status='pending' AND type IN ('callback','recall','retry','reached_call','fresh_call') GROUP BY bde_name")}
-    remaining = {b: max(0, target - int(pend.get(b, 0))) for b in roster}
-    need = sum(remaining.values())
-    if need <= 0:
-        return {"scheduled": 0, "resolved": resolved, "remaining_capacity": 0,
-                "note": "all BDE worklists already at target"}
+    zone = ZoneInfo(tz)
+    horizon = int(getattr(settings, "fresh_alloc_horizon_days", 14) or 14)
+    # the next N WORKING days (skip weekends) — we fill each BDE to `target` on each of these.
+    days: list[date] = []
+    d = datetime.now(zone).date()
+    while len(days) < horizon:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=1)
+
+    # (2) existing pending calls per (BDE, day) — the shortfall to `target` on each day is what fresh fills.
+    pend: dict[tuple, int] = {}
+    for r in _fetch(pool,
+            "SELECT bde_name, (start_at AT TIME ZONE %s)::date d, count(*) n FROM calendar_events "
+            "WHERE status='pending' AND type IN ('callback','recall','retry','reached_call','fresh_call') "
+            "GROUP BY 1,2", (tz,)):
+        if r["bde_name"] and r["d"]:
+            pend[(r["bde_name"], r["d"])] = int(r["n"])
+    total_need = sum(max(0, target - pend.get((b, dy), 0)) for b in roster for dy in days)
+    if total_need <= 0:
+        return {"scheduled": 0, "resolved": resolved, "note": "every BDE already at target across the horizon"}
 
     # (3) rank prospects by value; rank BDEs by 90-day performance.
     perf, team_mean = _bde_perf_90d(pool, int(getattr(settings, "fresh_alloc_perf_shrink_k", 40)))
-    cands = _fresh_candidates(pool, need)
+    cands = _fresh_candidates(pool, total_need)
     if not cands:
-        return {"scheduled": 0, "resolved": resolved, "remaining_capacity": need,
+        return {"scheduled": 0, "resolved": resolved, "remaining_capacity": total_need,
                 "note": "no fresh candidates (pool empty locally / all worked)"}
-    # perf-sorted roster (best first); unknown BDEs default to team mean so new hires get a fair slate.
     order = sorted(roster, key=lambda b: (-perf.get(b, team_mean), b))
 
-    # (4) round-robin the value-sorted candidates through the perf-sorted roster: candidate 0 (highest
-    #     value) → best BDE, candidate 1 → 2nd best, … so higher performers systematically receive
-    #     higher-value prospects while every BDE fills evenly toward the cap.
-    live = [b for b in order if remaining[b] > 0]
-    assign: dict[str, list[dict]] = {b: [] for b in roster}
-    i = 0
-    for cand in cands:
-        if not live:
-            break
-        b = live[i % len(live)]
-        assign[b].append(cand)
-        remaining[b] -= 1
-        if remaining[b] <= 0:
-            live.remove(b)
-            i = i % len(live) if live else 0
-            continue
-        i += 1
-
-    # (5) build the rows, spread across business hours per BDE, then ONE batched insert (the worklist
-    #     can be ~200×BDEs rows, so per-row round-trips would be far too slow over the network).
-    zone_open = next_best_time(datetime.now(), tz=tz)   # next real business slot (tz-aware)
-    step = max(5, (8 * 60) // max(1, target))            # minutes between a BDE's calls (09:00–17:00)
+    # (4)+(5) fill DAY BY DAY (near days first, across all BDEs), value×performance matched, so the
+    #     calendar shows ~target×BDEs per working day until the finite fresh pool is exhausted. Each
+    #     BDE's calls that day are spread across business hours.
+    step = max(1, (8 * 60) // max(1, target))
     to_insert = []
-    for b, items in assign.items():
-        for j, cand in enumerate(items):
-            start = next_best_time(zone_open + timedelta(minutes=step * j), tz=tz)
-            rv = cand.get("revenue_musd")
-            val = _revenue_score(rv, 50.0)
-            title = f"Fresh · running ads — {cand.get('business_name') or cand.get('domain') or cand['dest_number']}"
-            notes = (f"Confirmed running Google Ads. Value score {val:.0f}"
-                     + (f" (${round(rv)}M)" if rv else "") + f". Matched to {b} (perf {perf.get(b, team_mean):.0f}).")
-            to_insert.append((b, title, start, cand["dest_number"], notes))
+    ci = 0
+    for dy in days:
+        if ci >= len(cands):
+            break
+        for b in order:                                   # highest-perf BDE picks first each day
+            need = max(0, target - pend.get((b, dy), 0))
+            for k in range(need):
+                if ci >= len(cands):
+                    break
+                cand = cands[ci]; ci += 1
+                start = datetime.combine(dy, time(9, 0), tzinfo=zone) + timedelta(minutes=step * k)
+                rv = cand.get("revenue_musd")
+                val = _revenue_score(rv, 50.0)
+                title = f"Fresh · running ads — {cand.get('business_name') or cand.get('domain') or cand['dest_number']}"
+                notes = (f"Confirmed running Google Ads. Value score {val:.0f}"
+                         + (f" (${round(rv)}M)" if rv else "") + f". Matched to {b} (perf {perf.get(b, team_mean):.0f}).")
+                to_insert.append((b, title, start, cand["dest_number"], notes))
     scheduled = _insert_fresh_calls_batch(pool, to_insert)
     stats = {"scheduled": scheduled, "resolved": resolved, "bdes": len(roster),
-             "need": need, "candidates": len(cands)}
+             "need": total_need, "candidates": len(cands), "days": len(days)}
     log.info("fresh_alloc_done", **stats)
     return stats
 

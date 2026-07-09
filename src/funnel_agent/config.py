@@ -227,6 +227,10 @@ class Settings(BaseSettings):
     # fully-enriched, value×90-day-performance-matched prospects. 0 disables the allocator.
     fresh_alloc_enabled: bool = True
     bde_daily_call_target: int = 200
+    # Spread the fresh worklist across this many upcoming WORKING days at target/day/BDE (so the
+    # calendar shows an even ~target×BDEs per day), instead of dumping it all on the next day. The
+    # finite fresh pool naturally tapers off once exhausted.
+    fresh_alloc_horizon_days: int = 14
     # empirical-Bayes shrink for 90-day BDE rates (higher = trust low-volume BDEs less; blend to mean).
     fresh_alloc_perf_shrink_k: int = 40
 
