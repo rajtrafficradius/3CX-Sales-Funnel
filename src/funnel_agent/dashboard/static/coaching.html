@@ -264,6 +264,13 @@ async function load(){
   $('#main').innerHTML = fb + rpcCard + score + winning + trend + dev;
 }
 loadBdes();
+/* LIVE: refresh coaching on server push (SSE /api/events) + 60s poll fallback; pause when hidden. */
+(function(){var es,rt;function go(){ if(!document.hidden){ try{ load(); }catch(e){} } }
+  setInterval(go,60000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) go(); });
+  (function s(){ try{ es=new EventSource('/api/events'); es.addEventListener('refresh',go);
+    es.onerror=function(){ if(es&&es.readyState===2&&!rt) rt=setTimeout(function(){rt=null;s();},5000); }; }catch(e){} })();
+})();
 </script>
 <script>(function(){
   var el=document.documentElement;

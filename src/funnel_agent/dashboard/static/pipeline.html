@@ -270,8 +270,8 @@ function p2Row(r){
   }
   return `<tr class="${due?'':''}">${cells}</tr>`;
 }
-async function loadBoardP2(){
-  $('#board').innerHTML='<div class="loadwrap"><span class="spin"></span>Loading…</div>';
+async function loadBoardP2(silent){
+  if(!silent) $('#board').innerHTML='<div class="loadwrap"><span class="spin"></span>Loading…</div>';
   try{
     const d=await api(`/api/pipeline2?bde=${encodeURIComponent(bde)}&window=${win}`);
     P2.can=!!d.can_assign; P2.roster=d.roster||[];
@@ -284,7 +284,7 @@ async function loadBoardP2(){
     $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(p2Row).join('')}</tbody></table>${sync}`;
     const sb=document.getElementById('p2sync');
     if(sb) sb.onclick=async()=>{ try{ const j=await api('/api/pipeline2/sync',{method:'POST'}); alert('Synced: '+(j.stats?j.stats.prospects:'?')+' prospects, '+(j.stats?j.stats.reassigned:'?')+' reassigned'); loadBoardP2(); }catch(e){ alert('Sync error: '+e.message); } };
-  }catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
+  }catch(e){ if(!silent) $('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>'; }
 }
 // reassign / DND actions (delegated, only fire on the agency board's controls)
 document.addEventListener('click', async e=>{
@@ -299,21 +299,39 @@ document.addEventListener('click', async e=>{
   catch(err){ alert('Error: '+err.message); }
 });
 
-async function loadBoard(){
-  if(stage==='p2') return loadBoardP2();
-  $('#board').innerHTML='<div class="loadwrap"><span class="spin"></span>Loading…</div>';
+async function loadBoard(silent){
+  if(stage==='p2') return loadBoardP2(silent);
+  if(!silent) $('#board').innerHTML='<div class="loadwrap"><span class="spin"></span>Loading…</div>';
   try{
     const d=await api(`/api/pipeline5-prospects?pipeline=${stage}&window=${win}&bde=${encodeURIComponent(bde)}&limit=${PAGE}&offset=${page*PAGE}&gads_only=1`);
     const rows=d.rows||[];
     const total=(d.total!=null)?d.total:rows.length;
-    if(!rows.length && page>0){ page=0; return loadBoard(); }   // ran past the last page → snap back
+    if(!rows.length && page>0){ page=0; return loadBoard(silent); }   // ran past the last page → snap back
     if(!rows.length){$('#board').innerHTML='<div class="empty">Nothing in this pipeline'+(bde!=='ALL'?' for '+esc(bde):'')+' right now.</div>';return;}
     const head = stage==='p4'
       ? '<th>Business</th><th>Phone</th><th>Industry</th><th class="r">Revenue</th><th>Next call</th>'
       : `<th>Prospect</th><th>Phone</th><th>Temp</th><th class="r">Calls</th><th>Last call</th><th>Next call</th><th>BDE</th>`;
     $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>${pager(total)}`;
-  }catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
+  }catch(e){ if(!silent) $('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>'; }
 }
+
+// Live auto-refresh: the pipeline counts + board update as BDEs keep calling (the cloud loop ingests
+// and re-classifies new calls continuously). Poll every 60s; skip while the tab is hidden.
+async function refreshCounts(){
+  try{
+    const p=await api('/api/pipelines5?gads_only=1');
+    (p.rows||[]).forEach(r=>{counts[r.pipeline]=Object.values(r.counts||{}).length?Math.max(...Object.values(r.counts)):null;});
+    if(p.pools){counts.p4=p.pools.running_ads; counts.retry=p.pools.retry; counts.reached=p.pools.reached; if(p.pools.p2!=null)counts.p2=p.pools.p2;}
+    renderPool(); renderTabs();
+  }catch(e){}
+}
+(function(){  // LIVE: refresh on server push (SSE /api/events) + 60s poll fallback; pause when hidden
+  var es,rt; function go(){ if(!document.hidden){ refreshCounts(); loadBoard(true); } }
+  setInterval(go,60000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) go(); });
+  (function s(){ try{ es=new EventSource('/api/events'); es.addEventListener('refresh',go);
+    es.onerror=function(){ if(es&&es.readyState===2&&!rt) rt=setTimeout(function(){rt=null;s();},5000); }; }catch(e){} })();
+})();
 
 async function boot(){
   const meta=STAGES[stage]||STAGES.p1;

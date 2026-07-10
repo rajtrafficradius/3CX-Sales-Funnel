@@ -511,6 +511,14 @@ function closeEvent(){ $('#evModal').classList.remove('show'); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeEvent(); });
 
 boot().catch(e=>{document.querySelector('main').innerHTML='<div class="muted" style="padding:20px">Could not load calendar ('+e.message+'). <a href="/login">Sign in</a></div>';});
+/* LIVE: refresh on server push (SSE /api/events) + 60s poll fallback; pause when hidden. load()
+   re-fetches the currently-viewed month, so the view is preserved. */
+(function(){var es,rt;function go(){ if(!document.hidden){ try{ load(); }catch(e){} } }
+  setInterval(go,60000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) go(); });
+  (function s(){ try{ es=new EventSource('/api/events'); es.addEventListener('refresh',go);
+    es.onerror=function(){ if(es&&es.readyState===2&&!rt) rt=setTimeout(function(){rt=null;s();},5000); }; }catch(e){} })();
+})();
 </script>
 <div id="evModal" class="evmodal" onclick="if(event.target===this)closeEvent()">
   <div id="evCard" class="evcard"></div>
