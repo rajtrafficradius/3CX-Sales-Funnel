@@ -438,8 +438,8 @@ def compute_backlink_gap(our_summary: dict | None,
         "notable": notable[:5],
     }
     if not available:
-        out["note"] = ("Backlink profile not available (the DataForSEO plan on this account may "
-                       "not include the Backlinks API) — treat authority-building as a checklist item.")
+        out["note"] = ("Backlink profile not available for this snapshot — "
+                       "treat authority-building as a checklist item.")
     return out
 
 
@@ -677,15 +677,15 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
     client = DataForSEOClient(settings)
     brands = brand_tokens(domain)
     assumptions = [
-        "Competitor set = DataForSEO Labs SERP competitors, with generic mega-sites "
-        "(social/marketplaces/directories/news) filtered out; may miss rivals that don't overlap "
-        "in organic search.",
-        "Competitor estimated traffic = DataForSEO ETV (an estimate, not measured analytics).",
+        "Competitor set = the domains that rank alongside you in Google search, with generic "
+        "mega-sites (social/marketplaces/directories/news) filtered out; may miss rivals that "
+        "don't overlap in organic search.",
+        "Competitor traffic is estimated from search-ranking data (an estimate, not measured analytics).",
         f"Keyword gap computed against the top {GAP_COMPETITORS} REAL competitor, and shows only "
         "high-value, non-branded 'money' keywords (ranked by search volume x CPC), not the long tail.",
         "'est_capture_traffic' = search volume x an assumed position-5 click-through rate — an "
         "estimate of upside, not a promise.",
-        "Backlink/off-page analysis is disabled to control cost — treat authority-building as a "
+        "Backlink/off-page analysis isn't included in this snapshot — treat authority-building as a "
         "checklist item.",
     ]
     try:
