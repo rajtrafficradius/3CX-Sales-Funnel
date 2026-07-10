@@ -969,7 +969,7 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
         'handing to competitors and to gaps in its own site. Closing it means coordinated SEO, content, technical fixes and '
         'smarter paid — the kind of sustained, specialist work that’s hard to do in-house while running a business.</p>'
         '<div class="ctabtn">Book a 30-minute strategy call →</div>'
-        '<div class="rr">No lock-in contracts · Australian team · transparent monthly reporting · we start with the fast wins so you see movement early.</div></div>'), num=False)
+        '<div class="rr">Australian team · transparent monthly reporting · we start with the fast wins so you see movement early.</div></div>'), num=False)
 
     # Methodology
     asmp = "".join(f'<li>{_esc(a)}</li>' for a in (m.get("assumptions") or []) if a)
