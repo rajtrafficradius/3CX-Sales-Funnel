@@ -24,6 +24,7 @@ from .config import Settings
 from .logging import get_logger
 from .next_call import _revenue_score, next_best_time
 from .pipeline2 import calling_bdes
+from .prospects import gads_dnb_gate
 
 log = get_logger(__name__)
 
@@ -84,9 +85,10 @@ def _fresh_candidates(pool: ConnectionPool, limit: int) -> list[dict]:
     # FULLY-ENRICHED gate (user rule): a BDE only calls confirmed-ads prospects whose enrichment is
     # complete — website + Apollo + business intel present (DataForSEO is implied by pool membership).
     sql = f"""
-    WITH ads AS (SELECT domain FROM enrichment
-                 WHERE (dataforseo->>'running_google_ads')='true'
-                   AND website IS NOT NULL AND apollo IS NOT NULL AND business_intel IS NOT NULL),
+    WITH ads AS (SELECT e.domain FROM enrichment e
+                 WHERE (e.dataforseo->>'running_google_ads')='true'
+                   {gads_dnb_gate('e')}
+                   AND e.website IS NOT NULL AND e.apollo IS NOT NULL AND e.business_intel IS NOT NULL),
     picked AS (
       SELECT DISTINCT ON (a.domain) a.domain,
         co.company_name AS business_name,

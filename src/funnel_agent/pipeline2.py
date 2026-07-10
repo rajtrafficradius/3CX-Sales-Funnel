@@ -21,6 +21,7 @@ from psycopg_pool import ConnectionPool
 
 from .db import fetch_all, fetch_one
 from .logging import get_logger
+from .prospects import gads_dnb_gate
 
 log = get_logger(__name__)
 
@@ -265,8 +266,10 @@ def assign_prospect(pool: ConnectionPool, dest9: str, bde: str, *, by: str,
 _GADS_P2_FILTER = (
     "(pp.dest9 IN (SELECT co.phone_norm "
     "   FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
-    "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone_norm,'') <> '') "
-    " OR lower(COALESCE(pr.domain,'')) IN (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+    "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone_norm,'') <> ''"
+    + gads_dnb_gate("ge") + ") "
+    " OR lower(COALESCE(pr.domain,'')) IN (SELECT e.domain FROM enrichment e "
+    "   WHERE (e.dataforseo->>'running_google_ads')='true'" + gads_dnb_gate("e") + "))")
 
 
 # A prospect that has since BOOKED a meeting (any p5 classification wins over "existing agency")

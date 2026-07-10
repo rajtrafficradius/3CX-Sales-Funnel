@@ -39,6 +39,7 @@ from .calendar import guess_when, update_event
 from .config import Settings
 from .db import fetch_all
 from .logging import get_logger
+from .prospects import gads_dnb_gate
 
 log = get_logger(__name__)
 
@@ -450,9 +451,11 @@ def sync_next_call_scores(pool: ConnectionPool, settings: Settings,
 # indexed (idx_companies_phone) -> match it directly, no regexp.
 _NC_GADS_FILTER = (
     "(q.dest9 IN (SELECT co.phone_norm FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
-    "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone_norm,'') <> '') "
+    "   WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone_norm,'') <> ''"
+    + gads_dnb_gate("ge") + ") "
     " OR COALESCE(q.domain, p.domain) IN "
-    "   (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+    "   (SELECT e.domain FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+    + gads_dnb_gate("e") + "))")
 
 
 def _nc_where(bde, tier, due_only, gads_only, params):

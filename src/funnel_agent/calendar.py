@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from psycopg_pool import ConnectionPool
 
 from .logging import get_logger
+from .prospects import gads_dnb_gate
 
 log = get_logger(__name__)
 
@@ -255,9 +256,11 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
             " AND (right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) IN "
             "        (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
             "         FROM enrichment e2 JOIN companies co ON co.domain=e2.domain "
-            "         WHERE (e2.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'') "
+            "         WHERE (e2.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>''"
+            + gads_dnb_gate("e2") + ") "
             "      OR lower(COALESCE(cl.prospect_website,'')) IN "
-            "        (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+            "        (SELECT e.domain FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+            + gads_dnb_gate("e") + "))")
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT c.call_id, COALESCE(c.bde_name, c.bde_extension) AS bde_name, c.dest_number, "

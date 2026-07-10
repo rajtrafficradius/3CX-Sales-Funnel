@@ -242,8 +242,9 @@ function metric(n,l,src){ return `<div class="metric"><div class="n">${n}</div><
 // call stage. Removes the "P3 · Gatekeeper callback looks like a GAds pipeline slot" confusion.
 function poolChip(a){
   a=a||{};
-  if(a.in_gads_pool) return `<span class="pill" style="background:rgba(63,185,80,.14);color:#3fb950;border:1px solid rgba(63,185,80,.35)" title="Confirmed running Google Ads (Transparency Center) — this prospect appears on the Google Ads pipeline boards">🎯 In Google Ads pool</span>`;
-  const why = !a.has_website ? 'No website on file — can’t confirm Google Ads, so not in the pool'
+  if(a.in_gads_pool) return `<span class="pill" style="background:rgba(63,185,80,.14);color:#3fb950;border:1px solid rgba(63,185,80,.35)" title="Confirmed running Google Ads (Transparency Center) + D&amp;B-backed — this prospect appears on the Google Ads pipeline boards">🎯 In Google Ads pool</span>`;
+  const why = a.running ? 'Runs Google Ads, but we hold no D&B data for it — worked as a BDE follow-up, not counted in the Google Ads pool'
+            : !a.has_website ? 'No website on file — can’t confirm Google Ads, so not in the pool'
             : a.checked ? 'Transparency Center checked — no active Google Ads'
             : 'Not yet checked for Google Ads';
   return `<span class="pill" style="background:rgba(139,148,158,.14);color:var(--muted);border:1px solid rgba(139,148,158,.3)" title="${esc(why)}">⛔ Not in Google Ads pool</span>`;
@@ -280,8 +281,9 @@ function heroCard(d){
   // One honest provenance line so nobody mistakes a BDE-sourced follow-up for a GAds-pool prospect.
   const provTxt = (d.provenance&&d.provenance.label)||'BDE-sourced data';
   const poolTxt = a.in_gads_pool
-    ? 'in the Google Ads pipeline pool (confirmed running Google Ads)'
-    : (!a.has_website ? 'not in the Google Ads pool — no website on file to confirm ads'
+    ? 'in the Google Ads pipeline pool (confirmed running Google Ads · D&B-backed)'
+    : (a.running ? 'runs Google Ads but has no D&B data on file — worked as a BDE follow-up, not in the pool'
+       : !a.has_website ? 'not in the Google Ads pool — no website on file to confirm ads'
        : a.checked ? 'not in the Google Ads pool — checked, no active Google Ads'
        : 'not in the Google Ads pool — ads not yet checked');
   return `<div class="hero">

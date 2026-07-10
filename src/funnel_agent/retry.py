@@ -19,6 +19,7 @@ from psycopg_pool import ConnectionPool
 
 from .config import Settings
 from .logging import get_logger
+from .prospects import gads_dnb_gate
 from .recalls import _best_call_hours
 
 log = get_logger(__name__)
@@ -31,7 +32,8 @@ _ENSURE_INDEX = (
 _GADS_D9 = (
     "SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
     "FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
-    "WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>''")
+    "WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>''"
+    + gads_dnb_gate("ge"))
 
 # per-prospect CONTEXT for the calling BDE: last call outcome + what was discussed (problem_summary,
 # else the evidence prospect-summary) + every BDE who has called. Aggregated in the gather's `agg` CTE.

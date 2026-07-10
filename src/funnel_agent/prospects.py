@@ -63,6 +63,20 @@ def clean_domain(raw: str | None) -> str | None:
     return _clean_domain(raw)
 
 
+def gads_dnb_gate(enr_alias: str = "e") -> str:
+    """WHERE-clause fragment restricting the Google-Ads POOL to D&B-backed domains only.
+
+    Policy (2026-07-10, user rule): a domain counts as part of the Google-Ads pool ONLY if it is
+    (a) confirmed running Google Ads AND (b) we hold D&B data for it — i.e. a `companies` row from
+    the D&B / raghav load. Raven-only and call-captured domains are still worked as BDE follow-ups
+    (Agency & RPC page), but are NOT counted in the pool, its pipeline boards, calendar or counts.
+    Single source of truth: every pool filter appends this gate, so the rule stays consistent.
+    Reversible — return "" here (or drop the call sites) to restore the ads-only pool.
+    `enr_alias` is the enrichment-table alias in the surrounding query whose `.domain` is gated."""
+    return (f" AND EXISTS (SELECT 1 FROM companies _dbc "
+            f"WHERE _dbc.domain = {enr_alias}.domain AND _dbc.source = 'raghav') ")
+
+
 def _clean_domain(raw: str | None) -> str | None:
     """Bare, lowercased domain: strip scheme, www., path, whitespace."""
     if not raw:

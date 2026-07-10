@@ -27,6 +27,7 @@ from psycopg_pool import ConnectionPool
 from .calendar import guess_when
 from .config import Settings
 from .logging import get_logger
+from .prospects import gads_dnb_gate
 
 log = get_logger(__name__)
 
@@ -212,7 +213,8 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         gather = _GATHER + (
             " AND a.d9 IN (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
             "  FROM enrichment e2 JOIN companies co ON co.domain=e2.domain "
-            "  WHERE (e2.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'')"
+            "  WHERE (e2.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>''"
+            + gads_dnb_gate("e2") + ")"
             if gads_only else "")
         cur.execute(gather)
         rows = cur.fetchall()

@@ -23,6 +23,7 @@ from ..auth import (can_manage_pipeline, create_session, create_user,
                     user_for_session, verify_password)
 from ..config import Settings, get_settings
 from ..db.analytics import make_analytics_pool
+from ..prospects import gads_dnb_gate
 
 # ---- Pipeline terminology (human, sales-manager language) + the "winning next move" -------- #
 # One shared vocabulary so the calendar, the event drill-down and the prospect page all read
@@ -1342,9 +1343,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "(right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) IN "
         "   (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
         "    FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
-        "    WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'') "
+        "    WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>''"
+        + gads_dnb_gate("ge") + ") "
         " OR lower(COALESCE(cl.prospect_website,'')) IN "
-        "   (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'))")
+        "   (SELECT e.domain FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+        + gads_dnb_gate("e") + "))")
 
     def _pipe_anchor() -> str | None:
         r = q("SELECT max(started_at::date) AS d FROM calls WHERE in_scope")
@@ -1479,8 +1482,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )[0]
         pools = {s: int(pool.get(s) or 0) for s in _P4_SUBS}
         pools["total"] = int(pool.get("total") or 0)
-        # the real 'fresh worklist' size = businesses confirmed running Google Ads (the callable pool)
-        ra = q("SELECT count(*) n FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'")
+        # the real 'fresh worklist' size = businesses confirmed running Google Ads AND D&B-backed
+        # (the callable pool — see gads_dnb_gate: Raven-only/call-captured domains are not counted)
+        ra = q("SELECT count(*) n FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+               + gads_dnb_gate("e"))
         pools["running_ads"] = int(ra[0]["n"]) if ra else 0
         # When a BDE is viewing (or a manager filters to one BDE), the retry/reached/agency tab counts
         # must reflect THAT BDE's prospects — matching the board rows, which filter by last/assigned BDE.
@@ -1608,9 +1613,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # ad-spender pool (enrichment.running_google_ads + D&B companies for name/phone/revenue),
         # ~7.8k, biggest revenue first — NOT just the handful already loaded into `prospects`. ----
         if pipeline == "p4":
-            total = q("SELECT count(*) n FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'")[0]["n"]
+            total = q("SELECT count(*) n FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+                      + gads_dnb_gate("e"))[0]["n"]
             rows = q(
-                "WITH ads AS (SELECT domain FROM enrichment WHERE (dataforseo->>'running_google_ads')='true'), "
+                "WITH ads AS (SELECT e.domain FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+                + gads_dnb_gate("e") + "), "
                 "picked AS (SELECT DISTINCT ON (a.domain) a.domain, co.company_name AS business_name, "
                 "  COALESCE(NULLIF(co.phone,''), co.phone_norm) AS dest_number, co.industry, co.revenue_musd "
                 "  FROM ads a LEFT JOIN companies co ON co.domain=a.domain "
@@ -2923,11 +2930,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _df = (enr.get("dataforseo") if enr else None) or None
         _ra = _df.get("running_google_ads") if _df else None
         ads_running = str(_ra).strip().lower() == "true"
+        # Pool membership requires D&B backing too (policy 2026-07-10): a domain that runs ads but is
+        # only in Raven's list / call-captured is a BDE follow-up, NOT part of the Google-Ads pool.
+        has_dnb = bool(domain) and bool(
+            q("SELECT 1 FROM companies WHERE domain=%s AND source='raghav' LIMIT 1", (domain,)))
         ads_status = {
             "has_website": bool(domain),
             "checked": _df is not None,     # DataForSEO Transparency Center has looked this domain up
             "running": ads_running,         # confirmed active Google Ads
-            "in_gads_pool": ads_running,    # => appears on the GAds pipeline boards
+            "has_dnb": has_dnb,             # we hold D&B data for this domain
+            "in_gads_pool": ads_running and has_dnb,   # => appears on the GAds pipeline boards
         }
 
         # Batch D 5-pipeline membership for this prospect — so the hero shows P4 · Fresh for an
