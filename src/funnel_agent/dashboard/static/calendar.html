@@ -274,6 +274,22 @@
   .tr-rail-user .lbl{font-weight:600;font-size:12.5px;color:var(--txt-dim);overflow:hidden;text-overflow:ellipsis;max-width:150px}
   :root[data-theme=light] .tr-rail{box-shadow:none}
   :root[data-theme=light] .tr-rail:hover,:root[data-theme=light] .tr-rail:focus-within{box-shadow:22px 0 48px -30px rgba(20,30,50,.35)}
+  /* ===== BRAND + POLISH (propagated): adaptive logo, 3-bar rail mark, soft material depth,
+     instrument-grade numerals. Appended so it wins the cascade; both themes. ===== */
+  :root{--mat-elev:inset 0 1px 0 rgba(255,255,255,.035),0 1px 2px rgba(0,0,0,.34),0 6px 16px -12px rgba(0,0,0,.60)}
+  :root[data-theme=light]{--mat-elev:inset 0 1px 0 rgba(255,255,255,.9),0 1px 2px rgba(20,30,50,.06),0 6px 16px -12px rgba(20,30,50,.16)}
+  body{font-variant-numeric:tabular-nums slashed-zero}
+  .card{box-shadow:var(--mat-elev)}
+  .brand{background:transparent !important;border:0 !important;box-shadow:none !important;padding:0 !important}
+  .brand img{filter:brightness(0) invert(1);opacity:.92}
+  :root[data-theme=light] .brand img{filter:none;opacity:1}
+  .tr-rail-brand{position:relative;display:block;height:46px;margin:2px 8px 8px;color:var(--txt-dim)}
+  .tr-rail-brand .barsic{position:absolute;left:0;top:0;width:42px;height:46px;display:flex;align-items:center;justify-content:center;opacity:1;transition:opacity .15s}
+  .tr-rail-brand .barsic svg{width:23px;height:23px}
+  .tr-rail-brand .fulllogo{position:absolute;left:12px;top:50%;transform:translateY(-50%);height:24px;opacity:0;transition:opacity .18s;pointer-events:none;max-width:none;filter:brightness(0) invert(1)}
+  :root[data-theme=light] .tr-rail-brand .fulllogo{filter:none}
+  .tr-rail:hover .tr-rail-brand .barsic,.tr-rail:focus-within .tr-rail-brand .barsic{opacity:0}
+  .tr-rail:hover .tr-rail-brand .fulllogo,.tr-rail:focus-within .tr-rail-brand .fulllogo{opacity:1}
 </style>
 </head>
 <body>
@@ -547,7 +563,8 @@ boot().catch(e=>{document.querySelector('main').innerHTML='<div class="muted" st
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
-  var h='<div class="tr-rail-nav">';
+  var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
+  var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
     h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';

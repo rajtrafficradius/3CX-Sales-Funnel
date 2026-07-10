@@ -693,6 +693,28 @@
   .leadchip.drill:hover{box-shadow:var(--mat-elev-hover)}
   thead th{box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 1px 0 var(--line)}
   :root[data-theme=light] thead th{box-shadow:inset 0 1px 0 rgba(255,255,255,.75),0 1px 0 var(--line)}
+  /* header logo: drop the stark white chip; adapt to the theme (full colour on light, crisp white on
+     the dark app bar) so the wordmark reads without a box. */
+  header.appbar .brand{background:transparent;border:0;box-shadow:none;padding:0}
+  header.appbar .brand img{filter:brightness(0) invert(1);opacity:.92}
+  :root[data-theme=light] header.appbar .brand img{filter:none;opacity:1}
+  /* the wordmark logo already says "Traffic Radius" — so drop the duplicate title and tuck the product
+     descriptor neatly UNDER the logo as a subtle overline. */
+  header.appbar .brandblock{flex-direction:column;align-items:flex-start;gap:4px}
+  .appsub{font-size:9px;font-weight:700;letter-spacing:.19em;text-transform:uppercase;color:var(--faint);
+    padding-left:3px;white-space:nowrap;line-height:1}
+  :root[data-theme=light] .appsub{color:var(--muted)}
+  /* rail brand: collapsed = the 3-bar chart mark; expanded = the REAL logo image (exact wordmark),
+     crossfaded. White on the dark rail, full colour on light. */
+  .tr-rail-brand{position:relative;display:block;height:46px;margin:2px 8px 8px;color:var(--txt-dim)}
+  .tr-rail-brand .barsic{position:absolute;left:0;top:0;width:42px;height:46px;display:flex;align-items:center;
+    justify-content:center;opacity:1;transition:opacity .15s}
+  .tr-rail-brand .barsic svg{width:23px;height:23px}
+  .tr-rail-brand .fulllogo{position:absolute;left:12px;top:50%;transform:translateY(-50%);height:24px;
+    opacity:0;transition:opacity .18s;pointer-events:none;max-width:none;filter:brightness(0) invert(1)}
+  :root[data-theme=light] .tr-rail-brand .fulllogo{filter:none}
+  .tr-rail:hover .tr-rail-brand .barsic,.tr-rail:focus-within .tr-rail-brand .barsic{opacity:0}
+  .tr-rail:hover .tr-rail-brand .fulllogo,.tr-rail:focus-within .tr-rail-brand .fulllogo{opacity:1}
   @media (prefers-reduced-motion:reduce){.card,.card.kpi,.leadchip,#funnelCard,#leaderboardCard,#trendCard{transition:none}}
 </style>
 </head>
@@ -806,7 +828,7 @@
     return h`
       <div className="brandblock">
         <a className="brand" href="/" title="Traffic Radius"><img src="/logo.png" alt="Traffic Radius"/></a>
-        <div className="appttl"><span className="t">Traffic Radius</span><span className="s">Sales Funnel Intelligence</span></div>
+        <span className="appsub">Sales Funnel Intelligence</span>
       </div>
       <div className="vdiv"></div>
       <nav className="appnav">
@@ -1395,6 +1417,10 @@ function renderLeaderboard(d){
 }
 
 function renderTrend(t){
+  // Premium touch: a single emphasis dot on the LAST point of every line, so the eye lands on
+  // "where each metric is now" without cluttering the line with markers.
+  const _LI=((t.dates||[]).length)-1;
+  const _endDot=function(v,p){return p.dataIndex===_LI?5:0;};
   trendChart.setOption({
   backgroundColor:'transparent',
   textStyle:{fontFamily:'ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial'},
@@ -1436,17 +1462,17 @@ function renderTrend(t){
     splitLine:{lineStyle:{color:'#1c2430',type:'dashed'}}
   },
   series:[
-    {name:'Calls',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.calls_made,z:5,
+    {name:'Calls',type:'line',smooth:true,smoothMonotone:'x',symbol:'circle',symbolSize:_endDot,data:t.series.calls_made,z:5,
       lineStyle:{width:2.4,color:'#5b8cff'},itemStyle:{color:'#5b8cff'},emphasis:{focus:'series'},
       areaStyle:{opacity:1,color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[
         {offset:0,color:'rgba(91,140,255,.22)'},{offset:1,color:'rgba(91,140,255,0)'}]}}},
-    {name:'Right Party Contact',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.rpc_connect,
+    {name:'Right Party Contact',type:'line',smooth:true,smoothMonotone:'x',symbol:'circle',symbolSize:_endDot,data:t.series.rpc_connect,
       lineStyle:{width:1.8,color:'#4ade80'},itemStyle:{color:'#4ade80'},emphasis:{focus:'series'}},
-    {name:'Full Pitch',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.full_pitch,
+    {name:'Full Pitch',type:'line',smooth:true,smoothMonotone:'x',symbol:'circle',symbolSize:_endDot,data:t.series.full_pitch,
       lineStyle:{width:1.8,color:'#fbbf24'},itemStyle:{color:'#fbbf24'},emphasis:{focus:'series'}},
-    {name:'Lead',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.leads,
+    {name:'Lead',type:'line',smooth:true,smoothMonotone:'x',symbol:'circle',symbolSize:_endDot,data:t.series.leads,
       lineStyle:{width:1.8,color:'#fb923c'},itemStyle:{color:'#fb923c'},emphasis:{focus:'series'}},
-    {name:'Qualified',type:'line',smooth:true,smoothMonotone:'x',symbol:'none',data:t.series.qualified,
+    {name:'Qualified',type:'line',smooth:true,smoothMonotone:'x',symbol:'circle',symbolSize:_endDot,data:t.series.qualified,
       lineStyle:{width:1.8,color:'#f472b6'},itemStyle:{color:'#f472b6'},emphasis:{focus:'series'}}
   ]
 },true);
@@ -1721,7 +1747,8 @@ pollProgress();
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
-  var h='<div class="tr-rail-nav">';
+  var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
+  var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
     h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
