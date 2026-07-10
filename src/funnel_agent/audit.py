@@ -515,7 +515,7 @@ h1,h2,h3{margin:0;letter-spacing:-.02em;color:var(--ink)}
 .rev .ann{margin-top:15px;font-size:13.5px;color:#cfe0ff}.rev .ann b{color:#fff;font-size:18px}
 .rev .note{margin-top:11px;font-size:11px;color:#7ea6ff;line-height:1.5}
 /* CTA button */
-.ctabtn{display:inline-block;margin-top:16px;background:#fff;color:#0b1e46;font-weight:800;font-size:14px;padding:12px 22px;border-radius:10px;letter-spacing:-.01em}
+.ctabtn{display:inline-block;margin-top:16px;background:#fff;color:#0b1e46;font-weight:800;font-size:14px;padding:12px 22px;border-radius:10px;letter-spacing:-.01em;text-decoration:none;cursor:pointer}
 /* digital health scorecard — premium report card (grade + per-dimension score bars) */
 .scorewrap{display:grid;grid-template-columns:212px 1fr;gap:26px;align-items:center;margin-top:4px}
 @media(max-width:640px){.scorewrap{grid-template-columns:1fr;gap:18px}}
@@ -968,7 +968,7 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
         f'<p>This audit maps roughly <b>{rev_num("mo", r_mo)}/month</b> in new revenue {_esc(m["name"])} is currently '
         'handing to competitors and to gaps in its own site. Closing it means coordinated SEO, content, technical fixes and '
         'smarter paid — the kind of sustained, specialist work that’s hard to do in-house while running a business.</p>'
-        '<div class="ctabtn">Book a 30-minute strategy call →</div>'
+        '<a class="ctabtn" href="https://trafficradius.com.au/contact-us/" target="_blank" rel="noopener">Book a 30-minute strategy call →</a>'
         '<div class="rr">Australian team · transparent monthly reporting · we start with the fast wins so you see movement early.</div></div>'), num=False)
 
     # Methodology
