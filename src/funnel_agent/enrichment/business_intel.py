@@ -54,12 +54,13 @@ def _fetch(client: httpx.Client, url: str) -> str:
         return ""
 
 
-def extract_business_intel(oai, settings, domain: str) -> dict:
-    """Scrape homepage (+ one about/services page) and LLM-extract business info. Free."""
+def extract_business_intel(oai, settings, domain: str, *, verify: bool = True) -> dict:
+    """Scrape homepage (+ one about/services page) and LLM-extract business info. Free.
+    verify=False skips TLS validation for sites behind an expired/misconfigured cert."""
     if not domain:
         return {"found": False}
     homepage = ""
-    with httpx.Client(timeout=12.0, follow_redirects=True, headers=_UA) as client:
+    with httpx.Client(timeout=12.0, follow_redirects=True, headers=_UA, verify=verify) as client:
         for scheme in ("https", "http"):
             homepage = _fetch(client, f"{scheme}://{domain}")
             if homepage:

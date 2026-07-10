@@ -123,10 +123,12 @@ async def afetch_website_intel(client, domain: str, *, max_bytes: int = 2_000_00
     return {"found": False, "status": "error", "error": last_err}
 
 
-def fetch_website_intel(domain: str, *, timeout: float = 12.0) -> dict:
+def fetch_website_intel(domain: str, *, timeout: float = 12.0, verify: bool = True) -> dict:
     """Fetch https://domain (then http fallback) and detect marketing tech. Free.
 
-    Returns {found, fetched, status, ...detection} — never raises.
+    Returns {found, fetched, status, ...detection} — never raises. verify=False skips TLS
+    certificate validation, for the many small-business sites that serve a valid page behind
+    an expired/misconfigured cert (public homepages only — we send no credentials).
     """
     if not domain:
         return {"found": False, "status": "no_domain"}
@@ -135,7 +137,7 @@ def fetch_website_intel(domain: str, *, timeout: float = 12.0) -> dict:
     for scheme in ("https", "http"):
         url = f"{scheme}://{domain}"
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as c:
+            with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers, verify=verify) as c:
                 resp = c.get(url)
             html = resp.text or ""
             det = _detect(html)
