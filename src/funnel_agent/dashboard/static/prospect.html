@@ -237,6 +237,18 @@ function toast(m,e){const t=document.getElementById('toast');t.textContent=m;t.c
 
 function metric(n,l,src){ return `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div>${src?`<div class="src">${src}</div>`:''}</div>`; }
 
+// Google-Ads pool chip for the hero — states plainly whether this prospect sits in the confirmed
+// Google-Ads pipeline pool (the boards) or is a BDE-sourced prospect that just happens to share a
+// call stage. Removes the "P3 · Gatekeeper callback looks like a GAds pipeline slot" confusion.
+function poolChip(a){
+  a=a||{};
+  if(a.in_gads_pool) return `<span class="pill" style="background:rgba(63,185,80,.14);color:#3fb950;border:1px solid rgba(63,185,80,.35)" title="Confirmed running Google Ads (Transparency Center) — this prospect appears on the Google Ads pipeline boards">🎯 In Google Ads pool</span>`;
+  const why = !a.has_website ? 'No website on file — can’t confirm Google Ads, so not in the pool'
+            : a.checked ? 'Transparency Center checked — no active Google Ads'
+            : 'Not yet checked for Google Ads';
+  return `<span class="pill" style="background:rgba(139,148,158,.14);color:var(--muted);border:1px solid rgba(139,148,158,.3)" title="${esc(why)}">⛔ Not in Google Ads pool</span>`;
+}
+
 function heroCard(d){
   const m=d.master||{}, ro=d.rollup||{}, calls=d.calls||[];
   // Prefer the AI-extracted company name from the latest call that has one.
@@ -245,11 +257,15 @@ function heroCard(d){
   const name=company||m.business_name||d.domain||KEY;
   // Prefer the Batch D 5-pipeline (so an uncalled confirmed prospect reads P4 · Fresh, not
   // "No pipeline"); fall back to the legacy call-derived pipeline if the new one isn't present.
-  let plbl,pcol;
+  let plbl,pcol,pcode=null;
   const p5=d.pipeline5;
   if(p5&&p5.pipeline&&PIPE5[p5.pipeline]){ const e=PIPE5[p5.pipeline];
-    plbl=e[0]+(p5.p4_sub&&P4SUB_LBL[p5.p4_sub]?' · '+P4SUB_LBL[p5.p4_sub]:''); pcol=e[1]; }
+    plbl=e[0]+(p5.p4_sub&&P4SUB_LBL[p5.p4_sub]?' · '+P4SUB_LBL[p5.p4_sub]:''); pcol=e[1]; pcode=p5.pipeline; }
   else { [plbl,pcol]=PIPE[ro.pipeline]||PIPE.none; }
+  // The header is a CALL-STAGE label — strip the "P# · " code so it doesn't read like a formal
+  // Google-Ads pipeline slot; the pool chip beside it says whether this prospect is actually in
+  // the Google-Ads pool (the boards = call-stage ∩ GAds-pool, which are two different things).
+  const stageLbl = String(plbl).replace(/^P\d+\s·\s/,'');
   const [tlbl,tcol,tbg]=TEMP[ro.temperature]||TEMP.none;
   const badges=[];
   if(ro.ever_booked) badges.push(`<span class="pill yes">📅 Meeting booked</span>`);
@@ -258,13 +274,25 @@ function heroCard(d){
   if(ro.callback_requested) badges.push(`<span class="pill info">📞 Callback requested</span>`);
   if(m.assigned_bde) badges.push(`<span class="pill neutral">Assigned: ${esc(m.assigned_bde)}</span>`);
   const temp = (ro.temperature&&tlbl)?`<span class="tbadge" style="background:${tbg};color:${tcol}">${tlbl}</span>`:'';
+  const a = d.ads_status||{};
+  const stagePill = `<span class="pill" title="Call stage${pcode?' ('+pcode.toUpperCase()+')':''} — from the classifier, independent of Google-Ads pool" style="background:var(--chip);color:${pcol}">${esc(stageLbl)}</span>`;
+  const poolPill = poolChip(a);
+  // One honest provenance line so nobody mistakes a BDE-sourced follow-up for a GAds-pool prospect.
+  const provTxt = (d.provenance&&d.provenance.label)||'BDE-sourced data';
+  const poolTxt = a.in_gads_pool
+    ? 'in the Google Ads pipeline pool (confirmed running Google Ads)'
+    : (!a.has_website ? 'not in the Google Ads pool — no website on file to confirm ads'
+       : a.checked ? 'not in the Google Ads pool — checked, no active Google Ads'
+       : 'not in the Google Ads pool — ads not yet checked');
   return `<div class="hero">
     <div class="top">
       <h1>${esc(name)}</h1>
       ${temp}
-      <span class="pill" style="background:var(--chip);color:${pcol}">${esc(plbl)}</span>
+      ${stagePill}
+      ${poolPill}
     </div>
     ${d.domain?`<div class="dom"><a class="lnk" href="https://${esc(d.domain)}" target="_blank">${esc(d.domain)} ↗</a>${m.location?' · '+esc(m.location):''}</div>`:(m.location?`<div class="dom">${esc(m.location)}</div>`:'')}
+    <div class="muted small" style="margin-top:3px">${esc(provTxt)} · ${esc(poolTxt)}</div>
     <div class="stats">
       <div class="stat"><div class="n">${ro.calls||0}</div><div class="l">Calls</div></div>
       <div class="stat"><div class="n">${(ro.bdes||[]).length}</div><div class="l">BDEs called</div></div>

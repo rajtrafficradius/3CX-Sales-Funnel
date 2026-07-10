@@ -147,6 +147,32 @@ def normalize_domain(website: str | None) -> str | None:
     return s
 
 
+# Free / ISP / webmail domains — an email at one of these does NOT identify the business website,
+# so we must NOT derive a "website" from it (e.g. owner@gmail.com is not gmail.com's business).
+_FREE_EMAIL_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "outlook.com", "outlook.com.au", "hotmail.com", "hotmail.com.au",
+    "live.com", "live.com.au", "yahoo.com", "yahoo.com.au", "ymail.com", "icloud.com", "me.com",
+    "mac.com", "aol.com", "msn.com", "proton.me", "protonmail.com", "gmx.com",
+    # AU ISP webmail
+    "bigpond.com", "bigpond.net.au", "optusnet.com.au", "iinet.net.au", "internode.on.net",
+    "tpg.com.au", "exemail.com.au", "westnet.com.au", "dodo.com.au", "ozemail.com.au",
+    "adam.com.au", "netspace.net.au", "y7mail.com",
+})
+
+
+def website_from_email(email: str | None) -> str | None:
+    """Derive the business website from an email's domain, unless it's a free/ISP webmail provider.
+    A gatekeeper handing over 'vicki@sustainactive.com.au' identifies the site 'sustainactive.com.au';
+    'owner@gmail.com' identifies nothing. Returns a normalized bare domain or None.
+    """
+    if not email or "@" not in str(email):
+        return None
+    dom = str(email).rsplit("@", 1)[-1].strip().lower().strip(".")
+    if not dom or dom in _FREE_EMAIL_DOMAINS:
+        return None
+    return normalize_domain(dom)
+
+
 def derive_temperature(v: CallClassification) -> str:
     """Lead temperature from BAPU flags — only for the interested pipeline.
 
@@ -440,8 +466,12 @@ class Classifier:
         # a booking that already existed for the company is not a NEW booking (only meaningful
         # when a booking was actually detected on this call)
         already_exists = bool(v.booking_already_exists.value and v.meeting_booked.value)
-        # domain identity: AI-extracted website, else the master-prospects domain for the phone
-        _domain = v.prospect_website or master_domain
+        # Website identity: AI-extracted website → derived from any email the prospect/gatekeeper
+        # gave (a hand-off email like vicki@sustainactive.com.au identifies the site) → the
+        # master-prospects domain for the phone. So an email in the transcript now unlocks the
+        # website, enrichment and Google-Ads detection instead of leaving the prospect siteless.
+        _extracted_site = normalize_domain(v.prospect_website) or website_from_email(v.prospect_email)
+        _domain = _extracted_site or master_domain
         return {
             "call_id": call_id,
             "rpc_connect": v.rpc_connect.value,
@@ -482,7 +512,7 @@ class Classifier:
             "recommended_cadence_days": (v.recommended_cadence_days or None),
             # business identification + contact details extracted from the call
             "prospect_company": v.prospect_company or None,
-            "prospect_website": normalize_domain(v.prospect_website),
+            "prospect_website": _extracted_site,
             "prospect_industry": v.prospect_industry or None,
             "prospect_contact_name": v.prospect_contact_name or None,
             "prospect_mobile": v.prospect_mobile or None,

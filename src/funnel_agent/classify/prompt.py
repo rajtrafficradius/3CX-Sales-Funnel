@@ -327,8 +327,12 @@ to fill these from any clue in the transcript — but never fabricate a wrong va
   even when the call is short. Use "" ONLY if no business name appears anywhere.
 - prospect_website: a bare domain like "acme.com.au". Fill it when:
     • the prospect states it ("our website is…", "find us at…", "dub-dub-dub dot…"), OR
-    • it is unambiguously derivable from an EMAIL address heard on the call
-      (jane@acmeplumbing.com.au → acmeplumbing.com.au), OR
+    • it is derivable from ANY business EMAIL heard on the call — INCLUDING one a GATEKEEPER/
+      receptionist hands over ("Rob's email is rob@sustainactive.com.au", "email us at
+      info@acmeplumbing.com.au") → take the part after the @ as the website
+      (rob@sustainactive.com.au → sustainactive.com.au). ALWAYS do this whenever you set
+      prospect_email to a business address — the two must be consistent. The ONLY emails that do
+      NOT give a website are free/webmail ones (gmail.com, hotmail, bigpond, optusnet, etc.), OR
     • the business name maps to an obvious, well-known exact domain you are highly confident in.
   If you are NOT confident of the exact domain, leave it "" — a wrong domain pulls the wrong
   company's data. (Still always capture prospect_company above so the website can be matched

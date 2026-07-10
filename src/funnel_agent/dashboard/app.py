@@ -2511,6 +2511,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        "ORDER BY (COALESCE(e.dataforseo->>'running_google_ads','')='true') DESC, "
                        "co.revenue_musd DESC NULLS LAST LIMIT 1", (norm,))
                 domain = co[0]["domain"] if co else None
+            if not domain:
+                # Last resort: a website the classifier learned on a call — stated outright, or
+                # derived from an email the prospect/gatekeeper handed over (see website_from_email).
+                # Lets a phone-only prospect show its site + marketing data once we've heard the domain.
+                cw = q("SELECT cl.prospect_website FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+                       "WHERE COALESCE(cl.prospect_website,'')<>'' AND right(regexp_replace("
+                       "COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%s "
+                       "ORDER BY c.started_at DESC LIMIT 1", (norm,))
+                domain = cw[0]["prospect_website"] if cw else None
         return master, domain, norm
 
     _whois_inflight: set = set()
@@ -2904,6 +2913,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             next_move = None
 
+        # Google-Ads pool membership — a prospect is "in the Google Ads pipeline pool" ONLY when its
+        # domain is CONFIRMED running Google Ads (DataForSEO Transparency Center). This is orthogonal
+        # to the call stage (p1/p3/…): the pipeline BOARDS are (stage ∩ GAds-pool), so the prospect
+        # header must state pool membership explicitly — otherwise a BDE-sourced, non-ads prospect that
+        # only reached a gatekeeper reads exactly like a GAds-pipeline prospect. (Reported on
+        # /prospect/0370425044 which showed a bare "P3 · Gatekeeper callback".)
+        # running_google_ads is a JSON boolean (true), so str().lower() handles bool + legacy string.
+        _df = (enr.get("dataforseo") if enr else None) or None
+        _ra = _df.get("running_google_ads") if _df else None
+        ads_running = str(_ra).strip().lower() == "true"
+        ads_status = {
+            "has_website": bool(domain),
+            "checked": _df is not None,     # DataForSEO Transparency Center has looked this domain up
+            "running": ads_running,         # confirmed active Google Ads
+            "in_gads_pool": ads_running,    # => appears on the GAds pipeline boards
+        }
+
         # Batch D 5-pipeline membership for this prospect — so the hero shows P4 · Fresh for an
         # uncalled, Google-ads-confirmed domain (like ourxplor.com) instead of "No pipeline".
         # Resolves p5>p2>p1>p3 by domain company_key OR any dialled number; else P4 (fresh/attempted).
@@ -2922,11 +2948,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   else "p3" if r0.get("p3") else "p4")
             sub = None
             if pl == "p4":
-                # running_google_ads is stored as a JSON boolean (true), not a string — so
-                # str().lower() handles both bool True and the legacy string "true".
-                _ra = (enr.get("dataforseo") or {}).get("running_google_ads") if enr else None
-                runs = str(_ra).strip().lower() == "true"
-                sub = "attempted" if r0.get("called") else ("fresh_ads" if runs else "fresh_unscanned")
+                sub = "attempted" if r0.get("called") else ("fresh_ads" if ads_running else "fresh_unscanned")
             pipeline5 = {"pipeline": pl, "p4_sub": sub}
         except Exception:
             pipeline5 = None
@@ -2946,6 +2968,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "next_move": next_move,
             "dnd": dnd,
             "pipeline5": pipeline5,
+            "ads_status": ads_status,
             # rich people/facts/timeline summary across all calls (#1)
             "intel": _prospect_intel(calls, enr),
             # data provenance + website mandate (#5): on BDE-sourced data we only pursue prospects we
