@@ -17,7 +17,8 @@ from ..logging import get_logger
 
 log = get_logger(__name__)
 
-_UA = {"User-Agent": "Mozilla/5.0 (compatible; TrafficRadiusBot/1.0; +https://trafficradius.com.au)"}
+# Real-browser headers (see website.BROWSER_HEADERS) — a bot UA is 403'd by many small-biz WAFs.
+from .website import BROWSER_HEADERS as _UA
 _TAG_RE = re.compile(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>")
 _HTML_RE = re.compile(r"(?s)<[^>]+>")
 _WS_RE = re.compile(r"\s+")

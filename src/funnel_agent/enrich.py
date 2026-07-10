@@ -124,9 +124,9 @@ def enrich_websites_async(pool: ConnectionPool, *, limit: int = 5000, concurrenc
 
     import httpx
 
-    from .enrichment.website import afetch_website_intel
+    from .enrichment.website import afetch_website_intel, BROWSER_HEADERS
 
-    ua = {"User-Agent": "Mozilla/5.0 (compatible; TrafficRadiusBot/1.0; +https://trafficradius.com.au)"}
+    ua = BROWSER_HEADERS
 
     async def scan_batch(domains: list[str]) -> list[tuple[str, dict]]:
         timeout = httpx.Timeout(connect=5.0, read=per_timeout, write=5.0, pool=per_timeout)

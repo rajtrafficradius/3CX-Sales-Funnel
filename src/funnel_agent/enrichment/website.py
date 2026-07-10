@@ -23,6 +23,16 @@ from ..logging import get_logger
 
 log = get_logger(__name__)
 
+# Present as a real browser. A self-identifying bot UA gets 403'd by Cloudflare/WAF on a large
+# share of small-business sites, which was silently zeroing their website scan + business intel.
+# We only read publicly-served homepages, so a standard browser UA + Accept headers is correct.
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-AU,en;q=0.9",
+}
+
 # Each tracker: (key, human label, list of regex signatures found in page HTML/JS).
 _TRACKERS: list[tuple[str, str, list[str]]] = [
     ("gtm", "Google Tag Manager", [r"googletagmanager\.com/gtm\.js", r"GTM-[A-Z0-9]{4,}"]),
@@ -120,7 +130,7 @@ def fetch_website_intel(domain: str, *, timeout: float = 12.0) -> dict:
     """
     if not domain:
         return {"found": False, "status": "no_domain"}
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; TrafficRadiusBot/1.0; +https://trafficradius.com.au)"}
+    headers = BROWSER_HEADERS
     last_err = None
     for scheme in ("https", "http"):
         url = f"{scheme}://{domain}"
