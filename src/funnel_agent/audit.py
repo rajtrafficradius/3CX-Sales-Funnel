@@ -990,7 +990,8 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
              f'<div class="kick" style="margin-top:22px;color:#7ea6ff">Prepared {gen} · confidential</div></div>')
 
     footer = (f'<div class="footer"><b>Traffic Radius</b> — Digital Marketing Audit for {_esc(m["name"])} ({_esc(m["domain"])}). '
-              f'Generated {gen}. SEO/ads intelligence via DataForSEO &amp; Google Ads Transparency Center; traffic &amp; value figures '
+              f'Generated {gen}. SEO &amp; keyword analysis by Traffic Radius; ad activity independently verified via '
+              f'Google’s public Ads Transparency Center; traffic &amp; value figures '
               f'are estimates (see methodology). Prepared for a discovery conversation, not a guarantee of results.</div>')
 
     # LOGICAL ORDER: diagnosis → the money → evidence (ads/seo/keywords/competitors/content/tech) →
@@ -1556,7 +1557,8 @@ def render_audit_docx(model: dict) -> bytes:
 
     para()
     para(f"Traffic Radius — Digital Marketing Audit for {m.get('name')} ({m.get('domain')}). "
-         f"Generated {gen}. SEO/ads intelligence via DataForSEO & Google Ads Transparency Center; "
+         f"Generated {gen}. SEO & keyword analysis by Traffic Radius; ad activity independently verified via "
+         f"Google's public Ads Transparency Center; "
          f"traffic & value figures are estimates. Prepared for a discovery conversation, not a guarantee of results.",
          italic=True, size=8, color=MUTED)
 
