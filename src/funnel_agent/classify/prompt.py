@@ -121,9 +121,18 @@ Stage definitions (in funnel order):
   session, NOT just another phone call. A mere agreement to a follow-up or callback ("call me back
   Monday", "ring me next week", "send me an email", "let's talk when I'm back") is NOT a meeting
   booked. "Booked", not "held".
-  CRITICAL — judge the END STATE of the call, not an early hopeful moment. Set `booking_status`:
-    * "firm" — a specific day AND (ideally) time was agreed and STILL STANDS at the end of the call.
-      Only then may meeting_booked be TRUE.
+  CRITICAL — judge the END STATE of the call, not an early hopeful moment. The PROSPECT must have
+  EXPLICITLY ACCEPTED the session. A BDE merely PROPOSING, suggesting or ASKING for a meeting ("I'd
+  like to set up a meeting", "I'm looking to have a call later this week", "can we meet Thursday?")
+  is NOT a booking unless the prospect clearly says yes to that meeting. If the call ENDS DURING THE
+  PITCH, the prospect HANGS UP, goes silent, stays non-committal, or is cut off before clearly
+  accepting a specific time, there is NO booking (booking_status="none", meeting_booked=FALSE). NEVER
+  infer acceptance from a "yeah"/"yep"/"yes" the prospect gave to something ELSE (e.g. confirming
+  their own business details, or acknowledging they heard a competitor's name). Set `booking_status`:
+    * "firm" — the PROSPECT accepted a SPECIFIC DAY (a named weekday or a date), and it STILL STANDS at
+      the end of the call. Only then may meeting_booked be TRUE. A vague BDE-floated timeframe ("later
+      this week", "next week", "sometime", "in a few days") that the prospect did not pin to a specific
+      day is NOT firm — it is "tentative" at most (and "none" if the prospect never actually accepted).
       STRONG CONFIRMATION of a firm booking — if, at the end of the call, the BDE says a calendar
       INVITE / invitation link will be sent (e.g. "I'll send you the calendar invite", "Emma Collins
       will send the invite", "you'll get an invite for the session"), OR an invite was already sent
