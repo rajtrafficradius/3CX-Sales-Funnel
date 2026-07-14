@@ -1149,6 +1149,8 @@ function renderFunnel(f){
   // theme-aware grout so seams are invisible on BOTH the dark hero card and the white light card;
   // animate the staged rise ONLY on the first paint (never on the 60s auto-refresh) + respect reduced-motion.
   const seam = (document.documentElement.getAttribute('data-theme')==='light') ? '#ffffff' : '#10151e';
+  // soft per-segment drop shadow so the bands read as gently stacked layers (depth, not flat).
+  const shadow = (document.documentElement.getAttribute('data-theme')==='light') ? 'rgba(30,52,96,.16)' : 'rgba(4,8,16,.5)';
   const reduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion:reduce)').matches);
   const animate = !reduce && !funnelChart.__drawn; funnelChart.__drawn = true;
   funnelChart.setOption({
@@ -1178,12 +1180,12 @@ function renderFunnel(f){
     type:'funnel',
     sort:'none',
     funnelAlign:'center',
-    gap:2,
-    left:'7%',
-    right:'7%',
-    top:8,
-    bottom:8,
-    minSize:'22%',
+    gap:3,
+    left:'6%',
+    right:'6%',
+    top:10,
+    bottom:10,
+    minSize:'24%',
     maxSize:'100%',
     animationDuration: animate ? 620 : 0,
     animationEasing:'cubicOut',
@@ -1194,27 +1196,27 @@ function renderFunnel(f){
       position:'inside',
       formatter:function(p){ return '{n|'+String(p.name).toUpperCase()+'}\n{v|'+(p.value!=null?p.value.toLocaleString():'')+'}'; },
       rich:{
-        n:{ fontSize:TV?12:10, fontWeight:700, lineHeight:TV?18:13, padding:[0,0,TV?4:2,0] },
-        v:{ fontSize:TV?30:19, fontWeight:800, lineHeight:TV?32:21 }
+        n:{ fontSize:TV?12:10, fontWeight:700, lineHeight:TV?18:14, padding:[0,0,TV?5:3,0], opacity:.88 },
+        v:{ fontSize:TV?31:20, fontWeight:800, lineHeight:TV?32:22 }
       }
     },
     labelLine:{show:false},
-    itemStyle:{ borderColor:seam, borderWidth:2, opacity:1 },
+    itemStyle:{ borderColor:seam, borderWidth:2, opacity:1, shadowBlur:12, shadowColor:shadow, shadowOffsetY:3 },
     emphasis:{
-      label:{ rich:{ v:{ fontSize:TV?32:21 } } },
-      itemStyle:{ borderColor:'#5b8cff', borderWidth:2, shadowBlur:18, shadowColor:'rgba(91,140,255,.45)' }
+      label:{ rich:{ v:{ fontSize:TV?33:22 } } },
+      itemStyle:{ borderColor:'#7aa2ff', borderWidth:2, shadowBlur:22, shadowColor:'rgba(91,140,255,.55)', shadowOffsetY:0 }
     },
     data:data.map(function(d,i){
       var n=(data.length>1)?(data.length-1):1;
       // tuned blue ramp (light -> deep), even perceptual steps
       var stops=[
-        ['#cdd9f3','#a7bef0'],
-        ['#a9c1f2','#84a3ee'],
-        ['#87a6f0','#6690ea'],
-        ['#6b91ec','#5b8cff'],
-        ['#5079e0','#3f66cf'],
-        ['#3d5cc0','#2f489f'],
-        ['#31509a','#213d86']
+        ['#d4def6','#b4c7f3'],
+        ['#aec4f2','#8aa9f0'],
+        ['#8aa9f0','#6a93ec'],
+        ['#6f95ef','#5b8cff'],
+        ['#5479e4','#3f63d2'],
+        ['#3f5cc6','#2e46a4'],
+        ['#33509f','#203a86']
       ];
       var idx=Math.round(i/n*(stops.length-1));
       var c=stops[idx];
