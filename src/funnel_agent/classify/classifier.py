@@ -426,7 +426,7 @@ class Classifier:
         return verdict, model_used
 
     def classify_one(self, call_row: dict, transcript_row: dict, memory: str | None = None,
-                     master_domain: str | None = None) -> dict:
+                     master_domain: str | None = None, prior_booking: bool = False) -> dict:
         """Classify a single transcribed call -> a `classifications` record dict.
 
         `memory` is an optional [COMPANY MEMORY] block injected so the model knows a meeting
@@ -451,6 +451,14 @@ class Classifier:
         apply_auto_validation(verdict)      # budget/aspiration from running ads / having an agency
         enforce_booking_firmness(verdict)   # a non-firm/cancelled booking does not count
         enforce_decision_maker_gate(verdict)  # authority necessary AND not-authority-alone
+
+        # DETERMINISTIC booking dedup: if this prospect ALREADY had an earlier booking on record,
+        # a booking detected on this call is a REPEAT (a round-2 / servicing / reschedule call
+        # after the BDM took over), NOT a new one. Don't rely on the LLM to notice — force
+        # booking_already_exists so pipeline_stage is not p5 and the funnel won't re-count it
+        # (mirrors aggregate.py's cross-call NOT-EXISTS dedup: one booking per prospect).
+        if prior_booking and verdict.meeting_booked.value:
+            verdict.booking_already_exists.value = True
 
         needs_review = (
             min_quality_confidence(verdict) < self._s.confidence_threshold
@@ -658,12 +666,14 @@ def classify_day(
             # extract a website (this is what cross-contact booking dedup keys on).
             from .memory import _master_domain, format_memory, lookup_booking_memory
             mdom = _master_domain(pool, row.get("dest_number"))
-            mem = format_memory(lookup_booking_memory(
-                pool, row.get("dest_number"), domain=mdom, before_call_id=str(row.get("call_id"))))
+            booking_mem = lookup_booking_memory(
+                pool, row.get("dest_number"), domain=mdom,
+                before_call_id=str(row.get("call_id")), before_started_at=row.get("started_at"))
+            mem = format_memory(booking_mem)
             rec = clf.classify_one(row, {
                 "text": row.get("text"), "sentiment": row.get("sentiment"),
                 "summary": row.get("summary"),
-            }, memory=mem, master_domain=mdom)
+            }, memory=mem, master_domain=mdom, prior_booking=bool(booking_mem))
             upsert_classification(pool, rec)
             return ("ok", bool(rec["needs_human_review"]))
         except Exception as exc:  # one bad call must not abort the batch

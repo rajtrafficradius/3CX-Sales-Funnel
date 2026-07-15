@@ -67,7 +67,8 @@ def _master_domain(pool: ConnectionPool, number: str | None) -> str | None:
 
 
 def lookup_booking_memory(pool: ConnectionPool, number: str | None,
-                          domain: str | None = None, before_call_id: str | None = None) -> dict | None:
+                          domain: str | None = None, before_call_id: str | None = None,
+                          before_started_at=None) -> dict | None:
     """The earliest firm, genuinely-NEW booking already on record for this call's company.
 
     Matches by same phone number (dest9) OR same DOMAIN — domain is the only reliable
@@ -81,7 +82,7 @@ def lookup_booking_memory(pool: ConnectionPool, number: str | None,
     if not d9 and not dom:
         return None
     conds = []
-    params: dict = {"cid": before_call_id or ""}
+    params: dict = {"cid": before_call_id or "", "before_at": before_started_at}
     if d9:
         conds.append("right(regexp_replace(c.dest_number,'[^0-9]','','g'),9) = %(d9)s")
         params["d9"] = d9
@@ -97,6 +98,7 @@ def lookup_booking_memory(pool: ConnectionPool, number: str | None,
           AND NOT COALESCE(cl.meeting_rescheduled, false)
           AND NOT COALESCE(cl.booking_already_exists, false)
           AND cl.call_id <> %(cid)s
+          AND (%(before_at)s IS NULL OR c.started_at < %(before_at)s)
           AND ({where_company})
         ORDER BY c.started_at, c.call_id
         LIMIT 1
