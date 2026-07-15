@@ -79,8 +79,10 @@ WITH base AS (
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))) AND NOT COALESCE(pcl.meeting_confirmation,false)
-                           AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
+                           -- ANY prior booking signal (booking, confirmation OR reschedule) means a
+                           -- booking already exists for this prospect → later bookings are repeats.
+                           AND (pcl.meeting_booked OR COALESCE(pcl.meeting_confirmation,false) OR COALESCE(pcl.meeting_rescheduled,false)
+                                OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))))
               THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
         -- QUALIFIED. Effective qualification = a BDM/admin OVERRIDE if present (#4b),
@@ -105,8 +107,10 @@ WITH base AS (
                                 OR (cl.company_key IS NOT NULL AND pcl.company_key IS NOT NULL AND pcl.company_key = cl.company_key))
                            AND pc.started_at < c.started_at
                            AND pc.answered AND pc.talk_seconds >= %(rpc_min)s AND COALESCE(pcl.call_outcome,'') <> 'voicemail'
-                           AND (pcl.meeting_booked OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))) AND NOT COALESCE(pcl.meeting_confirmation,false)
-                           AND NOT COALESCE(pcl.meeting_rescheduled,false) AND NOT COALESCE(pcl.booking_already_exists,false))
+                           -- ANY prior booking signal (booking, confirmation OR reschedule) means a
+                           -- booking already exists for this prospect → later bookings are repeats.
+                           AND (pcl.meeting_booked OR COALESCE(pcl.meeting_confirmation,false) OR COALESCE(pcl.meeting_rescheduled,false)
+                                OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))))
                    -- Effective qualification: a BDM/admin OVERRIDE on THE BOOKED CALL is DEFINITIVE —
                    -- it wins over everything, including a sibling call's qualification. So when the
                    -- BDM explicitly disqualifies a booked meeting ("client doesn't need us, nurture"),

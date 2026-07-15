@@ -93,10 +93,13 @@ def lookup_booking_memory(pool: ConnectionPool, number: str | None,
     sql = f"""
         SELECT c.started_at, c.bde_name, cl.prospect_contact_name, cl.prospect_company
         FROM classifications cl JOIN calls c ON c.call_id = cl.call_id
-        WHERE c.in_scope AND cl.meeting_booked
-          AND NOT COALESCE(cl.meeting_confirmation, false)
-          AND NOT COALESCE(cl.meeting_rescheduled, false)
-          AND NOT COALESCE(cl.booking_already_exists, false)
+        -- ANY prior booking SIGNAL means a booking already exists for this prospect: a fresh
+        -- booking, a confirmation of one, or a reschedule of one (the original may be earlier /
+        -- uncaptured, so don't require a clean 'original' — that lets round-2 calls slip through).
+        WHERE c.in_scope
+          AND (cl.meeting_booked
+               OR COALESCE(cl.meeting_confirmation, false)
+               OR COALESCE(cl.meeting_rescheduled, false))
           AND cl.call_id <> %(cid)s
           AND (%(before_at)s IS NULL OR c.started_at < %(before_at)s)
           AND ({where_company})
