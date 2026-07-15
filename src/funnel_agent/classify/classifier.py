@@ -452,13 +452,14 @@ class Classifier:
         enforce_booking_firmness(verdict)   # a non-firm/cancelled booking does not count
         enforce_decision_maker_gate(verdict)  # authority necessary AND not-authority-alone
 
-        # DETERMINISTIC booking dedup: if this prospect ALREADY had an earlier booking on record,
-        # a booking detected on this call is a REPEAT (a round-2 / servicing / reschedule call
-        # after the BDM took over), NOT a new one. Don't rely on the LLM to notice — force
-        # booking_already_exists so pipeline_stage is not p5 and the funnel won't re-count it
-        # (mirrors aggregate.py's cross-call NOT-EXISTS dedup: one booking per prospect).
-        if prior_booking and verdict.meeting_booked.value:
-            verdict.booking_already_exists.value = True
+        # DETERMINISTIC booking dedup (BOTH directions — the LLM is unreliable at this): a booking
+        # counts as NEW iff the prospect has NO earlier booking on record (by phone or company).
+        # prior_booking is a factual DB lookup, so this fixes both failure modes we saw: the LLM
+        # MISSING repeats (round-2/servicing calls double-counted) and the LLM INVENTING repeats
+        # (a genuine first booking flagged "already exists" from words like "confirm", under-counted).
+        # Mirrors aggregate.py's cross-call NOT-EXISTS dedup exactly.
+        if verdict.meeting_booked.value:
+            verdict.booking_already_exists.value = prior_booking
 
         needs_review = (
             min_quality_confidence(verdict) < self._s.confidence_threshold
