@@ -1526,7 +1526,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         every open — the board ROWS are always live (separate endpoint)."""
         from time import monotonic
         bde = _scoped_bde(request, bde)
-        _ckey = (bde, bool(gads_only))
+        # Key also on the private-BDE set this viewer hides, so an admin's ALL board (includes the
+        # private BDE) and a BDM's ALL board (excludes it) never share a cache entry.
+        _ckey = (bde, bool(gads_only), tuple(_hidden_bdes(request)))
         _hit = _pipe5_cache.get(_ckey)
         if _hit and (monotonic() - _hit[0]) < 45:
             return JSONResponse(_hit[1])
