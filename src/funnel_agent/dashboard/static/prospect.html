@@ -1236,7 +1236,7 @@ async function liveReload(){
   // Don't re-render while a recording is playing — rebuilding #main destroys the <audio> element
   // and stops playback. Defer until it's paused/ended.
   var playing=Array.prototype.some.call(document.querySelectorAll('audio'),
-    function(au){ return !au.paused && !au.ended && au.currentTime>0; });
+    function(au){ return !au.paused && !au.ended; });
   if(playing){ return; }
   var a=document.querySelector('.tab.active'); a=a?a.dataset.pane:null; var y=window.scrollY;
   try{ await load(); }catch(e){}
