@@ -812,6 +812,10 @@ load();
 /* LIVE: refresh on server push (SSE /api/events) + 60s poll fallback; pause when hidden. Preserves
    the open tab + scroll so a re-classification / new context updates in place. */
 async function liveReload(){
+  // Never re-render while a recording is playing — rebuilding #main destroys the <audio> element
+  // and stops playback mid-recording. Defer the live refresh until it's paused/ended.
+  var au=document.querySelector('.rec-audio');
+  if(au && !au.paused && !au.ended && au.currentTime>0){ return; }
   var a=document.querySelector('.tab.active'); a=a?a.dataset.pane:null; var y=window.scrollY;
   try{ await load(); }catch(e){}
   if(a){ var t=document.querySelector('.tab[data-pane="'+a+'"]'); if(t) t.click(); }
