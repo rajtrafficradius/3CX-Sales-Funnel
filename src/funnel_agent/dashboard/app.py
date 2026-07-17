@@ -1581,18 +1581,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # When a BDE is viewing (or a manager filters to one BDE), the retry/reached/agency tab counts
         # must reflect THAT BDE's prospects — matching the board rows, which filter by last/assigned BDE.
         bde_scoped = bool(bde and bde != "ALL")
+        hb = _hidden_bdes(request)   # non-admins: exclude a private BDE's rows from the ALL tab counts
         # Retry pool — confirmed-ads prospects dialed but NOT converted (no answer / voicemail / not
         # interested), under the attempt cap. Scoped to GAds when the board asks (gads_only).
         try:
             from ..retry import _gather_sql, reached_no_next_sql
-            rf = " WHERE rr.last_bde = %(bde)s" if bde_scoped else ""
+            rf = (" WHERE rr.last_bde = %(bde)s" if bde_scoped
+                  else (" WHERE NOT (rr.last_bde = ANY(%(hidden)s::text[]))" if hb else ""))
             rc = q("SELECT count(*) n FROM (" + _gather_sql(gads_only=bool(gads_only)) + ") rr" + rf,
-                   {"maxatt": settings.retry_max_attempts, "bde": bde})
+                   {"maxatt": settings.retry_max_attempts, "bde": bde, "hidden": hb})
             pools["retry"] = int(rc[0]["n"]) if rc else 0
             # reached the DM but no callback/booking (warm, worked manually) — its own tab.
-            xf = " WHERE xx.last_bde = %(bde)s" if bde_scoped else ""
+            xf = (" WHERE xx.last_bde = %(bde)s" if bde_scoped
+                  else (" WHERE NOT (xx.last_bde = ANY(%(hidden)s::text[]))" if hb else ""))
             rn = q("SELECT count(*) n FROM (" + reached_no_next_sql(gads_only=bool(gads_only)) + ") xx" + xf,
-                   {"bde": bde})
+                   {"bde": bde, "hidden": hb})
             pools["reached"] = int(rn[0]["n"]) if rn else 0
         except Exception:
             pools["retry"] = 0
@@ -1603,10 +1606,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             from ..pipeline2 import _GADS_P2_FILTER, _P2, _NOT_BOOKED
             gclause = (" AND " + _GADS_P2_FILTER) if gads_only else ""
-            bclause = " AND COALESCE(pp.assigned_bde, pp.last_bde) = %(bde)s" if bde_scoped else ""
+            bclause = (" AND COALESCE(pp.assigned_bde, pp.last_bde) = %(bde)s" if bde_scoped
+                       else (" AND NOT (COALESCE(pp.assigned_bde, pp.last_bde) = ANY(%(hidden)s::text[]))" if hb else ""))
             pa = q("SELECT count(*) n FROM prospect_pipeline pp "
                    "LEFT JOIN prospects pr ON pp.prospect_id=pr.id "
-                   "WHERE pp.pipeline=%(p)s AND " + _NOT_BOOKED + gclause + bclause, {"p": _P2, "bde": bde})
+                   "WHERE pp.pipeline=%(p)s AND " + _NOT_BOOKED + gclause + bclause, {"p": _P2, "bde": bde, "hidden": hb})
             pools["p2"] = int(pa[0]["n"]) if pa else 0
         except Exception:
             pass
@@ -1741,9 +1745,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from ..retry import _gather_sql
             g = _gather_sql(gads_only=bool(gads_only))
             wf, wp = _win_clause("rr.last_attempt")
-            total = q("SELECT count(*) n FROM (" + g + ") rr WHERE true" + wf,
-                      {"maxatt": settings.retry_max_attempts, **wp})[0]["n"]
-            bde_f = " AND rr.last_bde = %(bde)s" if (bde and bde != "ALL") else ""
+            hb = _hidden_bdes(request)
+            if bde and bde != "ALL":
+                bde_f = " AND rr.last_bde = %(bde)s"            # a BDE sees only their own retries
+            elif hb:
+                bde_f = " AND NOT (rr.last_bde = ANY(%(hidden)s::text[]))"  # hide a private BDE's rows
+            else:
+                bde_f = ""
+            fp = {"maxatt": settings.retry_max_attempts, "bde": bde, "hidden": hb,
+                  "lim": limit, "off": offset, **wp}
+            total = q("SELECT count(*) n FROM (" + g + ") rr WHERE true" + bde_f + wf, fp)[0]["n"]
             rows = q(
                 "WITH rr AS (" + g + ") "
                 "SELECT rr.dest_number, rr.company AS prospect_company, rr.last_bde AS bde, "
@@ -1755,8 +1766,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 + _CO_NAME_LATERAL.replace("%(d9col)s", "rr.d9")
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "rr.d9")
                 + " WHERE true" + bde_f + wf + " ORDER BY rr.last_attempt DESC NULLS LAST "
-                "LIMIT %(lim)s OFFSET %(off)s",
-                {"maxatt": settings.retry_max_attempts, "bde": bde, "lim": limit, "off": offset, **wp})
+                "LIMIT %(lim)s OFFSET %(off)s", fp)
             for r in rows:
                 r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
@@ -1767,8 +1777,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from ..retry import reached_no_next_sql
             g = reached_no_next_sql(gads_only=bool(gads_only))
             wf, wp = _win_clause("xx.last_attempt")
-            total = q("SELECT count(*) n FROM (" + g + ") xx WHERE true" + wf, wp)[0]["n"]
-            bde_f = " AND xx.last_bde = %(bde)s" if (bde and bde != "ALL") else ""
+            hb = _hidden_bdes(request)
+            if bde and bde != "ALL":
+                bde_f = " AND xx.last_bde = %(bde)s"
+            elif hb:
+                bde_f = " AND NOT (xx.last_bde = ANY(%(hidden)s::text[]))"
+            else:
+                bde_f = ""
+            fp = {"bde": bde, "hidden": hb, "lim": limit, "off": offset, **wp}
+            total = q("SELECT count(*) n FROM (" + g + ") xx WHERE true" + bde_f + wf, fp)[0]["n"]
             rows = q(
                 "WITH xx AS (" + g + ") "
                 "SELECT xx.dest_number, xx.company AS prospect_company, xx.last_bde AS bde, "
@@ -1780,8 +1797,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 + _CO_NAME_LATERAL.replace("%(d9col)s", "xx.d9")
                 + _NEXT_CALL_LATERAL.replace("%(d9col)s", "xx.d9")
                 + " WHERE true" + bde_f + wf + " ORDER BY xx.last_attempt DESC NULLS LAST "
-                "LIMIT %(lim)s OFFSET %(off)s",
-                {"bde": bde, "lim": limit, "off": offset, **wp})
+                "LIMIT %(lim)s OFFSET %(off)s", fp)
             for r in rows:
                 r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
                 r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
