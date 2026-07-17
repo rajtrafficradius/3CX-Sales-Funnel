@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -14,8 +15,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from psycopg.types.json import Json
-from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
-                               Response, StreamingResponse)
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse, Response, StreamingResponse)
 
 from ..auth import (can_manage_pipeline, create_session, create_user,
                     delete_session, delete_user, get_user_by_email, is_admin,
@@ -541,14 +542,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return resp
 
     def _scoped_bde(request: Request, requested: str | None) -> str:
-        """BDEs are forced to their own data; managers/kiosk see what they ask for."""
+        """BDEs are forced to their own data; managers/kiosk see what they ask for. A non-privileged
+        viewer can NEVER target a private/isolated BDE by name (that request is 403'd here, once, for
+        every endpoint) — private-BDE rows are additionally excluded from ALL/list views downstream."""
         u = getattr(request.state, "user", None) or {}
         if u.get("role") == "bde":
             return u.get("bde_name") or "__none__"
-        return requested or "ALL"
+        resolved = requested or "ALL"
+        if resolved != "ALL" and resolved in _hidden_bdes(request):
+            raise HTTPException(403, "not found")
+        return resolved
 
     def _is_bde(request: Request) -> bool:
         return (getattr(request.state, "user", None) or {}).get("role") == "bde"
+
+    def _hidden_bdes(request: Request) -> list[str]:
+        """Private/isolated BDE names this viewer must NOT see — their calls, funnel contribution,
+        leaderboard row, picker entry and prospect/call pages are all hidden. Empty (sees everything)
+        for admins and for a private BDE viewing their OWN data; the full private set for everyone
+        else (other BDEs, BDMs, managers, and the TV/kiosk)."""
+        private = settings.private_bdes
+        if not private:
+            return []
+        u = getattr(request.state, "user", None) or {}
+        if is_admin(u):                                    # Raj / Vysakh see everyone
+            return []
+        if u.get("role") == "bde" and u.get("bde_name") in private:
+            return []                                      # the private BDE sees their own data
+        return list(private)
+
+    def _deny_if_hidden(request: Request, bde_name: str | None) -> None:
+        """403 when a non-privileged viewer tries to open a private BDE's specific call/prospect."""
+        if bde_name and bde_name in _hidden_bdes(request):
+            raise HTTPException(403, "not found")
+
+    def _hidden_and(request: Request, col: str = "COALESCE(c.bde_name, c.bde_extension)"):
+        """(sql, params) appended to an ALL/list WHERE so private BDEs' rows are dropped for a
+        non-privileged viewer. Positional %s. Empty when nothing to hide (admins / the private BDE)."""
+        hidden = _hidden_bdes(request)
+        if not hidden:
+            return "", []
+        return f" AND NOT ({col} = ANY(%s::text[])) ", [list(hidden)]
 
     @app.get("/login", response_class=HTMLResponse)
     def login_page() -> str:
@@ -805,8 +839,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             own = _scoped_bde(request, None)
             bdes = [own]
         else:
+            hidden = _hidden_bdes(request)
             bdes = ["ALL", *[r["bde_name"] for r in q(
-                "SELECT DISTINCT bde_name FROM daily_funnel WHERE bde_name <> 'ALL' ORDER BY bde_name")]]
+                "SELECT DISTINCT bde_name FROM daily_funnel "
+                "WHERE bde_name <> 'ALL' AND NOT (bde_name = ANY(%s::text[])) ORDER BY bde_name", (hidden,))]]
         review = q("SELECT count(*) AS n FROM classifications WHERE needs_human_review")
         u = getattr(request.state, "user", None) or {}
         return JSONResponse({
@@ -841,13 +877,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         d = _latest_date()
         return d, d
 
-    def _sums_by_track(bde: str, start: str, end: str) -> dict:
+    def _sums_by_track(bde: str, start: str, end: str, exclude: list[str] | None = None) -> dict:
         cols = ", ".join(f"COALESCE(SUM({c}),0) AS {c}" for c in _SUM_COLS)
-        rows = q(
-            f"SELECT track, {cols} FROM daily_funnel "
-            "WHERE bde_name=%s AND report_date BETWEEN %s AND %s GROUP BY track",
-            (bde, start, end),
-        )
+        if bde == "ALL" and exclude:
+            # Team total that hides private BDEs: sum the per-BDE rows minus the hidden ones.
+            # ALL == sum(per-BDE) holds by construction (aggregate.py), so this is exact.
+            rows = q(
+                f"SELECT track, {cols} FROM daily_funnel "
+                "WHERE bde_name <> 'ALL' AND NOT (bde_name = ANY(%s)) "
+                "AND report_date BETWEEN %s AND %s GROUP BY track",
+                (list(exclude), start, end),
+            )
+        else:
+            rows = q(
+                f"SELECT track, {cols} FROM daily_funnel "
+                "WHERE bde_name=%s AND report_date BETWEEN %s AND %s GROUP BY track",
+                (bde, start, end),
+            )
         return {r["track"]: r for r in rows}
 
     def _prev_window(start: str, end: str):
@@ -919,10 +965,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def funnel(request: Request, date: str | None = None, start: str | None = None,
                end: str | None = None, bde: str = "ALL", compare: str = "") -> JSONResponse:
         bde = _scoped_bde(request, bde)
+        hidden = _hidden_bdes(request)
+        if bde in hidden:                                  # a non-admin asked for a private BDE by name
+            raise HTTPException(403, "not found")
         start, end = _resolve_window(date, start, end)
         if not start:
             return JSONResponse({"found": False, "stages": [], "conversion": {}})
-        tracks = _sums_by_track(bde, start, end)
+        tracks = _sums_by_track(bde, start, end, exclude=hidden)
         if not tracks:
             return JSONResponse({"found": False, "stages": [], "conversion": {},
                                  "window": {"start": start, "end": end}})
@@ -988,7 +1037,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         if compare == "prev":
             ps, pe = _prev_window(start, end)
-            pt = _sums_by_track(bde, ps, pe).get("combined") or {}
+            pt = _sums_by_track(bde, ps, pe, exclude=hidden).get("combined") or {}
             out["compare"] = {
                 "window": {"start": ps, "end": pe},
                 "stages": {key: int(pt.get(key) or 0) for _, key in STAGES},
@@ -1220,6 +1269,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        else:
+            _hb = _hidden_bdes(request)
+            if _hb:
+                where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))")
+                params["hidden"] = _hb
         digits = "regexp_replace(c.dest_number,'[^0-9]','','g')"
         channel = (f"CASE WHEN {digits} ~ '1(3|8)00' THEN 'tollfree' "
                    f"WHEN right({digits},9) ~ '^4' THEN 'mobile' ELSE 'landline' END")
@@ -1261,6 +1315,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if _is_bde(request):  # a BDE sees only their own row
             where.append("bde_name = %s")
             params.append(_scoped_bde(request, None))
+        else:
+            hb = _hidden_bdes(request)   # non-admins never see a private BDE's leaderboard row
+            if hb:
+                where.append("NOT (bde_name = ANY(%s::text[]))")
+                params.append(hb)
         rows = q(
             f"SELECT bde_name, {cols} FROM daily_funnel WHERE {' AND '.join(where)} "
             "GROUP BY bde_name ORDER BY SUM(meetings_booked) DESC, SUM(calls_made) DESC",
@@ -1276,6 +1335,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if _is_bde(request):
             ab_where.append("COALESCE(c.bde_name, c.bde_extension) = %s")
             ab_params.append(_scoped_bde(request, None))
+        else:
+            _abh = _hidden_bdes(request)
+            if _abh:
+                ab_where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%s::text[]))")
+                ab_params.append(_abh)
         ab_rows = q(
             "SELECT COALESCE(c.bde_name, c.bde_extension) AS bde, count(*) AS n "
             "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
@@ -1299,13 +1363,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/trend")
     def trend(request: Request, bde: str = "ALL", days: int = 30) -> JSONResponse:
         bde = _scoped_bde(request, bde)
-        rows = q(
-            "SELECT report_date, calls_made, transcribed, rpc_connect, full_pitch, "
-            "leads, qualified, meetings_booked FROM daily_funnel "
-            "WHERE bde_name=%s AND track='combined' "
-            "ORDER BY report_date DESC LIMIT %s",
-            (bde, days),
-        )
+        _tcols = "calls_made, transcribed, rpc_connect, full_pitch, leads, qualified, meetings_booked"
+        hidden = _hidden_bdes(request)
+        if bde == "ALL" and hidden:
+            # team trend hiding private BDEs: sum per-BDE rows per day (ALL == sum(per-BDE))
+            sums = ", ".join(f"COALESCE(SUM({c}),0) AS {c}" for c in _tcols.split(", "))
+            rows = q(
+                f"SELECT report_date, {sums} FROM daily_funnel "
+                "WHERE bde_name<>'ALL' AND NOT (bde_name = ANY(%s::text[])) AND track='combined' "
+                "GROUP BY report_date ORDER BY report_date DESC LIMIT %s",
+                (hidden, days),
+            )
+        else:
+            rows = q(
+                f"SELECT report_date, {_tcols} FROM daily_funnel "
+                "WHERE bde_name=%s AND track='combined' "
+                "ORDER BY report_date DESC LIMIT %s",
+                (bde, days),
+            )
         rows = list(reversed(rows))
         return JSONResponse({
             "dates": [str(r["report_date"]) for r in rows],
@@ -2186,6 +2261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not calls:
             raise HTTPException(404, "call not found")
         call = calls[0]
+        _deny_if_hidden(request, call.get("bde_name"))   # a private BDE's call is admin/own-only
         # A BDE may open any call to a prospect they can access (they dialled it OR it's assigned to
         # them) — the rotation hand-off, consistent with the prospect page (which lists every call).
         if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
@@ -2347,67 +2423,103 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _acx["c"] = cli
         return cli
 
-    # Small in-process cache of already-fetched recording bytes. The <audio> element streams via
-    # HTTP Range and re-requests chunks as it plays/seeks; without this every chunk would re-download
-    # the whole recording from 3CX/Aircall (Aircall even re-mints a signed URL first), which is the
-    # root cause of playback stalling and "disconnecting" mid-play. Bounded by count + TTL.
-    from collections import OrderedDict as _OrderedDict
-    _rec_cache: "_OrderedDict[str, tuple]" = _OrderedDict()
-    _REC_CACHE_MAX = 12                             # keep at most this many recordings hot
-    _REC_CACHE_BYTES = 160 * 1024 * 1024            # ...and at most ~160 MB total, whichever binds first
-    _REC_CACHE_TTL = 900.0                          # seconds — fresh signed URLs / tokens well within window
+    # On-DISK cache of fetched recordings, served via FileResponse (native HTTP Range + streaming).
+    # A 3CX/Aircall recording is ~8 MB and takes ~13 s to download; serving from disk means the
+    # <audio> element's play/seek Range requests are answered instantly instead of each re-downloading
+    # the whole file — the root cause of playback stalling/"disconnecting" mid-play. A per-call
+    # single-flight lock ensures the concurrent probe+play requests a browser fires don't each start
+    # their own 13 s download (which starved the threadpool and truncated the stream).
+    import tempfile as _tempfile, threading as _threading, glob as _glob
+    _REC_DIR = os.path.join(_tempfile.gettempdir(), "funnel_rec_cache")
+    os.makedirs(_REC_DIR, exist_ok=True)
+    _REC_DIR_MAX = 200                              # keep the last N recordings on disk (LRU by mtime)
+    _MT_BY_EXT = {"wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4", "ogg": "audio/ogg"}
+    _rec_locks_guard = _threading.Lock()
+    _rec_locks: dict = {}
 
-    def _fetch_recording_bytes(call: dict, call_id: str) -> tuple:
-        """Return (bytes, media_type, ext) for a call's recording, cached in-process so that
-        Range re-requests during playback are served from memory, not re-fetched upstream."""
-        import time as _time
-        now = _time.monotonic()
-        hit = _rec_cache.get(call_id)
-        if hit and (now - hit[3]) < _REC_CACHE_TTL:
-            _rec_cache.move_to_end(call_id)
-            return hit[0], hit[1], hit[2]
-        rec_id = call.get("recording_id")
-        ext, media_type = "wav", "audio/wav"
-        if call.get("provider") == "aircall":       # Aircall recording (signed S3 URL)
-            if not settings.aircall_enabled:
-                raise HTTPException(503, "Aircall recordings unavailable: credentials not configured")
-            try:
-                wav = _aircall().download_recording(rec_id)
-            except Exception:
-                _acx.pop("c", None)
-                wav = _aircall().download_recording(rec_id)
-            from ..aircall.calls import sniff_audio  # Aircall serves WAV or MP3 — detect
-            if wav:
-                ext, media_type = sniff_audio(wav)
-        else:
-            try:
-                wav = _threecx().download_recording(rec_id)
-            except Exception:
-                _tcx.pop("c", None)                 # token may be stale — rebuild + retry once
-                wav = _threecx().download_recording(rec_id)
-        if wav:
-            _rec_cache[call_id] = (wav, media_type, ext, now)
-            _rec_cache.move_to_end(call_id)
-            total_bytes = sum(len(v[0]) for v in _rec_cache.values())
-            while _rec_cache and (len(_rec_cache) > _REC_CACHE_MAX or total_bytes > _REC_CACHE_BYTES):
-                if len(_rec_cache) == 1:             # never evict the just-fetched item we're serving
-                    break
-                _, ev = _rec_cache.popitem(last=False)  # evict least-recently-used
-                total_bytes -= len(ev[0])
-        return wav, media_type, ext
+    def _rec_lock(call_id: str):
+        with _rec_locks_guard:
+            lk = _rec_locks.get(call_id)
+            if lk is None:
+                lk = _rec_locks[call_id] = _threading.Lock()
+            return lk
+
+    def _prune_rec_dir() -> None:
+        try:
+            files = sorted(_glob.glob(os.path.join(_REC_DIR, "*.*")), key=os.path.getmtime)
+            for f in files[:-_REC_DIR_MAX]:
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    def _ensure_recording_file(call: dict, call_id: str) -> tuple:
+        """Download the recording to the disk cache once (single-flight) and return
+        (path, media_type, ext). Subsequent plays/Range requests are served from disk."""
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id)
+
+        def _found():
+            hits = _glob.glob(os.path.join(_REC_DIR, safe + ".*"))
+            if hits:
+                p = hits[0]
+                ext = p.rsplit(".", 1)[-1]
+                try:
+                    os.utime(p, None)               # mark recently used for LRU pruning
+                except OSError:
+                    pass
+                return p, _MT_BY_EXT.get(ext, "application/octet-stream"), ext
+            return None
+
+        got = _found()
+        if got:
+            return got
+        with _rec_lock(call_id):
+            got = _found()                          # another thread may have fetched it while we waited
+            if got:
+                return got
+            rec_id = call.get("recording_id")
+            ext, media_type = "wav", "audio/wav"
+            if call.get("provider") == "aircall":   # Aircall recording (signed S3 URL)
+                if not settings.aircall_enabled:
+                    raise HTTPException(503, "Aircall recordings unavailable: credentials not configured")
+                try:
+                    wav = _aircall().download_recording(rec_id)
+                except Exception:
+                    _acx.pop("c", None)
+                    wav = _aircall().download_recording(rec_id)
+                from ..aircall.calls import sniff_audio  # Aircall serves WAV or MP3 — detect
+                if wav:
+                    ext, media_type = sniff_audio(wav)
+            else:
+                try:
+                    wav = _threecx().download_recording(rec_id)
+                except Exception:
+                    _tcx.pop("c", None)             # token may be stale — rebuild + retry once
+                    wav = _threecx().download_recording(rec_id)
+            if not wav:
+                return None, media_type, ext
+            path = os.path.join(_REC_DIR, f"{safe}.{ext}")
+            tmp = path + ".part"
+            with open(tmp, "wb") as f:
+                f.write(wav)
+            os.replace(tmp, path)                   # atomic publish
+            _prune_rec_dir()
+            return path, media_type, ext
 
     @app.get("/api/call/{call_id}/recording")
     def call_recording(request: Request, call_id: str, download: int = 0):
-        """Stream a call's recording audio from 3CX/Aircall on demand, honouring HTTP Range so the
-        browser can stream and seek. PLAY is available to any logged-in staff user; DOWNLOAD
-        (attachment) is restricted to BDM / admin."""
+        """Serve a call's recording audio (cached on disk, native HTTP Range/streaming via
+        FileResponse). PLAY is available to any logged-in staff user; DOWNLOAD is BDM / admin only."""
         u = getattr(request.state, "user", None) or {}
         if u.get("role") == "kiosk":               # the public TV display can't pull audio
             raise HTTPException(403, "login required")
-        rows = q("SELECT bde_name, bde_extension, recording_id, provider FROM calls WHERE call_id=%s", (call_id,))
+        rows = q("SELECT bde_name, bde_extension, recording_id, provider, dest_number FROM calls WHERE call_id=%s", (call_id,))
         if not rows:
             raise HTTPException(404, "call not found")
         call = rows[0]
+        _deny_if_hidden(request, call.get("bde_name"))   # a private BDE's recording is admin/own-only
         # Same rotation-handoff rule as the call page: a rep may hear any call to a prospect they can
         # access (dialled it OR assigned to them), not only calls they personally made.
         if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
@@ -2417,39 +2529,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if download and not can_manage_pipeline(u):
             raise HTTPException(403, "download is restricted to BDM / admin")
 
-        wav, media_type, ext = _fetch_recording_bytes(call, call_id)
-        if not wav:
+        path, media_type, ext = _ensure_recording_file(call, call_id)
+        if not path:
             raise HTTPException(404, "recording is empty or no longer available upstream")
-        total = len(wav)
         safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id)
-        disp = "attachment" if download else "inline"
-        base_headers = {
-            "Content-Disposition": f'{disp}; filename="call_{safe_id}.{ext}"',
-            "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600",
-        }
-
-        # Honour a Range request with a 206 partial response. Ignoring Range (returning 200 + the
-        # full body) is exactly what makes the <audio> element stall and drop the connection mid-play,
-        # especially in Safari, which requires a 206 for media playback.
-        rng = request.headers.get("range")
-        if rng and not download:
-            m = re.match(r"\s*bytes=(\d*)-(\d*)\s*$", rng)
-            if m and (m.group(1) or m.group(2)):
-                if not m.group(1):                   # suffix range: bytes=-N -> the last N bytes
-                    length = min(int(m.group(2)), total)
-                    start, end = total - length, total - 1
-                else:
-                    start = int(m.group(1))
-                    end = min(int(m.group(2)), total - 1) if m.group(2) else total - 1
-                if start > end or start >= total:    # unsatisfiable
-                    return Response(status_code=416, headers={**base_headers, "Content-Range": f"bytes */{total}"})
-                chunk = wav[start:end + 1]
-                return Response(content=chunk, status_code=206, media_type=media_type, headers={
-                    **base_headers,
-                    "Content-Range": f"bytes {start}-{end}/{total}",
-                    "Content-Length": str(len(chunk)),
-                })
-        return Response(content=wav, media_type=media_type, headers={**base_headers, "Content-Length": str(total)})
+        fname = f"call_{safe_id}.{ext}"
+        headers = {"Cache-Control": "private, max-age=3600"}
+        if download:
+            return FileResponse(path, media_type=media_type, filename=fname, headers=headers)
+        # Inline playback — FileResponse sets Accept-Ranges and answers Range with a 206 itself.
+        return FileResponse(path, media_type=media_type, filename=fname,
+                            content_disposition_type="inline", headers=headers)
 
     def _reaggregate_for_call(call_id: str) -> None:
         """Re-aggregate EVERY day that has an in-scope call to the same NUMBER or COMPANY as

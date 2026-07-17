@@ -199,6 +199,12 @@ class Settings(BaseSettings):
     # by canonical name. They still appear in analysis/reports (they do make some calls).
     non_calling_names: str = "Ben"
 
+    # Private/isolated BDEs: their funnel data is hidden from every non-admin viewer (other BDEs, the
+    # BDMs, managers, and the TV/kiosk) and excluded from the OVERALL/team totals, leaderboard, pickers
+    # and reports. Only admins (Raj, Vysakh) and the private BDE themselves ever see it. CSV of the
+    # canonical bde_name(s). Isolation is opt-in; empty = no private BDEs (unchanged behaviour).
+    private_bde_names: str = ""
+
     # The whole CALLING system (calendar + call scheduling: fresh calls, RPC-connect callbacks,
     # gatekeeper/weekly recalls) operates ONLY on prospects CONFIRMED running Google Ads. The old
     # BDE-sourced (non-GAds) data is reached from the Agency & RPC page / pipeline pages instead.
@@ -227,6 +233,10 @@ class Settings(BaseSettings):
     # fully-enriched, value×90-day-performance-matched prospects. 0 disables the allocator.
     fresh_alloc_enabled: bool = True
     bde_daily_call_target: int = 200
+    # Restrict every calling-worklist allocator (fresh / retry / reached + the agency rotation) to ONLY
+    # these BDEs when set — used to pilot the GAds calendar & pool with one BDE before rolling out to the
+    # whole team. Empty = allocate to every calling BDE (normal behaviour). CSV of canonical names.
+    calendar_alloc_names: str = ""
     # Spread the fresh worklist across this many upcoming WORKING days at target/day/BDE (so the
     # calendar shows an even ~target×BDEs per day), instead of dumping it all on the next day. The
     # finite fresh pool naturally tapers off once exhausted.
@@ -308,6 +318,16 @@ class Settings(BaseSettings):
     @property
     def inscope_names(self) -> list[str]:
         return _csv(self.roster_inscope_names)
+
+    @property
+    def private_bdes(self) -> list[str]:
+        """Canonical names of isolated BDEs (hidden from non-admins). See private_bde_names."""
+        return _csv(self.private_bde_names)
+
+    @property
+    def calendar_alloc_bdes(self) -> list[str]:
+        """If non-empty, the ONLY BDEs the calling allocators deal a worklist to. See calendar_alloc_names."""
+        return _csv(self.calendar_alloc_names)
 
     @property
     def aircall_agents(self) -> list[str]:
