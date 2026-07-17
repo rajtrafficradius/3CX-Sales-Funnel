@@ -214,6 +214,18 @@
   :root[data-theme=light] .tr-rail-brand .fulllogo{filter:none}
   .tr-rail:hover .tr-rail-brand .barsic,.tr-rail:focus-within .tr-rail-brand .barsic{opacity:0}
   .tr-rail:hover .tr-rail-brand .fulllogo,.tr-rail:focus-within .tr-rail-brand .fulllogo{opacity:1}
+  /* recording player */
+  .rec-wrap{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
+  .rec-audio{height:38px;min-width:260px;max-width:440px;flex:1}
+  .rec-speed{display:flex;align-items:center;gap:var(--s1)}
+  .rec-speed .lbl{font-size:var(--t-cap);color:var(--muted);margin-right:2px}
+  .rec-rate{font:600 var(--t-cap)/1 var(--mono,ui-monospace,monospace);padding:5px 9px;border:1px solid var(--line2);
+    border-radius:var(--r1);background:var(--chip);color:var(--txt-dim);cursor:pointer;transition:.12s}
+  .rec-rate:hover{border-color:var(--accent);color:var(--txt)}
+  .rec-rate.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .rec-rate:focus-visible{outline:none;box-shadow:var(--ring)}
+  .rec-err{display:none;margin-top:var(--s2);font-size:var(--t-cap);color:var(--bad)}
+  .rec-err a{color:var(--accent);font-weight:600}
 </style>
 </head>
 <body>
@@ -399,19 +411,37 @@ const BANT_MEAN={Budget:'Can afford it',Authority:'Decision-maker',Problem:'Has 
 function bapuChip(label,v){const on=v&&v.value;const m=BANT_MEAN[label]||'';return `<span class="bapu ${on?'on':'off'}" title="${esc(v&&v.evidence)}"><span class="bapu-t">${on?'✓':'✕'} ${label}</span>${m?`<span class="bapu-m">${m}</span>`:''}</span>`;}
 
 // Call-recording player. Playback is available to every logged-in user; the download
-// button is shown only to BDM / admin (can_override from the API).
+// button is shown only to BDM / admin (can_override from the API). The endpoint streams via
+// HTTP Range (206) so playback seeks smoothly; speed controls make long-call review faster.
 function recordingCard(c, canDownload){
   if(!c || !c.recording_id) return c && c.recording_present
     ? `<div class="card full"><h2>🎧 Call recording</h2><div class="muted">The call was recorded but 3CX did not return a downloadable recording id.</div></div>`
     : '';
   const url=`/api/call/${encodeURIComponent(c.call_id)}/recording`;
+  const aid='rec_'+String(c.call_id).replace(/[^A-Za-z0-9]/g,'_');
   const dl = canDownload
-    ? `<a class="lnk" href="${url}?download=1" download style="margin-left:12px">⬇ Download</a>`
-    : `<span class="muted" style="margin-left:12px;font-size:12px">Download: BDM / admin only</span>`;
+    ? `<a class="lnk" href="${url}?download=1" download>⬇ Download</a>`
+    : `<span class="muted" style="font-size:12px">Download: BDM / admin only</span>`;
+  const rates=[1,1.5,2].map(r=>`<button type="button" class="rec-rate${r===1?' on':''}" onclick="recSetRate('${aid}',${r},this)">${r}×</button>`).join('');
   return `<div class="card full"><h2>🎧 Call recording</h2>
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <audio controls preload="none" style="height:38px;max-width:420px;flex:1" src="${url}"></audio>${dl}
-    </div></div>`;
+    <div class="rec-wrap">
+      <audio id="${aid}" class="rec-audio" controls preload="none" src="${url}" onerror="recErr('${aid}')"></audio>
+      <div class="rec-speed"><span class="lbl">Speed</span>${rates}</div>
+      ${dl}
+    </div>
+    <div id="${aid}_err" class="rec-err"></div>
+  </div>`;
+}
+function recSetRate(id,r,btn){
+  const a=document.getElementById(id); if(!a) return;
+  a.playbackRate=r; a.defaultPlaybackRate=r;
+  if(btn&&btn.parentNode){ btn.parentNode.querySelectorAll('.rec-rate').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); }
+}
+function recErr(id){
+  const e=document.getElementById(id+'_err'); if(!e) return;
+  e.style.display='block';
+  e.innerHTML='⚠ Could not play this recording — it may still be processing upstream, or the source timed out. '
+    +`<a href="#" onclick="var x=document.getElementById('${id}');this.parentNode.style.display='none';x.load();var p=x.play&&x.play();p&&p.catch&&p.catch(function(){recErr('${id}');});return false;">Retry</a>`;
 }
 function leadCard(cl, ev, o){
   const t=cl.lead_temperature||'none', [lbl,col,bg]=TEMP[t]||TEMP.none;

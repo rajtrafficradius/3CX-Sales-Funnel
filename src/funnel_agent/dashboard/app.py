@@ -2347,10 +2347,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _acx["c"] = cli
         return cli
 
+    # Small in-process cache of already-fetched recording bytes. The <audio> element streams via
+    # HTTP Range and re-requests chunks as it plays/seeks; without this every chunk would re-download
+    # the whole recording from 3CX/Aircall (Aircall even re-mints a signed URL first), which is the
+    # root cause of playback stalling and "disconnecting" mid-play. Bounded by count + TTL.
+    from collections import OrderedDict as _OrderedDict
+    _rec_cache: "_OrderedDict[str, tuple]" = _OrderedDict()
+    _REC_CACHE_MAX = 12                             # keep at most this many recordings hot
+    _REC_CACHE_BYTES = 160 * 1024 * 1024            # ...and at most ~160 MB total, whichever binds first
+    _REC_CACHE_TTL = 900.0                          # seconds — fresh signed URLs / tokens well within window
+
+    def _fetch_recording_bytes(call: dict, call_id: str) -> tuple:
+        """Return (bytes, media_type, ext) for a call's recording, cached in-process so that
+        Range re-requests during playback are served from memory, not re-fetched upstream."""
+        import time as _time
+        now = _time.monotonic()
+        hit = _rec_cache.get(call_id)
+        if hit and (now - hit[3]) < _REC_CACHE_TTL:
+            _rec_cache.move_to_end(call_id)
+            return hit[0], hit[1], hit[2]
+        rec_id = call.get("recording_id")
+        ext, media_type = "wav", "audio/wav"
+        if call.get("provider") == "aircall":       # Aircall recording (signed S3 URL)
+            if not settings.aircall_enabled:
+                raise HTTPException(503, "Aircall recordings unavailable: credentials not configured")
+            try:
+                wav = _aircall().download_recording(rec_id)
+            except Exception:
+                _acx.pop("c", None)
+                wav = _aircall().download_recording(rec_id)
+            from ..aircall.calls import sniff_audio  # Aircall serves WAV or MP3 — detect
+            if wav:
+                ext, media_type = sniff_audio(wav)
+        else:
+            try:
+                wav = _threecx().download_recording(rec_id)
+            except Exception:
+                _tcx.pop("c", None)                 # token may be stale — rebuild + retry once
+                wav = _threecx().download_recording(rec_id)
+        if wav:
+            _rec_cache[call_id] = (wav, media_type, ext, now)
+            _rec_cache.move_to_end(call_id)
+            total_bytes = sum(len(v[0]) for v in _rec_cache.values())
+            while _rec_cache and (len(_rec_cache) > _REC_CACHE_MAX or total_bytes > _REC_CACHE_BYTES):
+                if len(_rec_cache) == 1:             # never evict the just-fetched item we're serving
+                    break
+                _, ev = _rec_cache.popitem(last=False)  # evict least-recently-used
+                total_bytes -= len(ev[0])
+        return wav, media_type, ext
+
     @app.get("/api/call/{call_id}/recording")
     def call_recording(request: Request, call_id: str, download: int = 0):
-        """Stream a call's recording audio from 3CX on demand. PLAY is available to any
-        logged-in staff user; DOWNLOAD (attachment) is restricted to BDM / admin."""
+        """Stream a call's recording audio from 3CX/Aircall on demand, honouring HTTP Range so the
+        browser can stream and seek. PLAY is available to any logged-in staff user; DOWNLOAD
+        (attachment) is restricted to BDM / admin."""
         u = getattr(request.state, "user", None) or {}
         if u.get("role") == "kiosk":               # the public TV display can't pull audio
             raise HTTPException(403, "login required")
@@ -2362,34 +2412,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # access (dialled it OR assigned to them), not only calls they personally made.
         if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
             raise HTTPException(403, "not your call")
-        rec_id = call.get("recording_id")
-        if not rec_id:
+        if not call.get("recording_id"):
             raise HTTPException(404, "no recording for this call")
         if download and not can_manage_pipeline(u):
             raise HTTPException(403, "download is restricted to BDM / admin")
-        ext, media_type = "wav", "audio/wav"
-        if call.get("provider") == "aircall":       # Aircall recording (signed S3 URL)
-            if not settings.aircall_enabled:
-                raise HTTPException(503, "Aircall recordings unavailable: credentials not configured")
-            try:
-                wav = _aircall().download_recording(rec_id)
-            except Exception:
-                _acx.pop("c", None)
-                wav = _aircall().download_recording(rec_id)
-            from ..aircall.calls import sniff_audio  # Aircall serves WAV or MP3 — detect
-            ext, media_type = sniff_audio(wav)
-        else:
-            try:
-                wav = _threecx().download_recording(rec_id)
-            except Exception:
-                _tcx.pop("c", None)                 # token may be stale — rebuild + retry once
-                wav = _threecx().download_recording(rec_id)
+
+        wav, media_type, ext = _fetch_recording_bytes(call, call_id)
+        if not wav:
+            raise HTTPException(404, "recording is empty or no longer available upstream")
+        total = len(wav)
         safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", call_id)
         disp = "attachment" if download else "inline"
-        return Response(content=wav, media_type=media_type, headers={
+        base_headers = {
             "Content-Disposition": f'{disp}; filename="call_{safe_id}.{ext}"',
             "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600",
-        })
+        }
+
+        # Honour a Range request with a 206 partial response. Ignoring Range (returning 200 + the
+        # full body) is exactly what makes the <audio> element stall and drop the connection mid-play,
+        # especially in Safari, which requires a 206 for media playback.
+        rng = request.headers.get("range")
+        if rng and not download:
+            m = re.match(r"\s*bytes=(\d*)-(\d*)\s*$", rng)
+            if m and (m.group(1) or m.group(2)):
+                if not m.group(1):                   # suffix range: bytes=-N -> the last N bytes
+                    length = min(int(m.group(2)), total)
+                    start, end = total - length, total - 1
+                else:
+                    start = int(m.group(1))
+                    end = min(int(m.group(2)), total - 1) if m.group(2) else total - 1
+                if start > end or start >= total:    # unsatisfiable
+                    return Response(status_code=416, headers={**base_headers, "Content-Range": f"bytes */{total}"})
+                chunk = wav[start:end + 1]
+                return Response(content=chunk, status_code=206, media_type=media_type, headers={
+                    **base_headers,
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Content-Length": str(len(chunk)),
+                })
+        return Response(content=wav, media_type=media_type, headers={**base_headers, "Content-Length": str(total)})
 
     def _reaggregate_for_call(call_id: str) -> None:
         """Re-aggregate EVERY day that has an in-scope call to the same NUMBER or COMPANY as
