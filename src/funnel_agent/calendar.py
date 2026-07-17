@@ -240,7 +240,8 @@ def synth_next_call_points_text(evidence: dict | None) -> str:
     return "\n".join(lines)
 
 
-def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool = False) -> dict:
+def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool = False,
+                           alloc_names: set[str] | None = None) -> dict:
     """Create/refresh a calendar 'callback' for every interested-prospect callback request on `day`.
     Idempotent via the call_id unique index; PENDING auto callbacks are also REFRESHED each run so an
     improved slot/reason (e.g. a vague 'after his meeting' rescheduled honestly) self-heals — but a
@@ -280,6 +281,11 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
     created = 0
     suppressed = 0
     for r in pending:
+        # Pilot gate: when a calendar allocation allowlist is set (e.g. Mohit-only test), only that
+        # BDE's callbacks are scheduled — everyone else's stay off the calendar until roll-out.
+        if alloc_names and (r.get("bde_name") or "").strip().lower() not in alloc_names:
+            suppressed += 1
+            continue
         # POLICY (user-confirmed 2026-07-08): ALL data is BDE-sourced (master_file = Raven's BDE list
         # too). We ONLY schedule a callback when we actually reached the decision-maker (an RPC-
         # connect); a gatekeeper-only "call back later" is never auto-scheduled, whatever the source.

@@ -223,10 +223,16 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
     params: list[dict] = []
     skipped = 0
     suppressed_bde_gk = 0
+    # Pilot gate: when a calendar allocation allowlist is set (Mohit-only test), recalls for every
+    # other BDE stay off the calendar until roll-out.
+    _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
     for i, r in enumerate(rows):
         is_agency = (r.get("pp_pipeline") == "pipeline2_existing_agency")
         bde = (r.get("assigned_bde") if is_agency else None) or r.get("last_bde")
         if not bde or not r.get("dest_number"):   # must land on a real BDE calendar
+            skipped += 1
+            continue
+        if _alloc and (bde or "").strip().lower() not in _alloc:
             skipped += 1
             continue
         # exhaust the un-connected recall window after max_weeks (agency rotation never exhausts)

@@ -100,7 +100,8 @@ def classify_window(
                 log.warning("enrich_day_failed", day=str(day), error=str(exc)[:160])
         try:  # auto-assign interested-prospect callbacks to the BDE calendar (GAds pool only)
             from .calendar import sync_callbacks_for_day
-            sync_callbacks_for_day(analytics_pool, day, gads_only=settings.calls_gads_only)
+            _alloc = {n.strip().lower() for n in settings.calendar_alloc_bdes} or None
+            sync_callbacks_for_day(analytics_pool, day, gads_only=settings.calls_gads_only, alloc_names=_alloc)
         except Exception as exc:
             log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
         try:  # RPC "Next Move": per-day upsert only; global resolve+schedule runs once after loop
