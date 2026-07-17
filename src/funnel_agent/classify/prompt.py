@@ -129,19 +129,26 @@ Stage definitions (in funnel order):
   accepting a specific time, there is NO booking (booking_status="none", meeting_booked=FALSE). NEVER
   infer acceptance from a "yeah"/"yep"/"yes" the prospect gave to something ELSE (e.g. confirming
   their own business details, or acknowledging they heard a competitor's name). Set `booking_status`:
-    * "firm" — the PROSPECT accepted a SPECIFIC DAY (a named weekday or a date), and it STILL STANDS at
-      the end of the call. Only then may meeting_booked be TRUE. A vague BDE-floated timeframe ("later
-      this week", "next week", "sometime", "in a few days") that the prospect did not pin to a specific
-      day is NOT firm — it is "tentative" at most (and "none" if the prospect never actually accepted).
-      STRONG CONFIRMATION of a firm booking — if, at the end of the call, the BDE says a calendar
-      INVITE / invitation link will be sent (e.g. "I'll send you the calendar invite", "Emma Collins
-      will send the invite", "you'll get an invite for the session"), OR an invite was already sent
-      and acknowledged, treat the booking as FIRM (meeting_booked = TRUE), provided a day/time was
-      discussed and nothing was retracted. A promised/sent invite is a concrete commitment — do NOT
-      downgrade such a call to "tentative" merely because the exact minute wasn't restated.
+    * "firm" — the PROSPECT explicitly accepted a SPECIFIC, SINGLE day (a named weekday or a date),
+      and it STILL STANDS at the end of the call. Only then may meeting_booked be TRUE. A vague
+      BDE-floated timeframe ("later this week", "next week", "sometime", "in a few days") that the
+      prospect did not pin to a specific day is NOT firm — it is "tentative" at most (and "none" if the
+      prospect never actually accepted). An EITHER/OR window of DIFFERENT DAYS ("Monday or Tuesday",
+      "Wednesday or Thursday next week") is NOT a pinned single day — it is "tentative" at most until
+      the prospect commits to ONE. (Two candidate TIMES on the SAME day — "Wednesday at 1:30 or 3:30" —
+      is still a single day and may be firm.)
+      A promised or already-sent calendar INVITE ("I'll send you the calendar invite", "Emma Collins
+      will send you an invite") only CORROBORATES a booking the PROSPECT has ALREADY clearly accepted —
+      it does NOT by itself make a booking firm. These BDEs offer to send an invite as a SCRIPTED
+      closing line on almost every call, so a promised invite is NOT evidence that the prospect agreed.
+      If the prospect DEFERRED ("send me the info / an email first and I'll have a read, then I can
+      plan"), asked to be CALLED BACK to confirm ("call me Monday morning", "call me to confirm", "if
+      you're 100% sure, call me"), or only half-agreed ("maybe", "possibly", "I don't know"), it is NOT
+      firm: set meeting_booked = FALSE, and set callback_requested = TRUE when they asked to be called
+      back. Judge what the PROSPECT committed to, never what the BDE scripted.
     * "tentative" — only a vague/half-agreement ("maybe next week", "tell me a time later", a day
-      floated but never pinned, or the call ended unresolved/confused about the time). meeting_booked
-      = FALSE.
+      floated but never pinned, an either/or window of different days, or the call ended unresolved /
+      confused about the time). meeting_booked = FALSE.
     * "cancelled_or_declined" — a slot was floated but the prospect then CANCELLED, backed out, said
       they can't do it, or the arrangement fell apart (e.g. wrong/disputed details, "sorry, I can't",
       confusion that ends the booking). meeting_booked = FALSE. Do NOT count a collapsed booking.
