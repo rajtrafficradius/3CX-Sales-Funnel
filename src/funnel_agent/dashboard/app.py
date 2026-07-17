@@ -1063,11 +1063,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mobile 2+ no-answer -> SMS + voicemail; gatekeeper reached -> get DM name + callback.
         Persists per number until RPC is reached."""
         scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
+        _deny_if_hidden(request, scope)
         params: dict = {"thr": settings.rpc_min_talk_seconds, "lim": limit}
         bde_filter = ""
         if scope and scope != "ALL":
             bde_filter = "AND COALESCE(c.bde_name,c.bde_extension) = %(bde)s"
             params["bde"] = scope
+        else:
+            _hb = _hidden_bdes(request)
+            if _hb:
+                bde_filter = "AND NOT (COALESCE(c.bde_name,c.bde_extension) = ANY(%(hidden)s::text[]))"
+                params["hidden"] = _hb
         conn = "c.answered AND c.talk_seconds >= %(thr)s AND COALESCE(cl.call_outcome,'')<>'voicemail'"
         digits = "right(regexp_replace(c.dest_number,'[^0-9]','','g'),9)"
         chan = (f"CASE WHEN regexp_replace(c.dest_number,'[^0-9]','','g') ~ '1(3|8)00' THEN 'tollfree' "
@@ -1134,6 +1140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start, end = _resolve_window(date, start, end)
         if _is_bde(request):
             bde = _scoped_bde(request, None)  # a BDE only sees their own coaching
+        _deny_if_hidden(request, bde)         # non-admins can't view a private BDE's coaching
         if not bde or bde == "ALL":
             return JSONResponse({"error": "pick a BDE"}, status_code=400)
         base = ("FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
@@ -1442,6 +1449,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        elif (_hb := _hidden_bdes(request)):
+            where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))")
+            params["hidden"] = _hb
         filt = ", ".join(
             f"count(DISTINCT dest9) FILTER (WHERE d >= %(today)s::date - {off}) AS {k}"
             for k, _lbl, off in _PIPE_WINDOWS
@@ -1479,6 +1489,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        elif (_hb := _hidden_bdes(request)):
+            where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))")
+            params["hidden"] = _hb
         rows = q(
             f"WITH p AS (SELECT {_DEST9_SQL} AS dest9, c.dest_number, c.started_at, "
             "  COALESCE(c.bde_name, c.bde_extension) AS bde, cl.prospect_company, cl.lead_temperature, "
@@ -1527,6 +1540,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        elif (_hb := _hidden_bdes(request)):
+            where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))")
+            params["hidden"] = _hb
         if gads_only:
             where.append(_GADS_CALL_FILTER)
         # Per prospect, the winning (min) stage-rank within each nested window; then count
@@ -1626,7 +1642,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bde = _scoped_bde(request, bde)
         limit = max(10, min(int(limit or 500), 2000))
         scoped = bool(bde and bde != "ALL")
-        bde_rpc = "AND COALESCE(c.bde_name, c.bde_extension) = %(bde)s" if scoped else ""
+        _agh = _hidden_bdes(request)
+        if scoped:
+            bde_rpc = "AND COALESCE(c.bde_name, c.bde_extension) = %(bde)s"
+        elif _agh:
+            bde_rpc = "AND NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))"
+        else:
+            bde_rpc = ""
         rows = q(
             # prospects (by phone) with >=1 decision-maker connect; agency status from ALL their calls
             f"WITH rpc AS (SELECT DISTINCT {_DEST9_SQL} AS dest9 "
@@ -1655,7 +1677,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "  WHERE a.dest9 = ANY(pr.phones_norm) ORDER BY (pr.domain IS NOT NULL) DESC, pr.id LIMIT 1) pr ON true "
             + _CO_NAME_LATERAL.replace("%(d9col)s", "a.dest9")
             + " ORDER BY a.is_agency DESC, l.started_at DESC LIMIT %(lim)s",
-            {"lim": limit, "bde": bde})
+            {"lim": limit, "bde": bde, "hidden": _agh})
         n_agency = sum(1 for r in rows if r.get("is_agency"))
         for r in rows:
             r["started_at"] = str(r["started_at"]) if r.get("started_at") else None
@@ -1779,6 +1801,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if bde and bde != "ALL":
                 w += " AND COALESCE(pp.assigned_bde, pp.last_bde) = %(bde)s"
                 p2params["bde"] = bde
+            elif (_hb := _hidden_bdes(request)):
+                w += " AND NOT (COALESCE(pp.assigned_bde, pp.last_bde) = ANY(%(hidden)s::text[]))"
+                p2params["hidden"] = _hb
             total = q("SELECT count(*) n FROM prospect_pipeline pp "
                       "LEFT JOIN prospects pr ON pp.prospect_id=pr.id" + w, p2params)[0]["n"]
             rows = q(
@@ -1812,6 +1837,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        elif (_hb := _hidden_bdes(request)):
+            where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))")
+            params["hidden"] = _hb
         if gads_only:
             where.append(_GADS_CALL_FILTER)
         rows = q(
@@ -1849,6 +1877,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if _is_bde(request):
             where.append("COALESCE(c.bde_name, c.bde_extension) = %s")
             params.append(_scoped_bde(request, None))
+        else:
+            _rqh, _rqp = _hidden_and(request)
+            if _rqh:
+                where.append(_rqh.strip().removeprefix("AND "))
+                params.extend(_rqp)
         params.append(limit)
         rows = q(
             "SELECT cl.call_id, c.bde_name, c.dest_number, c.started_at, cl.call_outcome, "
@@ -1969,6 +2002,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
             params["bde"] = bde
+        else:
+            _hb = _hidden_bdes(request)
+            if _hb:
+                where.append("NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))")
+                params["hidden"] = _hb
         if track in ("fresh", "followup"):
             where.append("c.fresh_or_followup = %(track)s")
             params["track"] = track
@@ -2005,11 +2043,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         empty = {"window": {"start": start, "end": end}, "scope": scope, "team": team0, "rows": []}
         if not start:
             return JSONResponse(empty)
+        _deny_if_hidden(request, scope)
         params: dict = {"s": start, "e": end}
         bde_filter = ""
         if scope and scope != "ALL":
             bde_filter = "AND ra.last_bde = %(bde)s"
             params["bde"] = scope
+        elif (_hb := _hidden_bdes(request)):
+            bde_filter = "AND NOT (ra.last_bde = ANY(%(hidden)s::text[]))"
+            params["hidden"] = _hb
         # A linked rpc_retry calendar event whose start time has passed (and is still
         # pending) means the scheduled retry is overdue.
         overdue_expr = ("ce.id IS NOT NULL AND ce.start_at < now() "
@@ -2089,6 +2131,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         u = getattr(request.state, "user", None) or {}
         if not (is_admin(u) or u.get("role") == "bdm"):
             raise HTTPException(403, "BDM / admin access required")
+        _hb = _hidden_bdes(request)
+        _huf = "AND NOT (last_bde = ANY(%(hidden)s::text[])) " if _hb else ""
         try:
             rows = q(
                 "SELECT last_call_id AS call_id, last_bde AS bde, "
@@ -2098,8 +2142,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "AND COALESCE(did_required_action,false)=false "
                 "AND action_code IS NOT NULL AND action_code <> 'none' "
                 "AND last_attempt_at >= now() - interval '6 hours' "
+                + _huf +
                 "ORDER BY last_attempt_at DESC",
-                None,
+                {"hidden": _hb} if _hb else None,
             )
         except Exception:
             rows = []
@@ -2852,6 +2897,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not conds:
             return JSONResponse({"found": bool(companies), "companies": jsonable_encoder(companies)})
         where = "c.in_scope AND (" + " OR ".join(conds) + ")"
+        _hb = _hidden_bdes(request)   # a private BDE's calls never appear on the prospect page for non-admins
+        if _hb:
+            where += " AND NOT (COALESCE(c.bde_name, c.bde_extension) = ANY(%(hidden)s::text[]))"
+            params["hidden"] = _hb
         calls = q(
             f"SELECT {_PCALL_COLS} FROM calls c "
             "LEFT JOIN classifications cl ON cl.call_id=c.call_id "
@@ -3426,6 +3475,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Returns page rows (limit/offset) PLUS a summary counted over the WHOLE filtered queue so the
         KPIs (In queue / Hot / Due now / Unassigned) show real totals, not a capped sample."""
         scope = _scoped_bde(request, bde) if _is_bde(request) else (bde or "ALL")
+        _deny_if_hidden(request, scope)
         from ..next_call import list_next_calls
         # Load the WHOLE Google-Ads queue (cap high) so the page KPIs (In queue / Hot / Due / Unassigned)
         # are exact — the old default cap of 200 made those stats undercount. The client computes the
@@ -3435,9 +3485,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
                                due_only=bool(due_only), tier=(tier or None),
                                gads_only=bool(gads_only), limit=lim, offset=off)
+        _hb = _hidden_bdes(request)              # drop a private BDE's queued prospects for non-admins
+        if _hb:
+            rows = [r for r in rows if r.get("assigned_bde") not in _hb]
         u = getattr(request.state, "user", None) or {}
         roster = [r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
-                                       "FROM bde_agents WHERE in_scope AND active ORDER BY 1")]
+                                       "FROM bde_agents WHERE in_scope AND active "
+                                       "AND NOT (COALESCE(bde_name, extension) = ANY(%s::text[])) ORDER BY 1", (_hb,))]
         return JSONResponse(jsonable_encoder({
             "rows": rows, "can_assign": can_manage_pipeline(u), "roster": roster,
             "limit": lim, "offset": off, "total": len(rows)}))
@@ -3879,14 +3933,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         anchor = _pipe_anchor()
         if window != "all" and woff is not None and anchor:
             since = (_date.fromisoformat(anchor) - timedelta(days=woff))
+        _deny_if_hidden(request, scope)
         rows = list_pipeline2(pool, bde=(None if scope == "ALL" else scope), due_only=due_only,
                               gads_only=bool(gads_only), since=since, limit=5000)
+        _hb = _hidden_bdes(request)              # drop a private BDE's agency prospects for non-admins
+        if _hb:
+            rows = [r for r in rows if (r.get("bde") if isinstance(r, dict) else None) not in _hb]
         u = getattr(request.state, "user", None) or {}
         return JSONResponse(jsonable_encoder({
             "rows": rows, "total": len(rows), "can_assign": can_manage_pipeline(u),
             "roster": [r["bde_name"] for r in q(
                 "SELECT DISTINCT COALESCE(bde_name, extension) AS bde_name FROM bde_agents "
-                "WHERE in_scope AND active ORDER BY 1")],
+                "WHERE in_scope AND active AND NOT (COALESCE(bde_name, extension) = ANY(%s::text[])) ORDER BY 1", (_hb,))]
         }))
 
     @app.post("/api/pipeline2/sync")
@@ -3950,12 +4008,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Returns the bde_name to filter events by, or None for all (manager/kiosk)."""
         if _is_bde(request):
             return _scoped_bde(request, None)
+        _deny_if_hidden(request, requested_bde)  # non-admins can't target a private BDE's calendar
         return requested_bde or None  # manager: optional filter
 
     @app.get("/api/calendar")
     def calendar_list(request: Request, start: str, end: str, bde: str | None = None) -> JSONResponse:
         from ..calendar import list_events
         rows = list_events(pool, start, end, _cal_scope(request, bde if bde and bde != "ALL" else None))
+        _hb = _hidden_bdes(request)              # hide a private BDE's calendar events for non-admins
+        if _hb:
+            rows = [e for e in rows if (e.get("bde_name") if isinstance(e, dict) else None) not in _hb]
         return JSONResponse(jsonable_encoder({"events": rows}))
 
     @app.get("/api/callbacks-today")
@@ -3967,6 +4029,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scope:
             where.append("bde_name = %s")
             params.append(scope)
+        elif (_hb := _hidden_bdes(request)):
+            where.append("NOT (bde_name = ANY(%s::text[]))")
+            params.append(_hb)
         wc = " AND ".join(where)
         today_n = q(f"SELECT count(*) AS n FROM calendar_events WHERE {wc} AND start_at::date = current_date "
                     "AND status <> 'cancelled'", tuple(params))[0]["n"]

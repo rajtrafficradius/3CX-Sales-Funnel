@@ -48,7 +48,13 @@ def calling_bdes(pool: ConnectionPool, settings=None) -> list[str]:
         n = n.strip().lower()
         if n:
             exclude.add(n)
-    return [b for b in active_bdes(pool) if (b or "").strip().lower() not in exclude]
+    res = [b for b in active_bdes(pool) if (b or "").strip().lower() not in exclude]
+    # Pilot mode: when CALENDAR_ALLOC_NAMES is set, deal a worklist to ONLY those BDEs (e.g. run the
+    # GAds calendar/pool with one BDE first, then add the rest). Empty = every calling BDE (normal).
+    allow = [a.strip().lower() for a in getattr(settings, "calendar_alloc_bdes", None) or []] if settings else []
+    if allow:
+        res = [b for b in res if (b or "").strip().lower() in set(allow)]
+    return res
 
 
 def _pick_next_bde(roster: list[str], last_bde: str | None, counts: dict[str, int],

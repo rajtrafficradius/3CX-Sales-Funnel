@@ -83,10 +83,37 @@ def render_block(bde_name: str, ext: str | None, tracks: dict[str, dict], day: d
     return "\n".join(lines)
 
 
+def _without_private(data: dict, hide: list[str] | None) -> dict:
+    """Drop private/isolated BDEs from a fetch_day() map and rebuild the 'ALL' block by summing the
+    remaining per-BDE rows (ALL == sum(per-BDE) by construction), so a team report never shows a
+    private BDE's numbers — neither as a row nor inside the OVERALL total."""
+    hide = set(hide or [])
+    if not hide:
+        return data
+    kept = {n: t for n, t in data.items() if n != "ALL" and n not in hide}
+    tracks: dict = {}
+    for _name, tmap in kept.items():
+        for track, row in tmap.items():
+            agg = tracks.setdefault(track, {})
+            for k, v in row.items():
+                if isinstance(v, bool):
+                    agg.setdefault(k, v)
+                elif isinstance(v, (int, float)):
+                    agg[k] = agg.get(k, 0) + v
+                else:
+                    agg.setdefault(k, v)
+            agg["bde_name"], agg["track"] = "ALL", track
+    out = dict(kept)
+    if tracks:
+        out["ALL"] = tracks
+    return out
+
+
 def build_markdown(
-    pool: ConnectionPool, day: date, *, only_bde: str | None = None, only_all: bool = False
+    pool: ConnectionPool, day: date, *, only_bde: str | None = None, only_all: bool = False,
+    hide_bdes: list[str] | None = None
 ) -> str:
-    data = fetch_day(pool, day)
+    data = _without_private(fetch_day(pool, day), hide_bdes)
     exts = _ext_map(pool)
     if not data:
         return f"# Funnel report — {day}\n\n_No data for this date. Run the pipeline first._\n"
@@ -110,8 +137,8 @@ def build_markdown(
     return "\n\n".join(blocks) + "\n"
 
 
-def build_json(pool: ConnectionPool, day: date) -> dict:
-    data = fetch_day(pool, day)
+def build_json(pool: ConnectionPool, day: date, *, hide_bdes: list[str] | None = None) -> dict:
+    data = _without_private(fetch_day(pool, day), hide_bdes)
     serial = {
         bde: {track: {k: (str(v) if isinstance(v, date) else v) for k, v in row.items()}
               for track, row in tracks.items()}

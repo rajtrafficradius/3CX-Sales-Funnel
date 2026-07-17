@@ -843,8 +843,10 @@ def report(
 def _emit_report(ana, settings, day, out, *, only_bde, only_all, email) -> None:
     from .report import build_json, build_markdown, send_email, write_report_files
 
-    md = build_markdown(ana, day, only_bde=only_bde, only_all=only_all)
-    payload = build_json(ana, day)
+    # Team-facing report hides isolated/private BDEs (their numbers stay admin/dashboard-only).
+    hide = settings.private_bdes
+    md = build_markdown(ana, day, only_bde=only_bde, only_all=only_all, hide_bdes=hide)
+    payload = build_json(ana, day, hide_bdes=hide)
     md_path, json_path = write_report_files(md, payload, out, day)
     typer.echo(md)
     typer.echo(f"\n[wrote {md_path} and {json_path}]")
