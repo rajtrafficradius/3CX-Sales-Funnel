@@ -2014,7 +2014,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bde = _scoped_bde(request, bde)
         start, end = _resolve_window(date, start, end)
         cond = _STAGE_COND.get(stage, "TRUE")
-        where = ["c.in_scope", "c.started_at >= %(s)s::date",
+        # match the funnel: inbound calls aren't dials, excluded from the outbound funnel + its drilldown
+        where = ["c.in_scope", "lower(COALESCE(c.direction,'')) <> 'inbound'",
+                 "c.started_at >= %(s)s::date",
                  "c.started_at < (%(e)s::date + 1)", f"({cond})"]
         params: dict = {"s": start, "e": end, "thr": settings.rpc_min_talk_seconds, "lim": limit}
         if bde and bde != "ALL":

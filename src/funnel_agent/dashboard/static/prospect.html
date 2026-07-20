@@ -783,8 +783,10 @@ function callEvent(c, canDownload){
   const ev=(c.evidence&&typeof c.evidence==='object')?c.evidence:{};
   const connected = c.answered && (c.talk_seconds>=15) && c.call_outcome!=='voicemail';
   const booked = c.meeting_booked && !c.meeting_confirmation;
+  const inbound=(c.direction||'').toLowerCase()==='inbound';
   let cls='ev'; if(booked)cls+=' booked'; else if(c.call_outcome==='voicemail')cls+=' vm'; else if(!connected)cls+=' noconnect';
   const tags=[];
+  if(inbound) tags.push(`<span class="pill neutral" title="Incoming call — not counted as a dial the BDE made">⬇ Inbound</span>`);
   if(booked) tags.push(`<span class="pill yes">📅 Booked${c.meeting_rescheduled?' (resched)':''}</span>`);
   if(c.meeting_confirmation) tags.push(`<span class="pill neutral">Confirmation call</span>`);
   if(c.qualified) tags.push(`<span class="pill yes">Qualified</span>`);

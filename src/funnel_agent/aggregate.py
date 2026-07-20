@@ -158,6 +158,9 @@ WITH base AS (
     WHERE c.in_scope
       -- recruitment/internal/personal calls are not sales-prospect calls -> out of the funnel entirely
       AND NOT COALESCE(cl.not_a_prospect, false)
+      -- INBOUND calls (prospects ringing in) are not dials the BDE made -> excluded from the outbound
+      -- funnel / "Calls Made". They still appear (labelled) on the prospect & call pages for context.
+      AND lower(COALESCE(c.direction, '')) <> 'inbound'
       AND c.started_at >= %(start)s AND c.started_at < %(end)s
 )
 SELECT

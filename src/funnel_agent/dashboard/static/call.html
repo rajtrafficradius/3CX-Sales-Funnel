@@ -741,6 +741,7 @@ async function load(){
     <div>BDE</div><div>${esc(c.bde_name)} (ext ${esc(c.bde_extension)})</div>
     <div>Number</div><div>${esc(c.dest_number)}</div>
     <div>Started</div><div>${esc(c.started_at)}</div>
+    <div>Direction</div><div>${(c.direction||'').toLowerCase()==='inbound'?'<span class="pill" style="background:rgba(148,163,184,.2);color:var(--txt-dim);padding:2px 8px;border-radius:6px;font-weight:700">⬇ Inbound (not a dial made)</span>':(esc(c.direction)||'Outbound')}</div>
     <div>Fresh/Followup</div><div>${esc(c.fresh_or_followup)}</div>
     <div>Answered</div><div>${c.answered?'Yes':'No'}</div>
     <div>Talk time</div><div>${esc(c.talk_seconds)} s</div>
