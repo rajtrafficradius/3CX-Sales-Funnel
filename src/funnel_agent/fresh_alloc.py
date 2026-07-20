@@ -174,6 +174,19 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
             "GROUP BY 1,2", (tz,)):
         if r["bde_name"] and r["d"]:
             pend[(r["bde_name"], r["d"])] = int(r["n"])
+    # Enforce the daily cap the OTHER way too: if follow-ups (callbacks/recalls/retries/reached) have
+    # pushed a (BDE, day) OVER target, trim the excess fresh_calls (latest first) so the day settles at
+    # ~target INCLUDING all follow-up types — otherwise fresh (scheduled earlier) + new follow-ups stack.
+    for b in roster:
+        for dy in days:
+            excess = pend.get((b, dy), 0) - target
+            if excess > 0:
+                trimmed = _execute(pool,
+                    "UPDATE calendar_events SET status='cancelled' WHERE id IN ("
+                    "  SELECT id FROM calendar_events WHERE bde_name=%s AND type='fresh_call' "
+                    "  AND status='pending' AND (start_at AT TIME ZONE %s)::date=%s "
+                    "  ORDER BY start_at DESC LIMIT %s)", (b, tz, dy, excess))
+                pend[(b, dy)] = max(target, pend.get((b, dy), 0) - trimmed)
     total_need = sum(max(0, target - pend.get((b, dy), 0)) for b in roster for dy in days)
     if total_need <= 0:
         return {"scheduled": 0, "resolved": resolved, "note": "every BDE already at target across the horizon"}
