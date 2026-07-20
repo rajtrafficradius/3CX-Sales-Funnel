@@ -534,7 +534,7 @@ function digitalMarketingCard(d){
 //      not a measured metric — surfaced with an explicit assumption label. ----
 function seoAuditCard(d){
   const df=((d.enrichment||{}).dataforseo)||{};
-  const a=df.audit, can=d.can_download;
+  const a=df.audit, can=d.can_audit;
   const btn=can?`<button class="btn" id="seoAuditBtn" style="margin-left:8px">${a?'Refresh':'Run'} SEO keyword audit (paid)</button>`:'';
   if(!a){
     return `<div class="card full"><h2>🔍 SEO money-keyword audit</h2>
@@ -637,7 +637,7 @@ function whoisCard(d){
 // ---- Google Ads Transparency Center + SEO (DataForSEO) — separate tab ----
 function dataforseoCard(d){
   const df=((d.enrichment||{}).dataforseo)||null;
-  const can=d.can_download;  // BDM/admin (paid on-demand)
+  const can=d.can_audit;  // managers + pilot BDEs (paid on-demand)
   const btn = can?`<button class="btn" id="dfsBtn" style="margin-left:8px">Enrich now (DataForSEO · paid ~$0.01)</button>`:'';
   if(!df || !df.found){
     return `<div class="card full"><h2>📣 Google Ads Transparency &amp; SEO</h2>
@@ -1056,7 +1056,7 @@ async function scheduleNext(id){ const dt=prompt('Schedule next call at (YYYY-MM
 // ---- Competitor gap audit (K) ---- //
 function competitorAuditCard(d){
   const ca=((d.enrichment||{}).dataforseo||{}).competitor_audit;
-  const runBtn=d.can_download
+  const runBtn=d.can_audit
     ? `<button class="primary" id="caBtn" onclick="runCompetitorAudit()">${ca?'↻ Refresh':'▶ Run'} competitor audit</button> <span class="muted small">Paid · ~4 DataForSEO calls</span>`
     : '<span class="muted small">The competitor audit is run by a manager (paid).</span>';
   if(!ca) return `<div class="card full"><h2>🥊 Competitor gap audit</h2>
@@ -1119,7 +1119,7 @@ async function runCompetitorAudit(){
 function fullAuditCard(d){
   const df=((d.enrichment||{}).dataforseo)||{};
   const ready = !!(df.audit && df.competitor_audit);   // the full report (all sections) is generated
-  const can = d.can_download;
+  const can = d.can_audit;
   const tkt = `<div class="mt6" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <label class="small" style="color:var(--muted)">Average sale / project value</label>
       <span style="display:inline-flex;align-items:center;gap:2px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-weight:700">$<input id="auditTicket" type="number" min="0" step="100" value="2000" style="width:92px;background:transparent;border:0;color:var(--txt);font:inherit;font-weight:700;outline:none"></span>

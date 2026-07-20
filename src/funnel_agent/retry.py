@@ -13,7 +13,9 @@ reassign a retry to a different BDE/line (a fresh number often beats a screener)
 """
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from psycopg_pool import ConnectionPool
 
@@ -119,6 +121,81 @@ def reached_no_next_sql(gads_only: bool) -> str:
     """
 
 
+# --------------------------------------------------------------------------- #
+# Human-like time-of-day picker: call each prospect back near when THEY answer.
+# --------------------------------------------------------------------------- #
+def _prospect_hour_map(pool: ConnectionPool, tz_name: str, d9s: list) -> dict:
+    """Per-prospect LOCAL call hours split by outcome: the hours we actually REACHED a
+    live human (answered, real talk, not voicemail) vs the hours that FAILED (no-answer /
+    voicemail). Lets the retry/reached schedulers ring each prospect back around when THEY
+    tend to pick up — the way a human rep remembers "they answer mid-afternoon" — instead
+    of a one-size global slot. Read-only; batched for all prospects in one query."""
+    out: dict = {}
+    d9s = [d for d in dict.fromkeys(d9s) if d]        # de-dupe, drop blanks, keep order
+    if not d9s:
+        return out
+    rows = _fetch(
+        pool,
+        "SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) AS d9, "
+        "  extract(hour from c.started_at AT TIME ZONE %s)::int AS h, "
+        "  (c.answered AND COALESCE(c.talk_seconds,0) >= 20 "
+        "     AND COALESCE(cl.call_outcome,'') <> 'voicemail') AS reached "
+        "FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+        "WHERE c.in_scope AND lower(c.direction)='outbound' "
+        "  AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) = ANY(%s)",
+        (tz_name, list(d9s)),
+    )
+    for r in rows:
+        d = out.setdefault(r["d9"], {"answered": [], "failed": []})
+        (d["answered"] if r["reached"] else d["failed"]).append(int(r["h"]))
+    return out
+
+
+def _local_hour(dt, tz_name: str):
+    """LOCAL hour of a stored (UTC) timestamp — so we compare against local best-hours, not the
+    raw UTC hour (the old bug: a 2 p.m. Melbourne call read as hour 4 and skewed the next slot)."""
+    if dt is None:
+        return None
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        return dt.astimezone(ZoneInfo(tz_name)).hour
+    except Exception:
+        return getattr(dt, "hour", None)
+
+
+def _local_date(dt, tz_name: str):
+    """LOCAL calendar date of a stored (UTC) timestamp, so cadence spacing lands on the right day."""
+    if dt is None:
+        return None
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        return dt.astimezone(ZoneInfo(tz_name)).date()
+    except Exception:
+        return getattr(dt, "date", lambda: None)()
+
+
+def _smart_hour(info: dict | None, last_local_hour, global_best: list) -> tuple:
+    """Pick the next call HOUR (local) like a human would, returning (hour, why):
+      1. If this prospect has PICKED UP before, call back near that hour (their most frequent
+         pick-up hour), preferring one different from the attempt that just failed.
+      2. Otherwise use a global top pick-up hour we have NOT already burned on this prospect,
+         avoiding the hour that just failed.
+    The caller clamps to business hours."""
+    ans = (info or {}).get("answered") or []
+    if ans:
+        ranked = [h for h, _ in Counter(ans).most_common()]
+        h = next((x for x in ranked if x != last_local_hour), ranked[0])
+        return h, "when they've picked up before"
+    failed = set((info or {}).get("failed") or [])
+    for h in global_best:
+        if h not in failed and h != last_local_hour:
+            return h, "a top pick-up hour we haven't tried on them"
+    h = next((x for x in global_best if x != last_local_hour), global_best[0])
+    return h, "a top pick-up hour, different from last time"
+
+
 def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
     """Ensure each retry-eligible prospect has ONE open `retry` event (same BDE, varied time). Cancels
     retries superseded by a later call. Idempotent; safe every cycle. Returns {scheduled, candidates}."""
@@ -155,6 +232,7 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
     rload = {r["bde_name"]: r["n"] for r in _fetch(pool,
         "SELECT bde_name, count(*) n FROM calendar_events WHERE type='retry' AND status='pending' GROUP BY bde_name")}
     rows = _fetch(pool, _gather_sql(gads_only), {"maxatt": maxatt})[:limit]
+    hour_map = _prospect_hour_map(pool, tz, [r.get("d9") for r in rows])
     to_upsert = []
     for i, r in enumerate(rows):
         if not r.get("dest_number"):
@@ -169,19 +247,21 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
             bde = min(callers, key=lambda b: (rload.get(b, 0), b))
             rload[bde] = rload.get(bde, 0) + 1
         last = r.get("last_attempt") or now
-        last_hour = getattr(last, "hour", 11)
-        # vary the time-of-day: a top pick-up hour DIFFERENT from the last attempt's hour
-        hour = next((h for h in best_hours if h != last_hour), best_hours[i % len(best_hours)])
-        base = getattr(last, "date", lambda: now.date())() + timedelta(days=cadence)
+        # human-like time-of-day: ring back near when THIS prospect actually picks up (their own
+        # local answer pattern), not a one-size global slot; fall back to a global top hour we
+        # haven't already burned on them. (local-hour compare fixes the old UTC-hour skew.)
+        hour, why = _smart_hour(hour_map.get(r.get("d9")), _local_hour(last, tz), best_hours)
+        hour = min(max(hour, 8), 17)
+        base = (_local_date(last, tz) or now.date()) + timedelta(days=cadence)
         while base < now.date():
             base += timedelta(days=cadence)
         if base.weekday() >= 5:                          # Sat/Sun → Monday
             base += timedelta(days=7 - base.weekday())
-        when = datetime.combine(base, time(hour=min(max(hour, 8), 17)))
+        when = datetime.combine(base, time(hour=hour))
         att = int(r.get("attempts") or 0)
         who = r.get("company") or r.get("dest_number")
         title = f"🔄 Retry ({att + 1}/{maxatt}): {who}"
-        lead = (f"No pickup yet — retry at ~{hour}:00 (a top pick-up hour, a different time than last). "
+        lead = (f"No pickup yet — retry at ~{hour}:00 ({why}). "
                 "A fresh 3CX/Aircall line often gets a screener to answer — reassign to another BDE if "
                 "it keeps ringing out.")
         notes = _context_note(r, att, maxatt, lead=lead)
@@ -234,6 +314,7 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
     # rotation onto the pilot BDE. Empty = normal fresh-voice rotation.
     _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
     rows = _fetch(pool, reached_no_next_sql(gads_only))
+    hour_map = _prospect_hour_map(pool, tz, [r.get("d9") for r in rows])
     to_insert = []
     for i, r in enumerate(rows):
         att = int(r.get("attempts") or 0)
@@ -258,18 +339,20 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
             bde = min(fresh, key=lambda b: (load.get(b, 0), b))
             load[bde] = load.get(b, 0) + 1
         la = r.get("last_attempt") or now
-        last_hour = getattr(la, "hour", 11)
-        hour = next((h for h in best_hours if h != last_hour), best_hours[i % len(best_hours)])
-        base = getattr(la, "date", lambda: now.date())() + timedelta(days=cadence)
+        # human-like time-of-day: ring back near when THIS prospect actually picks up (their own
+        # local answer pattern); fall back to a global top hour we haven't burned on them.
+        hour, why = _smart_hour(hour_map.get(r.get("d9")), _local_hour(la, tz), best_hours)
+        hour = min(max(hour, 8), 17)
+        base = (_local_date(la, tz) or now.date()) + timedelta(days=cadence)
         while base < now.date():
             base += timedelta(days=cadence)
         if base.weekday() >= 5:
             base += timedelta(days=7 - base.weekday())
-        when = datetime.combine(base, time(hour=min(max(hour, 8), 17)))
+        when = datetime.combine(base, time(hour=hour))
         who = r.get("company") or r.get("dest_number")
         title = f"👤 Reached DM · retry ({att + 1}/{maxatt}): {who}"
         lead = (f"We reached the decision-maker but they left no next step — {bde} takes it now (a fresh "
-                f"voice/line) at ~{hour}:00 for a different angle.")
+                f"voice/line) at ~{hour}:00 ({why}) for a different angle.")
         notes = _context_note(r, att, maxatt, lead=lead)
         to_insert.append((bde, title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
     scheduled = _insert_reached_batch(pool, to_insert)

@@ -592,6 +592,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         e = str(ext or "").replace("aircall:", "")
         return f"BDE {e}".strip() if e else "BDE"
 
+    def _scrub_colleagues(request: Request, text):
+        """For an isolated BDE, strip colleagues' NAMES out of free text (calendar event notes/titles,
+        schedule reasons) so a drill-down never leaks who else worked the prospect. No-op otherwise."""
+        if not text or not _is_private_bde_viewer(request):
+            return text
+        import re as _re
+        own = (getattr(request.state, "user", None) or {}).get("bde_name")
+        names = [r["name"] for r in q(
+            "SELECT DISTINCT COALESCE(bde_name, extension) AS name FROM bde_agents "
+            "WHERE COALESCE(bde_name, extension) IS NOT NULL")]
+        out = str(text)
+        for n in sorted((x for x in names if x and x != own), key=len, reverse=True):
+            out = _re.sub(r"\b" + _re.escape(n) + r"\b", "another BDE", out)
+        # collapse runs like "another BDE, another BDE" -> "another BDE"
+        out = _re.sub(r"(another BDE)(\s*(?:,|/|&|and)\s*another BDE)+", "another BDE", out)
+        return out
+
+    def _can_run_audit(request: Request) -> bool:
+        """Who may generate the paid DataForSEO audits (SEO / competitor / ensure). Managers always;
+        PLUS pilot BDEs on the new workflow — the GAds calendar-allocation allowlist
+        (CALENDAR_ALLOC_NAMES), so Mohit gets full BDE tooling during the pilot. An empty allowlist
+        means the pilot is rolled out → all BDEs may run their own prospect audits."""
+        u = getattr(request.state, "user", None) or {}
+        if can_manage_pipeline(u):
+            return True
+        if u.get("role") == "bde":
+            allow = settings.calendar_alloc_bdes
+            return (not allow) or (u.get("bde_name") in allow)
+        return False
+
     def _hidden_and(request: Request, col: str = "COALESCE(c.bde_name, c.bde_extension)"):
         """(sql, params) appended to an ALL/list WHERE so private BDEs' rows are dropped for a
         non-privileged viewer. Positional %s. Empty when nothing to hide (admins / the private BDE)."""
@@ -3285,6 +3315,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "website_required": bool(not domain and rollup.get("ever_rpc")),
             "can_download": can_manage_pipeline(getattr(request.state, "user", None) or {}),
+            # audit generation (paid DataForSEO) is open to managers AND pilot BDEs (Mohit) — a
+            # separate flag from can_download so the manager-only reassign/schedule buttons stay hidden.
+            "can_audit": _can_run_audit(request),
             "calls": calls,
             "messages": messages,
         }))
@@ -3349,9 +3382,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def prospect_enrich_dataforseo(request: Request, key: str) -> JSONResponse:
         """PAID on-demand: DataForSEO SEO metrics + Google Ads Transparency Center for this
         prospect's domain. Restricted to BDM/admin (each run costs ~$0.012)."""
-        u = getattr(request.state, "user", None) or {}
-        if not can_manage_pipeline(u):
-            raise HTTPException(403, "DataForSEO is paid — restricted to BDM / admin")
+        if not _can_run_audit(request):
+            raise HTTPException(403, "DataForSEO is paid — restricted to managers and pilot BDEs")
         if not settings.dataforseo_enabled:
             raise HTTPException(503, "DataForSEO not configured")
         _master, domain, _norm = _resolve_prospect(key)
@@ -3374,9 +3406,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """PAID on-demand: fetch the domain's ranked KEYWORDS (DataForSEO) and build a
         quick-wins -> growth SEO audit. Traffic is ESTIMATED from position x search volume (a
         labelled assumption), not bought. BDM / admin / manager only (each run costs a few cents)."""
-        u = getattr(request.state, "user", None) or {}
-        if not can_manage_pipeline(u):
-            raise HTTPException(403, "SEO audit is paid — restricted to BDM / admin / manager")
+        if not _can_run_audit(request):
+            raise HTTPException(403, "SEO audit is paid — restricted to managers and pilot BDEs")
         if not settings.dataforseo_enabled:
             raise HTTPException(503, "DataForSEO not configured")
         _master, domain, _norm = _resolve_prospect(key)
@@ -3419,9 +3450,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """PAID on-demand (K): top-5 competitor gap audit — paid + organic competitors, keyword /
         content / backlink gap, GEO/AEO readiness, quick-wins -> growth. Cached in enrichment
         jsonb (re-open is free). BDM / admin / manager only; capped at ~6 DataForSEO calls."""
-        u = getattr(request.state, "user", None) or {}
-        if not can_manage_pipeline(u):
-            raise HTTPException(403, "Competitor audit is paid — restricted to BDM / admin / manager")
+        if not _can_run_audit(request):
+            raise HTTPException(403, "Competitor audit is paid — restricted to managers and pilot BDEs")
         if not settings.dataforseo_enabled:
             raise HTTPException(503, "DataForSEO not configured")
         _master, domain, _norm = _resolve_prospect(key)
@@ -3452,9 +3482,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         DataForSEO (rank+ads), the SEO keyword audit (ranked_kw + money keywords), and the competitor
         gap audit. Runs only the missing pieces (idempotent). BDM / admin / manager only (each fetch
         costs a few cents); a BDE can then view/download the report for free from cache."""
-        u = getattr(request.state, "user", None) or {}
-        if not can_manage_pipeline(u):
-            raise HTTPException(403, "Generating the audit is paid — restricted to BDM / admin / manager")
+        if not _can_run_audit(request):
+            raise HTTPException(403, "Generating the audit is paid — restricted to managers and pilot BDEs")
         if not settings.dataforseo_enabled:
             raise HTTPException(503, "DataForSEO not configured")
         master, domain, _norm = _resolve_prospect(key)
@@ -4227,13 +4256,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _notes = ev.get("notes") or ""
         _rm = _re.search(r"Why this time:\s*(.+?)(?:\s*·\s*|\n|$)", _notes)
         _cm = _re.search(r"Classification:\s*(.+?)(?:\.|\n|$)", _notes)
+        # Isolated BDE (Mohit): hide colleagues' identities in the drill-down — mask the event owner
+        # and scrub any other-BDE names out of the title/notes ("Called before by: …") + reason text.
+        if _is_private_bde_viewer(request):
+            ev["bde_name"] = _mask_bde(request, ev.get("bde_name"))
+            ev["notes"] = _scrub_colleagues(request, ev.get("notes"))
+            ev["title"] = _scrub_colleagues(request, ev.get("title"))
         return JSONResponse(jsonable_encoder({
             "event": ev, "prospect_key": prospect_key,
             "business_name": business_name, "evidence": evidence,
             "pipeline": _pipeline_meta(stage),
             "next_move": _winning_next_move(evidence),
-            "schedule_reason": (_rm.group(1).strip() if _rm else ""),
-            "classification_label": (_cm.group(1).strip() if _cm else ""),
+            "schedule_reason": _scrub_colleagues(request, (_rm.group(1).strip() if _rm else "")),
+            "classification_label": _scrub_colleagues(request, (_cm.group(1).strip() if _cm else "")),
             "feedback": _call_coaching(evidence, {}),  # last-call coaching (what the BDE missed)
             "industry": industry, "contact_name": contact_name,
         }))
