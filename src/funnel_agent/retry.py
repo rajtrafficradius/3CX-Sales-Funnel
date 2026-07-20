@@ -145,6 +145,9 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
     from .pipeline2 import calling_bdes
     callers = calling_bdes(pool, settings)
     callers_set = set(callers)
+    # Pilot mode (CALENDAR_ALLOC_NAMES set): only re-call prospects the pilot BDE actually dialed —
+    # never dump another BDE's un-connected backlog onto the pilot BDE. Empty = normal reassignment.
+    _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
     rload = {r["bde_name"]: r["n"] for r in _fetch(pool,
         "SELECT bde_name, count(*) n FROM calendar_events WHERE type='retry' AND status='pending' GROUP BY bde_name")}
     rows = _fetch(pool, _gather_sql(gads_only), {"maxatt": maxatt})[:limit]
@@ -153,7 +156,10 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
         if not r.get("dest_number"):
             continue
         bde = r.get("last_bde")
-        if bde not in callers_set:                       # BDM (or unknown) last caller → hand to a BDE
+        if _alloc:
+            if (bde or "").strip().lower() not in _alloc:  # pilot: skip prospects the pilot BDE never dialed
+                continue
+        elif bde not in callers_set:                     # BDM (or unknown) last caller → hand to a BDE
             if not callers:
                 continue
             bde = min(callers, key=lambda b: (rload.get(b, 0), b))
@@ -220,20 +226,28 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
         "SELECT bde_name, count(*) n FROM calendar_events "
         "WHERE type='reached_call' AND status='pending' GROUP BY bde_name")}
     best_hours = _best_call_hours(pool, tz, 11) or [11, 14, 10]
+    # Pilot mode (CALENDAR_ALLOC_NAMES set): only re-call prospects the pilot BDE reached — no cross-BDE
+    # rotation onto the pilot BDE. Empty = normal fresh-voice rotation.
+    _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
     rows = _fetch(pool, reached_no_next_sql(gads_only))
     to_insert = []
     for i, r in enumerate(rows):
         att = int(r.get("attempts") or 0)
         if att >= maxatt or not r.get("dest_number"):
             continue
-        # ROTATE: pick an active BDE who hasn't called this prospect (and isn't the last caller); fall
-        # back to the least-loaded BDE other than the last caller. This puts a fresh voice on the line.
-        priors = set(r.get("prior_bdes") or [])
         last = r.get("last_bde")
-        cands = [b for b in roster if b != last] or list(roster)
-        fresh = [b for b in cands if b not in priors] or cands
-        bde = min(fresh, key=lambda b: (load.get(b, 0), b))
-        load[bde] = load.get(b, 0) + 1
+        if _alloc:
+            if (last or "").strip().lower() not in _alloc:  # pilot: skip prospects the pilot BDE never reached
+                continue
+            bde = last                                    # keep it with the pilot BDE (no rotation)
+        else:
+            # ROTATE: pick an active BDE who hasn't called this prospect (and isn't the last caller); fall
+            # back to the least-loaded BDE other than the last caller. This puts a fresh voice on the line.
+            priors = set(r.get("prior_bdes") or [])
+            cands = [b for b in roster if b != last] or list(roster)
+            fresh = [b for b in cands if b not in priors] or cands
+            bde = min(fresh, key=lambda b: (load.get(b, 0), b))
+            load[bde] = load.get(b, 0) + 1
         la = r.get("last_attempt") or now
         last_hour = getattr(la, "hour", 11)
         hour = next((h for h in best_hours if h != last_hour), best_hours[i % len(best_hours)])
