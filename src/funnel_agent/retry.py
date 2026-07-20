@@ -196,15 +196,57 @@ def _smart_hour(info: dict | None, last_local_hour, global_best: list) -> tuple:
     return h, "a top pick-up hour, different from last time"
 
 
+class _DayCap:
+    """Per-(BDE, local-day) capacity gate so each BDE's calendar stays at `cap` calls/day and fills
+    DAY-BY-DAY. Counts every existing pending event as baseline occupancy. `place(bde, due, today)`:
+      * a FUTURE-dated commitment (due > today — e.g. a callback the prospect asked for next week) is
+        placed on/after its due business day, first day with spare capacity;
+      * an OVERDUE backlog item (due <= today) only fills the next `horizon` business days from today —
+        the rest returns None and defers to a later cycle (so we never pre-stuff weeks of calendar).
+    Weekends are skipped."""
+    def __init__(self, pool: ConnectionPool, cap: int, tz: str, horizon_days: int):
+        self.cap = max(1, int(cap)); self.tz = tz; self.horizon = max(1, int(horizon_days))
+        rows = _fetch(pool,
+            "SELECT bde_name, (start_at AT TIME ZONE %s)::date d, count(*) n FROM calendar_events "
+            "WHERE status='pending' AND bde_name IS NOT NULL GROUP BY 1,2", (tz,))
+        self.counts = {(r["bde_name"], r["d"]): int(r["n"]) for r in rows}
+
+    def place(self, bde, due, today):
+        d = due if due and due > today else today
+        business_seen = 0
+        for _ in range(400):
+            if d.weekday() >= 5:
+                d += timedelta(days=1); continue
+            if not (due and due > today):                 # overdue -> only the next `horizon` biz days
+                business_seen += 1
+                if business_seen > self.horizon:
+                    return None
+            if self.counts.get((bde, d), 0) < self.cap:
+                self.counts[(bde, d)] = self.counts.get((bde, d), 0) + 1
+                return d
+            d += timedelta(days=1)
+        return None
+
+
+def _pending_dest9s(pool: ConnectionPool, ev_type: str) -> set:
+    """dest9 of prospects that already have an open event of this type (skip → don't double-schedule)."""
+    return {r["d9"] for r in _fetch(pool,
+        "SELECT DISTINCT right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
+        "FROM calendar_events WHERE type=%s AND status='pending'", (ev_type,)) if r.get("d9")}
+
+
 def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
-    """Ensure each retry-eligible prospect has ONE open `retry` event (same BDE, varied time). Cancels
-    retries superseded by a later call. Idempotent; safe every cycle. Returns {scheduled, candidates}."""
+    """Ensure each retry-eligible prospect has ONE open `retry` event on the calendar of the BDE who
+    LAST called it (their own sourced data), scheduled at a smart time and capped per BDE per day.
+    Cancels retries superseded by a later call. Idempotent; safe every cycle."""
     if not getattr(settings, "retry_enabled", True):
         return {"skipped": "disabled"}
     maxatt = int(getattr(settings, "retry_max_attempts", 5) or 5)
     cadence = int(getattr(settings, "retry_cadence_days", 3) or 3)
     limit = int(getattr(settings, "retry_per_cycle", 4000) or 4000)
-    gads_only = bool(getattr(settings, "calls_gads_only", False))
+    # Follow up ALL of the BDE's own called-but-not-converted prospects (their BDE/BDM-sourced data),
+    # NOT just the confirmed-Google-Ads pool — the GAds pool is the fresh-pool pilot's job (Mohit).
+    gads_only = False
     tz = getattr(settings, "tz", "Australia/Melbourne")
     now = datetime.now()
 
@@ -221,53 +263,38 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
         conn.commit()
 
     best_hours = _best_call_hours(pool, tz, 11) or [11, 14, 10]
-    # calling roster (excludes the BDM); if the LAST caller was the BDM, the retry is reassigned to a
-    # real BDE (least-loaded) so a BDM is never given a calling worklist.
-    from .pipeline2 import calling_bdes
-    callers = calling_bdes(pool, settings)
-    callers_set = set(callers)
-    # Pilot mode (CALENDAR_ALLOC_NAMES set): only re-call prospects the pilot BDE actually dialed —
-    # never dump another BDE's un-connected backlog onto the pilot BDE. Empty = normal reassignment.
-    _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
-    rload = {r["bde_name"]: r["n"] for r in _fetch(pool,
-        "SELECT bde_name, count(*) n FROM calendar_events WHERE type='retry' AND status='pending' GROUP BY bde_name")}
+    cap = _DayCap(pool, getattr(settings, "bde_daily_call_target", 200),
+                  tz, getattr(settings, "fresh_alloc_horizon_days", 1))
+    today = now.date()
+    already = _pending_dest9s(pool, "retry")             # skip prospects that already have an open retry
     rows = _fetch(pool, _gather_sql(gads_only), {"maxatt": maxatt})[:limit]
+    rows.sort(key=lambda r: r.get("last_attempt") or now)  # oldest-overdue first claim the day's slots
     hour_map = _prospect_hour_map(pool, tz, [r.get("d9") for r in rows])
     to_upsert = []
-    for i, r in enumerate(rows):
-        if not r.get("dest_number"):
+    for r in rows:
+        d9 = r.get("d9")
+        if not r.get("dest_number") or not d9 or d9 in already:
             continue
-        bde = r.get("last_bde")
-        if _alloc:
-            if (bde or "").strip().lower() not in _alloc:  # pilot: skip prospects the pilot BDE never dialed
-                continue
-        elif bde not in callers_set:                     # BDM (or unknown) last caller → hand to a BDE
-            if not callers:
-                continue
-            bde = min(callers, key=lambda b: (rload.get(b, 0), b))
-            rload[bde] = rload.get(bde, 0) + 1
+        bde = r.get("last_bde")                          # the BDE who last called it works their own retry
+        if not bde:
+            continue
         last = r.get("last_attempt") or now
-        # human-like time-of-day: ring back near when THIS prospect actually picks up (their own
-        # local answer pattern), not a one-size global slot; fall back to a global top hour we
-        # haven't already burned on them. (local-hour compare fixes the old UTC-hour skew.)
-        hour, why = _smart_hour(hour_map.get(r.get("d9")), _local_hour(last, tz), best_hours)
+        due = (_local_date(last, tz) or today) + timedelta(days=cadence)
+        day = cap.place(bde, due, today)                 # per-BDE daily cap + day-by-day (today first)
+        if day is None:
+            continue                                     # BDE's day(s) full → deferred to a later cycle
+        hour, why = _smart_hour(hour_map.get(d9), _local_hour(last, tz), best_hours)
         hour = min(max(hour, 8), 17)
-        base = (_local_date(last, tz) or now.date()) + timedelta(days=cadence)
-        while base < now.date():
-            base += timedelta(days=cadence)
-        if base.weekday() >= 5:                          # Sat/Sun → Monday
-            base += timedelta(days=7 - base.weekday())
-        when = datetime.combine(base, time(hour=hour))
+        when = datetime.combine(day, time(hour=hour))
         att = int(r.get("attempts") or 0)
         who = r.get("company") or r.get("dest_number")
         title = f"🔄 Retry ({att + 1}/{maxatt}): {who}"
         lead = (f"No pickup yet — retry at ~{hour}:00 ({why}). "
-                "A fresh 3CX/Aircall line often gets a screener to answer — reassign to another BDE if "
-                "it keeps ringing out.")
+                "A fresh 3CX/Aircall line often gets a screener to answer.")
         notes = _context_note(r, att, maxatt, lead=lead)
         to_upsert.append((bde, title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
     scheduled = _upsert_batch(pool, to_upsert)
-    stats = {"scheduled": scheduled, "candidates": len(rows)}
+    stats = {"scheduled": scheduled, "candidates": len(rows), "placed": len(to_upsert)}
     log.info("retry_calls_done", **stats)
     return stats
 
@@ -286,13 +313,12 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
         return {"skipped": "disabled"}
     maxatt = int(getattr(settings, "reached_max_attempts", 8) or 8)
     cadence = int(getattr(settings, "retry_cadence_days", 3) or 3)
-    gads_only = bool(getattr(settings, "calls_gads_only", False))
+    gads_only = False                        # BDE/BDM-sourced data — all their reached prospects
     tz = getattr(settings, "tz", "Australia/Melbourne")
     now = datetime.now()
-    from .pipeline2 import calling_bdes
-    roster = calling_bdes(pool, settings)   # excludes the BDM (non-calling) names
-    if not roster:
-        return {"skipped": "no_active_bdes"}
+    # A reached-but-REJECTED prospect (not interested / already has an agency) goes to the fresh-pool
+    # PILOT (Mohit) for a fresh voice/angle; an INTERESTED one stays with the BDE who reached them.
+    pilot = next((n for n in (getattr(settings, "calendar_alloc_bdes", None) or [])), None)
 
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(_ENSURE_REACHED_INDEX)
@@ -305,58 +331,46 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
             "  AND c.started_at > e.start_at + interval '2 hours')")
         conn.commit()
 
-    # current open reached_call load per BDE, for round-robin balancing of the rotation
-    load = {r["bde_name"]: r["n"] for r in _fetch(pool,
-        "SELECT bde_name, count(*) n FROM calendar_events "
-        "WHERE type='reached_call' AND status='pending' GROUP BY bde_name")}
     best_hours = _best_call_hours(pool, tz, 11) or [11, 14, 10]
-    # Pilot mode (CALENDAR_ALLOC_NAMES set): only re-call prospects the pilot BDE reached — no cross-BDE
-    # rotation onto the pilot BDE. Empty = normal fresh-voice rotation.
-    _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
+    cap = _DayCap(pool, getattr(settings, "bde_daily_call_target", 200),
+                  tz, getattr(settings, "fresh_alloc_horizon_days", 1))
+    today = now.date()
+    already = _pending_dest9s(pool, "reached_call")
     rows = _fetch(pool, reached_no_next_sql(gads_only))
+    rows.sort(key=lambda r: r.get("last_attempt") or now)   # oldest-overdue first
     hour_map = _prospect_hour_map(pool, tz, [r.get("d9") for r in rows])
     to_insert = []
-    for i, r in enumerate(rows):
+    for r in rows:
         att = int(r.get("attempts") or 0)
-        if att >= maxatt or not r.get("dest_number"):
+        d9 = r.get("d9")
+        if att >= maxatt or not r.get("dest_number") or not d9 or d9 in already:
             continue
-        last = r.get("last_bde")
-        if _alloc:
-            # Pilot: the pilot BDE re-works the "reached-but-flat/rejected" prospects from ANY BDE
-            # (not interested / no next step) — the test-phase volume. But INTERESTED prospects (asked
-            # for a callback or any signal for further contact) stay with the ORIGINAL BDE, never Mohit.
-            if r.get("ever_interested"):
-                continue
-            bde = next((b for b in roster), None)         # roster = the allowlisted pilot BDE(s)
-            if not bde:
-                continue
+        interested = bool(r.get("ever_interested"))
+        if interested:
+            bde = r.get("last_bde")           # positive / callback → the BDE who reached them follows up
         else:
-            # ROTATE: pick an active BDE who hasn't called this prospect (and isn't the last caller); fall
-            # back to the least-loaded BDE other than the last caller. This puts a fresh voice on the line.
-            priors = set(r.get("prior_bdes") or [])
-            cands = [b for b in roster if b != last] or list(roster)
-            fresh = [b for b in cands if b not in priors] or cands
-            bde = min(fresh, key=lambda b: (load.get(b, 0), b))
-            load[bde] = load.get(b, 0) + 1
+            bde = pilot or r.get("last_bde")  # rejected / not-interested → the pilot (Mohit), else own BDE
+        if not bde:
+            continue
         la = r.get("last_attempt") or now
-        # human-like time-of-day: ring back near when THIS prospect actually picks up (their own
-        # local answer pattern); fall back to a global top hour we haven't burned on them.
-        hour, why = _smart_hour(hour_map.get(r.get("d9")), _local_hour(la, tz), best_hours)
+        due = (_local_date(la, tz) or today) + timedelta(days=cadence)
+        day = cap.place(bde, due, today)      # per-BDE daily cap + day-by-day
+        if day is None:
+            continue
+        hour, why = _smart_hour(hour_map.get(d9), _local_hour(la, tz), best_hours)
         hour = min(max(hour, 8), 17)
-        base = (_local_date(la, tz) or now.date()) + timedelta(days=cadence)
-        while base < now.date():
-            base += timedelta(days=cadence)
-        if base.weekday() >= 5:
-            base += timedelta(days=7 - base.weekday())
-        when = datetime.combine(base, time(hour=hour))
+        when = datetime.combine(day, time(hour=hour))
         who = r.get("company") or r.get("dest_number")
         title = f"👤 Reached DM · retry ({att + 1}/{maxatt}): {who}"
-        lead = (f"We reached the decision-maker but they left no next step — {bde} takes it now (a fresh "
-                f"voice/line) at ~{hour}:00 ({why}) for a different angle.")
+        if interested:
+            lead = (f"Reached the decision-maker — {bde} follows up their own prospect at ~{hour}:00 ({why}).")
+        else:
+            lead = (f"Reached the DM but left no next step — {bde} takes a fresh voice/angle at ~{hour}:00 "
+                    f"({why}).")
         notes = _context_note(r, att, maxatt, lead=lead)
         to_insert.append((bde, title, when, when + timedelta(minutes=15), notes, r["dest_number"]))
     scheduled = _insert_reached_batch(pool, to_insert)
-    stats = {"scheduled": scheduled, "candidates": len(rows)}
+    stats = {"scheduled": scheduled, "candidates": len(rows), "placed": len(to_insert)}
     log.info("reached_calls_done", **stats)
     return stats
 

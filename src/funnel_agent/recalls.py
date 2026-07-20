@@ -207,9 +207,9 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             "  AND (e2.start_at > e.start_at OR (e2.start_at = e.start_at AND e2.id > e.id)))")
         cancelled += cur.rowcount
         conn.commit()
-        # Scope the whole recall backlog to the confirmed-Google-Ads pool (matched by phone to
-        # companies→enrichment.running_google_ads). Non-GAds prospects live in the Agency & RPC page.
-        gads_only = bool(getattr(settings, "calls_gads_only", False))
+        # Recalls follow up the BDE's OWN engaged-but-unconnected prospects (P1/P3 + agency) from their
+        # BDE/BDM-sourced data — not restricted to the Google-Ads pool (that's the fresh-pool pilot).
+        gads_only = False
         gather = _GATHER + (
             " AND a.d9 IN (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
             "  FROM enrichment e2 JOIN companies co ON co.domain=e2.domain "
@@ -223,16 +223,11 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
     params: list[dict] = []
     skipped = 0
     suppressed_bde_gk = 0
-    # Pilot gate: when a calendar allocation allowlist is set (Mohit-only test), recalls for every
-    # other BDE stay off the calendar until roll-out.
-    _alloc = {n.strip().lower() for n in getattr(settings, "calendar_alloc_bdes", [])}
+    # Every BDE's recalls land on THEIR OWN calendar (keyed on the BDE who worked the prospect).
     for i, r in enumerate(rows):
         is_agency = (r.get("pp_pipeline") == "pipeline2_existing_agency")
         bde = (r.get("assigned_bde") if is_agency else None) or r.get("last_bde")
         if not bde or not r.get("dest_number"):   # must land on a real BDE calendar
-            skipped += 1
-            continue
-        if _alloc and (bde or "").strip().lower() not in _alloc:
             skipped += 1
             continue
         # exhaust the un-connected recall window after max_weeks (agency rotation never exhausts)
