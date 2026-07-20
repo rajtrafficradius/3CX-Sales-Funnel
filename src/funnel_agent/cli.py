@@ -736,17 +736,9 @@ def refresh(
         except Exception as exc:
             wr = {"error": str(exc)[:80]}
             log.warning("sync_weekly_recalls_failed", error=str(exc)[:160])
-        # Retry calls — re-call confirmed-ads prospects we dialed but never converted (no answer /
-        # voicemail / not interested), same BDE at a different time, until pickup or max attempts.
-        rt = {"scheduled": 0}
-        if settings.retry_enabled:
-            try:
-                from .retry import schedule_retry_calls
-                rt = schedule_retry_calls(ana, settings)
-            except Exception as exc:
-                rt = {"error": str(exc)[:80]}
-                log.warning("schedule_retry_calls_failed", error=str(exc)[:160])
-        # Reached-DM-no-next-step — re-call warm prospects rotating the BDE (fresh voice) until interest.
+        # Reached-DM-no-next-step FIRST — these are WARM (we engaged the decision-maker). Schedule them
+        # (interested → own BDE; rejected → the pilot) BEFORE the cold retry backlog so warm leads claim
+        # the day's capped slots ahead of the huge cold no-answer pile (which is otherwise inexhaustible).
         rd = {"scheduled": 0}
         if settings.reached_enabled:
             try:
@@ -755,6 +747,16 @@ def refresh(
             except Exception as exc:
                 rd = {"error": str(exc)[:80]}
                 log.warning("schedule_reached_calls_failed", error=str(exc)[:160])
+        # Retry calls LAST — cold no-answer / voicemail prospects re-called at a different time; they
+        # fill whatever daily capacity remains after the warmer pipelines.
+        rt = {"scheduled": 0}
+        if settings.retry_enabled:
+            try:
+                from .retry import schedule_retry_calls
+                rt = schedule_retry_calls(ana, settings)
+            except Exception as exc:
+                rt = {"error": str(exc)[:80]}
+                log.warning("schedule_retry_calls_failed", error=str(exc)[:160])
         # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
         # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
         try:
