@@ -153,24 +153,28 @@ def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None
         # tier (hot/warm/cool) = the prospect's BANT temperature from ACTUAL conversations, so the colour
         # means qualification, not a raw priority score. A never-dialled fresh prospect has no BANT ->
         # NULL (neutral). BANT = Authority + Budget + Need(problem) + Timing(urgency); qualified =
-        # Authority + >=2 of B/N/T (the funnel's own rule). hot = full BANT, warm = qualified, cool = worked-but-not.
+        # Authority + >=2 of B/N/T. hot = full BANT, warm = qualified, cool = worked-but-not.
+        # BANT is aggregated ONCE per dest9 in the window (not per event) so the calendar stays fast.
         cur.execute(
-            "SELECT e.id, e.bde_name, e.type, e.title, e.start_at, e.end_at, e.status, e.call_id, "
-            "       e.dest_number, e.notes, bant.tier "
-            "FROM calendar_events e "
-            "LEFT JOIN LATERAL ("
-            "  SELECT CASE "
-            "    WHEN bool_or(cl.authority) AND bool_or(cl.budget) AND bool_or(cl.problem) "
-            "         AND bool_or(cl.urgency) THEN 'hot' "
-            "    WHEN COALESCE(bool_or(cl.qualified), false) THEN 'warm' "
-            "    WHEN count(cl.call_id) > 0 THEN 'cool' "
-            "    ELSE NULL END AS tier "
+            "WITH ev AS ("
+            "  SELECT e.id, e.bde_name, e.type, e.title, e.start_at, e.end_at, e.status, e.call_id, "
+            "         e.dest_number, e.notes, "
+            "         right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) AS d9 "
+            "  FROM calendar_events e "
+            f"  WHERE {' AND '.join(where)}), "
+            "bant AS ("
+            "  SELECT right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) AS d9, "
+            "         bool_or(cl.authority) AS a, bool_or(cl.budget) AS b, bool_or(cl.problem) AS n, "
+            "         bool_or(cl.urgency) AS t, bool_or(cl.qualified) AS qual "
             "  FROM calls c2 JOIN classifications cl ON cl.call_id = c2.call_id "
-            "  WHERE c2.in_scope AND e.dest_number IS NOT NULL "
-            "    AND right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) = "
-            "        right(regexp_replace(e.dest_number,'[^0-9]','','g'),9)"
-            ") bant ON true "
-            f"WHERE {' AND '.join(where)} ORDER BY e.start_at",
+            "  WHERE c2.in_scope AND right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) "
+            "        IN (SELECT d9 FROM ev WHERE d9 <> '') GROUP BY 1) "
+            "SELECT ev.id, ev.bde_name, ev.type, ev.title, ev.start_at, ev.end_at, ev.status, ev.call_id, "
+            "       ev.dest_number, ev.notes, "
+            "       CASE WHEN bant.a AND bant.b AND bant.n AND bant.t THEN 'hot' "
+            "            WHEN COALESCE(bant.qual, false) THEN 'warm' "
+            "            WHEN bant.d9 IS NOT NULL THEN 'cool' ELSE NULL END AS tier "
+            "FROM ev LEFT JOIN bant ON bant.d9 = ev.d9 ORDER BY ev.start_at",
             params,
         )
         return cur.fetchall()
