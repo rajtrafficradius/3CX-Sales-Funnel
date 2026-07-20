@@ -399,7 +399,7 @@ async function boot(){
   loadBoard();
   api('/api/me').then(me=>{
     $('#who').textContent=(me.name||me.email||'')+' · '+(me.role||'');
-    if(me.role==='manager'||me.role==='admin'||me.role==='kiosk'){
+    if(me.role!=='bde'){   // admin / BDM / manager / kiosk get a BDE picker (a BDE sees only their own)
       api('/api/summary').then(s=>{
         $('#bdeFilter').innerHTML=['<option value="ALL">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${esc(b)}</option>`)).join('');
         $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;page=0;loadBoard();};

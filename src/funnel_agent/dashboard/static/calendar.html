@@ -355,7 +355,7 @@ async function boot(){
   ME = await jget('/api/me');
   $('#who').textContent = (ME.name||ME.email||'')+' · '+(ME.role||'');
   $('#scopePill').textContent = ME.role==='bde' ? ('My calendar — '+(ME.bde_name||'')) : 'All BDEs';
-  if(ME.role==='manager'||ME.role==='kiosk'){
+  if(ME.role!=='bde'){   // admin / BDM / manager / kiosk get a BDE picker (a BDE sees only their own)
     try{ const s=await jget('/api/summary'); const opts=['<option value="">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${b}</option>`));
       $('#bdeFilter').innerHTML=opts.join(''); $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{FILTER=$('#bdeFilter').value;load();}; }catch(e){}
   }

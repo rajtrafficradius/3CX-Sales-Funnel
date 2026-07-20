@@ -3636,9 +3636,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 r["last_bde"] = _mask_bde(request, r.get("last_bde"))
                 r["assigned_bde"] = _mask_bde(request, r.get("assigned_bde"))
         u = getattr(request.state, "user", None) or {}
-        roster = [r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
-                                       "FROM bde_agents WHERE in_scope AND active "
-                                       "AND NOT (COALESCE(bde_name, extension) = ANY(%s::text[])) ORDER BY 1", (_hb,))]
+        # The rep dropdown / reassign roster is for managers (admin/BDM) only — a plain BDE can't
+        # reassign and must not see colleagues' names (isolation), so they get an empty roster.
+        roster = ([r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
+                                        "FROM bde_agents WHERE in_scope AND active "
+                                        "AND NOT (COALESCE(bde_name, extension) = ANY(%s::text[])) ORDER BY 1", (_hb,))]
+                  if can_manage_pipeline(u) else [])
         return JSONResponse(jsonable_encoder({
             "rows": rows, "can_assign": can_manage_pipeline(u), "roster": roster,
             "limit": lim, "offset": off, "total": len(rows)}))
