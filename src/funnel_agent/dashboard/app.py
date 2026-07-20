@@ -3536,12 +3536,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # KPIs from the full row set; `total` is the true queue size for the header.
         lim = min(5000, max(1, limit))
         off = max(0, int(offset or 0))
-        rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
-                               due_only=bool(due_only), tier=(tier or None),
-                               gads_only=bool(gads_only), limit=lim, offset=off)
+        # A private/pilot BDE (Mohit) works the WHOLE confirmed-Google-Ads pool, so show the full scored
+        # GAds priority queue — not just the handful pre-assigned to them (which left the page nearly empty).
+        if _is_private_bde_viewer(request):
+            rows = list_next_calls(pool, bde=None, due_only=bool(due_only), tier=(tier or None),
+                                   gads_only=True, limit=lim, offset=off)
+        else:
+            rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
+                                   due_only=bool(due_only), tier=(tier or None),
+                                   gads_only=bool(gads_only), limit=lim, offset=off)
         _hb = _hidden_bdes(request)              # drop a private BDE's queued prospects for non-admins
         if _hb:
             rows = [r for r in rows if r.get("assigned_bde") not in _hb]
+        # isolated BDE: mask colleague names on the queue (next-call owner / last caller)
+        if _is_private_bde_viewer(request):
+            for r in rows:
+                r["next_call_bde"] = _mask_bde(request, r.get("next_call_bde"))
+                r["last_bde"] = _mask_bde(request, r.get("last_bde"))
+                r["assigned_bde"] = _mask_bde(request, r.get("assigned_bde"))
         u = getattr(request.state, "user", None) or {}
         roster = [r["name"] for r in q("SELECT DISTINCT COALESCE(bde_name, extension) AS name "
                                        "FROM bde_agents WHERE in_scope AND active "
