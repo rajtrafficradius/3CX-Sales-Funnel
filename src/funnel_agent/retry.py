@@ -93,6 +93,10 @@ def reached_no_next_sql(gads_only: bool) -> str:
              bool_or(cl.pipeline_stage='p5')                                 AS ever_booked,
              bool_or(cl.pipeline_stage IN ('p1','p3'))                       AS ever_callback,
              bool_or(cl.pipeline='pipeline2_existing_agency')                AS ever_agency,
+             -- any signal the prospect wants further contact (interested) -> reserved for the ORIGINAL
+             -- BDE, never handed to the pilot BDE.
+             bool_or(cl.is_lead IS TRUE OR cl.qualified IS TRUE OR cl.open_to_listening IS TRUE
+                     OR cl.lead_temperature IN ('warm','hot','super_hot'))  AS ever_interested,
              max(c.started_at)                                              AS last_attempt,
              (array_agg(COALESCE(c.bde_name,c.bde_extension) ORDER BY c.started_at DESC)
                 FILTER (WHERE COALESCE(c.bde_name,c.bde_extension) IS NOT NULL))[1] AS last_bde,
@@ -105,7 +109,7 @@ def reached_no_next_sql(gads_only: bool) -> str:
       GROUP BY 1
     )
     SELECT a.d9, a.dest_number, a.last_attempt, a.last_bde, a.company, a.attempts,
-           a.last_outcome, a.last_summary, a.prior_bdes
+           a.last_outcome, a.last_summary, a.prior_bdes, a.ever_interested
     FROM agg a LEFT JOIN prospect_pipeline pp ON pp.dest9=a.d9
     WHERE length(a.d9)=9 AND COALESCE(pp.dnd,false)=false
       AND COALESCE(a.ever_dm,false)=true
@@ -237,9 +241,14 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
             continue
         last = r.get("last_bde")
         if _alloc:
-            if (last or "").strip().lower() not in _alloc:  # pilot: skip prospects the pilot BDE never reached
+            # Pilot: the pilot BDE re-works the "reached-but-flat/rejected" prospects from ANY BDE
+            # (not interested / no next step) — the test-phase volume. But INTERESTED prospects (asked
+            # for a callback or any signal for further contact) stay with the ORIGINAL BDE, never Mohit.
+            if r.get("ever_interested"):
                 continue
-            bde = last                                    # keep it with the pilot BDE (no rotation)
+            bde = next((b for b in roster), None)         # roster = the allowlisted pilot BDE(s)
+            if not bde:
+                continue
         else:
             # ROTATE: pick an active BDE who hasn't called this prospect (and isn't the last caller); fall
             # back to the least-loaded BDE other than the last caller. This puts a fresh voice on the line.
