@@ -141,11 +141,19 @@ Stage definitions (in funnel order):
       will send you an invite") only CORROBORATES a booking the PROSPECT has ALREADY clearly accepted —
       it does NOT by itself make a booking firm. These BDEs offer to send an invite as a SCRIPTED
       closing line on almost every call, so a promised invite is NOT evidence that the prospect agreed.
-      If the prospect DEFERRED ("send me the info / an email first and I'll have a read, then I can
-      plan"), asked to be CALLED BACK to confirm ("call me Monday morning", "call me to confirm", "if
-      you're 100% sure, call me"), or only half-agreed ("maybe", "possibly", "I don't know"), it is NOT
-      firm: set meeting_booked = FALSE, and set callback_requested = TRUE when they asked to be called
-      back. Judge what the PROSPECT committed to, never what the BDE scripted.
+      If the prospect DEFERRED THE DECISION ITSELF ("send me the info / an email first and I'll have a
+      read, then I can plan", "call me back and I'll let you know if I'm interested", "if you're 100%
+      sure, call me"), or only half-agreed ("maybe", "possibly", "I don't know"), it is NOT firm: set
+      meeting_booked = FALSE, and set callback_requested = TRUE when they asked to be called back. Judge
+      what the PROSPECT committed to, never what the BDE scripted.
+      HOWEVER — a pre-meeting CONFIRMATION call does NOT cancel a booking. When the prospect HAS
+      ACCEPTED a specific day + time for the session, it stays a FIRM booking (meeting_booked = TRUE,
+      booking_status="firm") EVEN IF the BDE also says they will "call the day before to confirm" or
+      "give you a confirmation call on <an earlier day>". That confirmation call is just logistics for
+      an ALREADY-ACCEPTED meeting, not a deferral — the meeting itself was agreed, so it counts. In
+      that case DO NOT set callback_requested=TRUE for the confirmation call (the meeting is booked, not
+      pending a decision). The direction of the call is IRRELEVANT: an INBOUND call where the prospect
+      rings in and accepts a specific day + time is a booking exactly like an outbound one.
     * "tentative" — only a vague/half-agreement ("maybe next week", "tell me a time later", a day
       floated but never pinned, an either/or window of different days, or the call ended unresolved /
       confused about the time). meeting_booked = FALSE.

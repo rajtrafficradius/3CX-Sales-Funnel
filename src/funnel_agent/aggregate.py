@@ -35,7 +35,10 @@ WITH base AS (
     SELECT
         COALESCE(c.bde_name, c.bde_extension) AS bde,
         c.fresh_or_followup AS ff,
-        1 AS calls_made,
+        -- "Calls Made" = OUTBOUND dials the BDE placed. An INBOUND call (a prospect ringing in) is
+        -- not a dial -> it does not inflate Calls Made. But it stays in the funnel below, so a real
+        -- outcome on an inbound call (a booking, a qualified lead, a connect) STILL counts.
+        (CASE WHEN lower(COALESCE(c.direction,'')) <> 'inbound' THEN 1 ELSE 0 END) AS calls_made,
         (CASE WHEN c.answered AND c.talk_seconds >= %(rpc_min)s AND COALESCE(cl.call_outcome, '') <> 'voicemail' THEN 1 ELSE 0 END) AS connected,
         (CASE WHEN c.has_transcript THEN 1 ELSE 0 END) AS transcribed,
         -- Funnel stages are STRICTLY NESTED: each counts only within the prior.
@@ -158,9 +161,8 @@ WITH base AS (
     WHERE c.in_scope
       -- recruitment/internal/personal calls are not sales-prospect calls -> out of the funnel entirely
       AND NOT COALESCE(cl.not_a_prospect, false)
-      -- INBOUND calls (prospects ringing in) are not dials the BDE made -> excluded from the outbound
-      -- funnel / "Calls Made". They still appear (labelled) on the prospect & call pages for context.
-      AND lower(COALESCE(c.direction, '')) <> 'inbound'
+      -- NOTE: inbound calls are KEPT here (not filtered out) so a booking / qualified lead / connect
+      -- that happened on an inbound call is still counted. They just don't add to calls_made (above).
       AND c.started_at >= %(start)s AND c.started_at < %(end)s
 )
 SELECT

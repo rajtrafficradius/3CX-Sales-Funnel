@@ -1743,6 +1743,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # ad-spender pool (enrichment.running_google_ads + D&B companies for name/phone/revenue),
         # ~7.8k, biggest revenue first — NOT just the handful already loaded into `prospects`. ----
         if pipeline == "p4":
+            # A BDE's P4 drill-in = THEIR OWN scheduled fresh worklist (the fresh_call calendar events
+            # allocated to them), matching the pipeline-board card count — NOT the whole ~7.8k GAds
+            # universe. Keeps the card and the list consistent ("just show what's assigned to him").
+            if _is_bde(request):
+                own = _scoped_bde(request, None)
+                total = q("SELECT count(*) n FROM calendar_events WHERE bde_name=%s "
+                          "AND type='fresh_call' AND status='pending'", (own,))[0]["n"]
+                rows = q(
+                    "WITH ev AS (SELECT dest_number, title, start_at, "
+                    "  right(regexp_replace(dest_number,'[^0-9]','','g'),9) AS d9 "
+                    "  FROM calendar_events WHERE bde_name=%(bde)s AND type='fresh_call' AND status='pending' "
+                    "  ORDER BY start_at LIMIT %(lim)s OFFSET %(off)s) "
+                    "SELECT co.domain, COALESCE(co.company_name, NULLIF(split_part(ev.title,'— ',2),'')) AS business_name, "
+                    "  ev.dest_number, co.industry, co.revenue_musd, "
+                    "  ev.start_at AS next_call_at, %(bde)s AS next_call_bde, 'fresh_call' AS next_call_type "
+                    "FROM ev LEFT JOIN companies co ON co.phone_norm = ev.d9 ORDER BY ev.start_at",
+                    {"bde": own, "lim": limit, "off": offset})
+                for r in rows:
+                    r["next_call_at"] = str(r["next_call_at"]) if r.get("next_call_at") else None
+                return JSONResponse({"pipeline": pipeline, "window": window, "count": len(rows),
+                                     "total": int(total), "rows": jsonable_encoder(rows)})
             total = q("SELECT count(*) n FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
                       + gads_dnb_gate("e"))[0]["n"]
             rows = q(
@@ -2041,10 +2062,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bde = _scoped_bde(request, bde)
         start, end = _resolve_window(date, start, end)
         cond = _STAGE_COND.get(stage, "TRUE")
-        # match the funnel: inbound calls aren't dials, excluded from the outbound funnel + its drilldown
-        where = ["c.in_scope", "lower(COALESCE(c.direction,'')) <> 'inbound'",
+        # Match the funnel exactly. Non-prospect calls are out of the funnel everywhere.
+        where = ["c.in_scope", "NOT COALESCE(cl.not_a_prospect, false)",
                  "c.started_at >= %(s)s::date",
                  "c.started_at < (%(e)s::date + 1)", f"({cond})"]
+        # Inbound calls aren't dials, so they're excluded from the "Calls Made" list — but a real
+        # OUTCOME on an inbound call (booking / qualified / connect) counts, so every OTHER stage's
+        # drill-down INCLUDES inbound (it's labelled "⬇ Inbound" on the call page).
+        if stage == "calls_made":
+            where.append("lower(COALESCE(c.direction,'')) <> 'inbound'")
         params: dict = {"s": start, "e": end, "thr": settings.rpc_min_talk_seconds, "lim": limit}
         if bde and bde != "ALL":
             where.append("COALESCE(c.bde_name, c.bde_extension) = %(bde)s")
@@ -3553,6 +3579,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if _is_private_bde_viewer(request):
             rows = list_next_calls(pool, bde=None, due_only=bool(due_only), tier=(tier or None),
                                    gads_only=True, limit=lim, offset=off)
+            # Keep the queue CONSISTENT with the calendar's pilot-allocation rule: a prospect already
+            # worked by ANOTHER BDE that shows ANY interest signal (callback / open RPC / interested-P1 /
+            # gatekeeper-callback-P3 / warm-hot tier) stays with that ORIGINAL BDE and must NOT surface on
+            # the pilot BDE's worklist. The pilot only inherits fresh/unowned prospects and other BDEs'
+            # reached-but-flat (rejected) ones — exactly what the fresh/reached calendar allocators assign.
+            _me = (getattr(request.state, "user", None) or {}).get("bde_name")
+            _INTEREST_SIG = {"callback", "rpc_action", "pipeline_p1", "pipeline_p3"}
+            def _pilot_owns(r):
+                lb = r.get("last_bde")
+                if not lb or lb == _me:            # unowned / his own follow-up -> his
+                    return True
+                interested = (r.get("source_signal") in _INTEREST_SIG) or (r.get("tier") in ("hot", "warm"))
+                return not interested              # other BDE + interested -> stays with them
+            rows = [r for r in rows if _pilot_owns(r)]
         else:
             rows = list_next_calls(pool, bde=(None if scope == "ALL" else scope),
                                    due_only=bool(due_only), tier=(tier or None),
