@@ -576,6 +576,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bde_name and bde_name in _hidden_bdes(request):
             raise HTTPException(403, "not found")
 
+    def _is_private_bde_viewer(request: Request) -> bool:
+        """True when the logged-in user is an isolated/private BDE (e.g. Mohit) viewing the app."""
+        u = getattr(request.state, "user", None) or {}
+        return u.get("role") == "bde" and u.get("bde_name") in settings.private_bdes
+
+    def _mask_bde(request: Request, name, ext=None):
+        """For an isolated BDE, hide colleagues' identities: show 'BDE <ext>' instead of their real name
+        (their own name is left intact). No-op for everyone else."""
+        if not name or not _is_private_bde_viewer(request):
+            return name
+        own = (getattr(request.state, "user", None) or {}).get("bde_name")
+        if name == own:
+            return name
+        e = str(ext or "").replace("aircall:", "")
+        return f"BDE {e}".strip() if e else "BDE"
+
     def _hidden_and(request: Request, col: str = "COALESCE(c.bde_name, c.bde_extension)"):
         """(sql, params) appended to an ALL/list WHERE so private BDEs' rows are dropped for a
         non-privileged viewer. Positional %s. Empty when nothing to hide (admins / the private BDE)."""
@@ -2342,6 +2358,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # them) — the rotation hand-off, consistent with the prospect page (which lists every call).
         if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
             raise HTTPException(403, "not your call")
+        call["bde_name"] = _mask_bde(request, call.get("bde_name"), call.get("bde_extension"))  # isolated BDE: hide colleagues
         call["started_at"] = str(call["started_at"]) if call["started_at"] else None
         tr = q("SELECT text, sentiment, summary, diarized FROM transcripts WHERE call_id=%s",
                (call_id,))
@@ -2961,6 +2978,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allowed = any(_bde_access_ok(own, d9) for d9 in d9set)   # same rule as the call page
             if not allowed:
                 raise HTTPException(403, "not your prospect")
+
+        # Isolated BDE (e.g. Mohit): hide colleagues' identities on the shared prospect's call history —
+        # show "BDE <ext>" instead of their real names (his own calls keep his name).
+        if _is_private_bde_viewer(request):
+            for c in calls:
+                c["bde_name"] = _mask_bde(request, c.get("bde_name"), c.get("bde_extension"))
 
         # Best domain for enrichment: master's, else the most common extracted site.
         if not domain:
