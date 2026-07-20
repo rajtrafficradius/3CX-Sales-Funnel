@@ -291,6 +291,30 @@ function bookingBanner(ev, counts, dt, o, pq, qvia){
 }
 
 const RPC_REASON={reached_rpc:'Reached the decision-maker',gatekeeper_block:'Blocked by gatekeeper',dm_unavailable:'Decision-maker unavailable',voicemail:'Went to voicemail',no_answer:'No answer',wrong_number:'Wrong number',not_decision_maker:'Reached the wrong person',other:'Decision-maker not reached'};
+// #8 — make the auto-scheduled next action obvious, so the BDE knows the system booked it
+// (e.g. prospect said "call back later" -> a callback lands on the calendar automatically).
+function nextActionCard(d){
+  const ns=d.next_scheduled, cl=d.classification||{}, c=d.call||{};
+  const LABELS={callback:'📞 Callback',retry:'🔁 Retry call',reached_call:'👤 Re-call (reached, no next step)',
+                fresh_call:'🎯 Fresh call',recall:'🔁 Recall',rpc_retry:'🔁 RPC retry'};
+  if(ns){
+    const when=esc(String(ns.start_at||'').slice(0,16).replace('T',' '));
+    const lbl=LABELS[ns.type]||('📅 '+esc(ns.type||'Call'));
+    const who=esc(ns.bde_name||c.bde_name||'');
+    return `<div class="card full" style="border-left:4px solid var(--good);background:rgba(34,197,94,.10)">
+      <h2>📅 Next action <span class="muted">— auto-scheduled from this call</span></h2>
+      <div style="font-size:14.5px;line-height:1.6"><b>${lbl}</b> scheduled for <b>${when}</b>${who?` · ${who}'s calendar`:''}
+        <a class="lnk" href="/calendar" style="margin-left:8px">Open calendar ↗</a></div>
+      <div class="muted" style="font-size:12px;margin-top:6px">The system read the call and booked the next step for you — no need to schedule it manually.</div>
+    </div>`;
+  }
+  if(cl.callback_requested){
+    return `<div class="card full" style="border-left:4px solid var(--warn);background:rgba(251,191,36,.10)">
+      <h2>📅 Next action <span class="muted">— being scheduled</span></h2>
+      <div style="font-size:14.5px">A callback was requested${cl.callback_when?` (${esc(cl.callback_when)})`:''} — it's being added to the calendar and will show here shortly.</div></div>`;
+  }
+  return '';
+}
 function rpcNextMoveCard(d){
   const c=d.call||{}, cl=d.classification||{}, ev=cl.evidence||{};
   const ra=d.rpc_action||{}, nm=ev.rpc_next_move||{};
@@ -791,7 +815,7 @@ async function load(){
     : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
 
   const tabs=[
-    ['summary','Summary', overallCallSummary(c,cl,ev,t) + leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(c, d.can_override) + feedbackCard(ev,cl,d.feedback) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
+    ['summary','Summary', overallCallSummary(c,cl,ev,t) + nextActionCard(d) + leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(c, d.can_override) + feedbackCard(ev,cl,d.feedback) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
     ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],

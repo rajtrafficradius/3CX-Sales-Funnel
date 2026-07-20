@@ -2474,10 +2474,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         rpc_action[_k] = _v
 
         u = getattr(request.state, "user", None) or {}
+        # #8 — the next auto-scheduled action for this prospect, so the BDE can SEE the system booked
+        # the next step from the call (e.g. "busy, call back later" -> a callback on their calendar).
+        nxt = q("SELECT type, start_at, bde_name, title, created_by FROM calendar_events "
+                "WHERE status='pending' AND COALESCE(dest_number,'') <> '' "
+                "  AND right(regexp_replace(dest_number,'[^0-9]','','g'),9) = "
+                "      right(regexp_replace(%s,'[^0-9]','','g'),9) "
+                "ORDER BY (start_at >= now()) DESC, start_at ASC LIMIT 1",
+                (call.get("dest_number") or "",))
+        next_scheduled = nxt[0] if nxt else None
+        if next_scheduled:
+            next_scheduled["bde_name"] = _mask_bde(request, next_scheduled.get("bde_name"))
         # jsonable_encoder converts numeric->float and datetime->iso so confidences serialize.
         return JSONResponse(jsonable_encoder({
             "call": call,
             "transcript": tr[0] if tr else None,
+            "next_scheduled": next_scheduled,   # {type,start_at,bde_name,title} or None
             "classification": cl[0] if cl else None,
             "master": master,
             "domain": domain,
