@@ -1566,20 +1566,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         out_rows = [{"pipeline": st, "label": label,
                      "counts": {k: int(agg.get(f"c_{st}_{k}") or 0) for k, _l, _o in _PIPE_WINDOWS}}
                     for st, label in _PIPE5_ROWS]
-        # P4 standing pool — the DB worklist (uncalled ads + captured + attempted), not per-day.
-        pool = q(
-            "SELECT "
-            + ", ".join(f"count(*) FILTER (WHERE p4_subpipeline='{s}') AS {s}" for s in _P4_SUBS)
-            + ", count(*) FILTER (WHERE pipeline_stage='p4' AND COALESCE(p4_subpipeline,'') "
-              "NOT IN ('dead','')) AS total FROM prospects"
-        )[0]
-        pools = {s: int(pool.get(s) or 0) for s in _P4_SUBS}
-        pools["total"] = int(pool.get("total") or 0)
-        # the real 'fresh worklist' size = businesses confirmed running Google Ads AND D&B-backed
-        # (the callable pool — see gads_dnb_gate: Raven-only/call-captured domains are not counted)
-        ra = q("SELECT count(*) n FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
-               + gads_dnb_gate("e"))
-        pools["running_ads"] = int(ra[0]["n"]) if ra else 0
+        # P4 standing pool. A BDE sees only THEIR OWN worklist (their assigned/scheduled GAds calls),
+        # NOT the whole confirmed-Google-Ads universe — "just show what's assigned to him".
+        if _is_bde(request):
+            own = _scoped_bde(request, None)
+            wl = q("SELECT count(*) n FROM calendar_events WHERE bde_name=%s AND type='fresh_call' "
+                   "AND status='pending'", (own,))[0]["n"]
+            wl = int(wl or 0)
+            pools = {s: 0 for s in _P4_SUBS}
+            pools["fresh_ads"] = wl            # his fresh confirmed-ads worklist (scheduled, not yet dialled)
+            pools["total"] = wl
+            pools["running_ads"] = wl
+        else:
+            pool = q(
+                "SELECT "
+                + ", ".join(f"count(*) FILTER (WHERE p4_subpipeline='{s}') AS {s}" for s in _P4_SUBS)
+                + ", count(*) FILTER (WHERE pipeline_stage='p4' AND COALESCE(p4_subpipeline,'') "
+                  "NOT IN ('dead','')) AS total FROM prospects"
+            )[0]
+            pools = {s: int(pool.get(s) or 0) for s in _P4_SUBS}
+            pools["total"] = int(pool.get("total") or 0)
+            # the real 'fresh worklist' size = businesses confirmed running Google Ads AND D&B-backed
+            # (the callable pool — see gads_dnb_gate: Raven-only/call-captured domains are not counted)
+            ra = q("SELECT count(*) n FROM enrichment e WHERE (e.dataforseo->>'running_google_ads')='true'"
+                   + gads_dnb_gate("e"))
+            pools["running_ads"] = int(ra[0]["n"]) if ra else 0
         # When a BDE is viewing (or a manager filters to one BDE), the retry/reached/agency tab counts
         # must reflect THAT BDE's prospects — matching the board rows, which filter by last/assigned BDE.
         bde_scoped = bool(bde and bde != "ALL")
