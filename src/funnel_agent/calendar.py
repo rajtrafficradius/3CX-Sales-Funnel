@@ -150,13 +150,26 @@ def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None
         where.append("e.bde_name = %(b)s")
         params["b"] = bde_name
     with pool.connection() as conn, conn.cursor() as cur:
-        # tier = the prospect's next-call priority tier (A), for calendar colour-coding.
+        # tier (hot/warm/cool) = the prospect's BANT temperature from ACTUAL conversations, so the colour
+        # means qualification, not a raw priority score. A never-dialled fresh prospect has no BANT ->
+        # NULL (neutral). BANT = Authority + Budget + Need(problem) + Timing(urgency); qualified =
+        # Authority + >=2 of B/N/T (the funnel's own rule). hot = full BANT, warm = qualified, cool = worked-but-not.
         cur.execute(
             "SELECT e.id, e.bde_name, e.type, e.title, e.start_at, e.end_at, e.status, e.call_id, "
-            "       e.dest_number, e.notes, nc.tier "
+            "       e.dest_number, e.notes, bant.tier "
             "FROM calendar_events e "
-            "LEFT JOIN next_call_queue nc ON e.dest_number IS NOT NULL AND nc.dest9 = "
-            "  right(regexp_replace(e.dest_number,'[^0-9]','','g'),9) "
+            "LEFT JOIN LATERAL ("
+            "  SELECT CASE "
+            "    WHEN bool_or(cl.authority) AND bool_or(cl.budget) AND bool_or(cl.problem) "
+            "         AND bool_or(cl.urgency) THEN 'hot' "
+            "    WHEN COALESCE(bool_or(cl.qualified), false) THEN 'warm' "
+            "    WHEN count(cl.call_id) > 0 THEN 'cool' "
+            "    ELSE NULL END AS tier "
+            "  FROM calls c2 JOIN classifications cl ON cl.call_id = c2.call_id "
+            "  WHERE c2.in_scope AND e.dest_number IS NOT NULL "
+            "    AND right(regexp_replace(c2.dest_number,'[^0-9]','','g'),9) = "
+            "        right(regexp_replace(e.dest_number,'[^0-9]','','g'),9)"
+            ") bant ON true "
             f"WHERE {' AND '.join(where)} ORDER BY e.start_at",
             params,
         )

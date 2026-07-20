@@ -151,6 +151,7 @@
   .legend .lg i.tier.hot{background:var(--tier-hot)}
   .legend .lg i.tier.warm{background:var(--tier-warm)}
   .legend .lg i.tier.cool{background:var(--tier-cool)}
+  .legend .lg i.tier.none{background:var(--line2)}
   /* ---- event detail modal ---- */
   .modal{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:6vh 20px 20px}
   .modal[hidden]{display:none}
@@ -395,10 +396,11 @@ function renderLegend(){
     `<span class="lg"><i class="type reached_call"></i>👤 Reached DM · retry</span>`+
     `<span class="lg"><i class="type note"></i>📝 Note</span>`+
     `<span class="lg"><i class="type done"></i>Done</span>`;
-  const tiers=`<span class="lgh">Priority</span>`+
-    `<span class="lg"><i class="tier hot"></i>Hot — call today</span>`+
-    `<span class="lg"><i class="tier warm"></i>Warm</span>`+
-    `<span class="lg"><i class="tier cool"></i>Cool / normal</span>`;
+  const tiers=`<span class="lgh">BANT</span>`+
+    `<span class="lg"><i class="tier hot"></i>Hot — full BANT</span>`+
+    `<span class="lg"><i class="tier warm"></i>Warm — qualified</span>`+
+    `<span class="lg"><i class="tier cool"></i>Cool — worked, not qualified</span>`+
+    `<span class="lg"><i class="tier none"></i>New — not yet called</span>`;
   const names=[...new Set(EVENTS.map(e=>e.bde_name||'').filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   const bde = names.length
     ? `<span class="lgh">BDE</span>`+names.map(n=>`<span class="lg"><i style="background:${bdeColor(n).accent}"></i>${esc(n)}</span>`).join('')
