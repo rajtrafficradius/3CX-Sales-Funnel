@@ -295,6 +295,15 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
             (start, end),
         )
         pending = cur.fetchall()
+    # For a VAGUE callback time (no concrete date/time stated) fall back to WHEN THIS PROSPECT ACTUALLY
+    # PICKS UP — their own answer-hour pattern — instead of a flat 10am default. Same intelligent timing
+    # the retry/reached schedulers use. (A concrete stated time is always trusted as-is.)
+    from .retry import _prospect_hour_map, _smart_hour, _local_hour
+    from .recalls import _best_call_hours
+    _TZ = "Australia/Melbourne"
+    _hourmap = _prospect_hour_map(pool, _TZ, [
+        "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:] for r in pending])
+    _besth = _best_call_hours(pool, _TZ, 11) or [11, 14, 10]
     created = 0
     suppressed = 0
     for r in pending:
@@ -318,6 +327,16 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
         # meeting") is NOT turned into a fake precise time — it gets a sensible same-day/next-morning
         # slot and the reason says the time wasn't actually given (so the calendar never lies).
         when, time_given = resolve_callback_slot(r["callback_when"], r["started_at"], base)
+        # VAGUE time → keep the resolved DAY but set the HOUR to when this prospect actually picks up
+        # (their own pattern), if we have one. Prospects with no answer history keep the sensible default.
+        pattern_hour = False
+        if not time_given:
+            _d9 = "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:]
+            _info = _hourmap.get(_d9)
+            if _info and _info.get("answered"):
+                _sh, _ = _smart_hour(_info, _local_hour(r["started_at"], _TZ), _besth)
+                when = when.replace(hour=min(max(_sh, 8), 17), minute=0, second=0, microsecond=0)
+                pattern_hour = True
         who = r["prospect_company"] or r["dest_number"] or "prospect"
         stage = "RPC callback" if reached_dm else "gatekeeper callback"
         prov = "from BDE-sourced data" if bde_sourced else "from curated database"
@@ -327,6 +346,9 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
         # lead with WHY this time + the classification/provenance, then the game plan.
         if time_given:
             reason = f"They asked us to call back ‘{cbw}’, so it’s booked for {when_s}."
+        elif pattern_hour:
+            reason = (f"No exact callback time was given" + (f" (they said ‘{cbw}’)" if cbw else "") +
+                      f" — set for {when_s}, the time this prospect usually picks up; confirm when you reach them.")
         elif cbw:
             reason = (f"No exact callback time was given (they said ‘{cbw}’) — provisionally set for "
                       f"{when_s}; confirm the time when you reach them.")

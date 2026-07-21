@@ -220,6 +220,11 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         rows = cur.fetchall()
 
     best_hours = _best_call_hours(pool, getattr(settings, "tz", "Australia/Melbourne"), hour)
+    # per-prospect answer-hour pattern so a vague recall time lands when THIS prospect picks up.
+    from .retry import _prospect_hour_map, _smart_hour
+    _TZ = getattr(settings, "tz", "Australia/Melbourne")
+    _hourmap = _prospect_hour_map(pool, _TZ, [
+        "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:] for r in rows])
     params: list[dict] = []
     skipped = 0
     suppressed_bde_gk = 0
@@ -242,7 +247,15 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         # INTELLIGENT TIMING: if the transcript gave a 'when to call next' hint (gatekeeper said
         # 'next week' / 'in 20 min' / DM back on a date), schedule to THAT. Weekly is only the
         # fallback when there's no such signal. (Agency prospects rarely give a time -> cadence.)
-        best_hour = best_hours[i % len(best_hours)]   # data-driven pick-up hour, spread across top-3
+        # per-prospect intelligent hour: when THIS prospect has answered before, call at their pick-up
+        # hour; otherwise a global top hour spread across the roster.
+        _d9 = "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:]
+        _info = _hourmap.get(_d9)
+        if _info and _info.get("answered"):
+            best_hour, _ = _smart_hour(_info, None, best_hours)
+            best_hour = min(max(best_hour, 8), 17)
+        else:
+            best_hour = best_hours[i % len(best_hours)]   # data-driven pick-up hour, spread across top-3
         if not is_agency and cbw:
             when = guess_when(cbw, (r.get("last_attempt") or now).date())
             # the signal usually gives a DAY ('Monday', 'next week') but no time-of-day; when it
