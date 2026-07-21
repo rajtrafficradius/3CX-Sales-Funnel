@@ -96,8 +96,10 @@ def reached_no_next_sql(gads_only: bool) -> str:
              bool_or(cl.pipeline_stage IN ('p1','p3'))                       AS ever_callback,
              bool_or(cl.pipeline='pipeline2_existing_agency')                AS ever_agency,
              -- any signal the prospect wants further contact (interested) -> reserved for the ORIGINAL
-             -- BDE, never handed to the pilot BDE.
+             -- BDE, never handed to the pilot BDE. A CALLBACK REQUEST counts as interested (they asked
+             -- us to call back), so a callback-agreed prospect stays with the BDE who earned it.
              bool_or(cl.is_lead IS TRUE OR cl.qualified IS TRUE OR cl.open_to_listening IS TRUE
+                     OR COALESCE(cl.callback_requested, false) IS TRUE
                      OR cl.lead_temperature IN ('warm','hot','super_hot'))  AS ever_interested,
              max(c.started_at)                                              AS last_attempt,
              (array_agg(COALESCE(c.bde_name,c.bde_extension) ORDER BY c.started_at DESC)
