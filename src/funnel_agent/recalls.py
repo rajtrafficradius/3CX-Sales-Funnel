@@ -221,7 +221,7 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
 
     best_hours = _best_call_hours(pool, getattr(settings, "tz", "Australia/Melbourne"), hour)
     # per-prospect answer-hour pattern so a vague recall time lands when THIS prospect picks up.
-    from .retry import _prospect_hour_map, _smart_hour
+    from .retry import _prospect_hour_map, _smart_hour, _future_when
     _TZ = getattr(settings, "tz", "Australia/Melbourne")
     _hourmap = _prospect_hour_map(pool, _TZ, [
         "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:] for r in rows])
@@ -274,6 +274,8 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             floor = guess_when(unavail, (r.get("last_attempt") or now).date())
             if floor > when:
                 when = floor
+        if when <= now:                           # never schedule a recall in the past → next slot
+            when = _future_when(when.date(), when.hour, now)
         if when > horizon:                        # contract-parked / away too long — schedule later
             skipped += 1
             continue

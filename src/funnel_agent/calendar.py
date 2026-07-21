@@ -319,8 +319,9 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
     # For a VAGUE callback time (no concrete date/time stated) fall back to WHEN THIS PROSPECT ACTUALLY
     # PICKS UP — their own answer-hour pattern — instead of a flat 10am default. Same intelligent timing
     # the retry/reached schedulers use. (A concrete stated time is always trusted as-is.)
-    from .retry import _prospect_hour_map, _smart_hour, _local_hour
+    from .retry import _prospect_hour_map, _smart_hour, _local_hour, _future_when
     from .recalls import _best_call_hours
+    _now = datetime.now()
     _TZ = "Australia/Melbourne"
     _hourmap = _prospect_hour_map(pool, _TZ, [
         "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:] for r in pending])
@@ -358,6 +359,9 @@ def sync_callbacks_for_day(pool: ConnectionPool, day: date, *, gads_only: bool =
                 _sh, _ = _smart_hour(_info, _local_hour(r["started_at"], _TZ), _besth)
                 when = when.replace(hour=min(max(_sh, 8), 17), minute=0, second=0, microsecond=0)
                 pattern_hour = True
+        # never book a callback in the past (a stated/pattern time that has already passed → next slot)
+        if when <= _now:
+            when = _future_when(when.date(), when.hour, _now)
         who = r["prospect_company"] or r["dest_number"] or "prospect"
         stage = "RPC callback" if reached_dm else "gatekeeper callback"
         prov = "from BDE-sourced data" if bde_sourced else "from curated database"

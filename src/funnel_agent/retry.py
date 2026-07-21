@@ -166,6 +166,23 @@ def _local_hour(dt, tz_name: str):
         return getattr(dt, "hour", None)
 
 
+def _future_when(day, hour: int, now: datetime) -> datetime:
+    """A naive-local start time that is NEVER in the past. If (day, hour) has already passed (e.g. an
+    overdue prospect placed on today at a pick-up hour that's already gone), bump to the next open
+    business hour today, else to the next business day at the same hour — a human never books a call
+    for a time that's already gone."""
+    hour = min(max(int(hour), 8), 17)
+    when = datetime.combine(day, time(hour=hour))
+    if when > now:
+        return when
+    if now.weekday() < 5 and now.hour < 16:            # still time left today → next hour
+        return now.replace(hour=min(now.hour + 1, 17), minute=0, second=0, microsecond=0)
+    d = now.date() + timedelta(days=1)                 # too late / weekend → next business day
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return datetime.combine(d, time(hour=min(max(hour, 9), 17)))
+
+
 def _local_date(dt, tz_name: str):
     """LOCAL calendar date of a stored (UTC) timestamp, so cadence spacing lands on the right day."""
     if dt is None:
@@ -287,7 +304,7 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
             continue                                     # BDE's day(s) full → deferred to a later cycle
         hour, why = _smart_hour(hour_map.get(d9), _local_hour(last, tz), best_hours)
         hour = min(max(hour, 8), 17)
-        when = datetime.combine(day, time(hour=hour))
+        when = _future_when(day, hour, now)
         att = int(r.get("attempts") or 0)
         who = r.get("company") or r.get("dest_number")
         title = f"🔄 Retry ({att + 1}/{maxatt}): {who}"
@@ -361,7 +378,7 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
             continue
         hour, why = _smart_hour(hour_map.get(d9), _local_hour(la, tz), best_hours)
         hour = min(max(hour, 8), 17)
-        when = datetime.combine(day, time(hour=hour))
+        when = _future_when(day, hour, now)
         who = r.get("company") or r.get("dest_number")
         title = f"👤 Reached DM · retry ({att + 1}/{maxatt}): {who}"
         if interested:
