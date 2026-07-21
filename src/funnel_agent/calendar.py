@@ -180,6 +180,27 @@ def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None
         return cur.fetchall()
 
 
+def cancel_stale_followups(pool: ConnectionPool) -> int:
+    """Cancel pending AUTO chase events (callback / retry / reached / recall / rpc_retry) for a prospect
+    who is now BOOKED (a firm meeting that still stands) or Do-Not-Contact — we don't keep chasing a
+    booked or dead lead. This cleans up a follow-up that was scheduled BEFORE the prospect converted
+    (e.g. a callback that drove the booking, then lingered). Meetings themselves are never cancelled."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE calendar_events e SET status='cancelled' "
+            "WHERE e.status='pending' AND e.created_by='auto' "
+            "  AND e.type IN ('callback','retry','reached_call','recall','rpc_retry') "
+            "  AND EXISTS (SELECT 1 FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            "     WHERE c.in_scope "
+            "       AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) "
+            "         = right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) "
+            "       AND ( (cl.meeting_booked IS TRUE AND COALESCE(cl.booking_status,'') <> 'cancelled_or_declined') "
+            "             OR COALESCE(cl.do_not_contact, false) IS TRUE ))")
+        n = cur.rowcount
+        conn.commit()
+    return n
+
+
 def purge_cancelled(pool: ConnectionPool, older_than_days: int = 3) -> int:
     """Hard-delete cancelled events older than N days. The recall engine cancels/supersedes many events
     every cycle; without a purge they accumulate into the hundreds of thousands and bloat the table.

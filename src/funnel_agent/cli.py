@@ -757,6 +757,13 @@ def refresh(
             except Exception as exc:
                 rt = {"error": str(exc)[:80]}
                 log.warning("schedule_retry_calls_failed", error=str(exc)[:160])
+        # A prospect who booked a firm meeting (or is Do-Not-Contact) stops being chased — cancel any
+        # pending auto follow-up (a callback/retry/reached that was scheduled before they converted).
+        try:
+            from .calendar import cancel_stale_followups
+            cancel_stale_followups(ana)
+        except Exception as exc:
+            log.warning("cancel_stale_followups_failed", error=str(exc)[:160])
         # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
         # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
         try:
