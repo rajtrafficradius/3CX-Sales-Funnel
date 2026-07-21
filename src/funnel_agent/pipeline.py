@@ -98,11 +98,12 @@ def classify_window(
                 enr = enrich_day(analytics_pool, settings, day)
             except Exception as exc:  # enrichment must never block the funnel
                 log.warning("enrich_day_failed", day=str(day), error=str(exc)[:160])
-        try:  # auto-assign interested-prospect callbacks to the BDE calendar — every BDE, their own data
+        try:  # auto-assign RPC-connect callbacks to the pilot BDEs' calendars — GAds pool only
             from .calendar import sync_callbacks_for_day
-            # A prospect-requested callback is a positive follow-up that belongs to the BDE who earned it,
-            # for ALL BDEs (not just the pilot) and from their BDE/BDM-sourced data (not GAds-restricted).
-            sync_callbacks_for_day(analytics_pool, day, gads_only=False, alloc_names=None)
+            # PILOT phase: only the confirmed-Google-Ads pool, only the pilot BDEs (CALENDAR_ALLOC_NAMES),
+            # not their BDE/BDM-sourced (non-GAds) data. Empty allowlist = all BDEs (post-roll-out).
+            _alloc = {n.strip().lower() for n in settings.calendar_alloc_bdes} or None
+            sync_callbacks_for_day(analytics_pool, day, gads_only=settings.calls_gads_only, alloc_names=_alloc)
         except Exception as exc:
             log.warning("callbacks_failed", day=str(day), error=str(exc)[:160])
         try:  # RPC "Next Move": per-day upsert only; global resolve+schedule runs once after loop

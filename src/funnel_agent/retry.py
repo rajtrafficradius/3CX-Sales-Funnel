@@ -263,9 +263,11 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
     maxatt = int(getattr(settings, "retry_max_attempts", 5) or 5)
     cadence = int(getattr(settings, "retry_cadence_days", 3) or 3)
     limit = int(getattr(settings, "retry_per_cycle", 4000) or 4000)
-    # Follow up ALL of the BDE's own called-but-not-converted prospects (their BDE/BDM-sourced data),
-    # NOT just the confirmed-Google-Ads pool — the GAds pool is the fresh-pool pilot's job (Mohit).
-    gads_only = False
+    # PILOT phase: the calendar carries ONLY the confirmed-Google-Ads pool (calls_gads_only), and only
+    # for the pilot BDEs (CALENDAR_ALLOC_NAMES — Mohit/Alfred/Ben). Their BDE/BDM-sourced (non-GAds)
+    # data is deliberately NOT scheduled.
+    gads_only = bool(getattr(settings, "calls_gads_only", False))
+    _alloc = {n.strip().lower() for n in (getattr(settings, "calendar_alloc_bdes", None) or [])}
     tz = getattr(settings, "tz", "Australia/Melbourne")
     now = datetime.now()
 
@@ -295,8 +297,8 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
         if not r.get("dest_number") or not d9 or d9 in already:
             continue
         bde = r.get("last_bde")                          # the BDE who last called it works their own retry
-        if not bde:
-            continue
+        if not bde or (_alloc and bde.strip().lower() not in _alloc):
+            continue                                     # pilot phase: only the pilot BDEs' own retries
         last = r.get("last_attempt") or now
         due = (_local_date(last, tz) or today) + timedelta(days=cadence)
         day = cap.place(bde, due, today)                 # per-BDE daily cap + day-by-day (today first)
@@ -332,11 +334,12 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
         return {"skipped": "disabled"}
     maxatt = int(getattr(settings, "reached_max_attempts", 8) or 8)
     cadence = int(getattr(settings, "retry_cadence_days", 3) or 3)
-    gads_only = False                        # BDE/BDM-sourced data — all their reached prospects
+    gads_only = bool(getattr(settings, "calls_gads_only", False))   # pilot: confirmed-Google-Ads pool only
     tz = getattr(settings, "tz", "Australia/Melbourne")
     now = datetime.now()
     # A reached-but-REJECTED prospect (not interested / already has an agency) goes to the fresh-pool
-    # PILOT (Mohit) for a fresh voice/angle; an INTERESTED one stays with the BDE who reached them.
+    # PILOT (Mohit) for a fresh voice/angle; an INTERESTED one stays with the pilot BDE who reached them.
+    _alloc = {n.strip().lower() for n in (getattr(settings, "calendar_alloc_bdes", None) or [])}
     pilot = next((n for n in (getattr(settings, "calendar_alloc_bdes", None) or [])), None)
 
     with pool.connection() as conn, conn.cursor() as cur:
@@ -367,10 +370,12 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
         interested = bool(r.get("ever_interested"))
         if interested:
             bde = r.get("last_bde")           # positive / callback → the BDE who reached them follows up
+            if not bde or (_alloc and bde.strip().lower() not in _alloc):
+                continue                       # pilot phase: skip interested prospects owned by non-pilots
         else:
             bde = pilot or r.get("last_bde")  # rejected / not-interested → the pilot (Mohit), else own BDE
-        if not bde:
-            continue
+            if not bde:
+                continue
         la = r.get("last_attempt") or now
         due = (_local_date(la, tz) or today) + timedelta(days=cadence)
         day = cap.place(bde, due, today)      # per-BDE daily cap + day-by-day

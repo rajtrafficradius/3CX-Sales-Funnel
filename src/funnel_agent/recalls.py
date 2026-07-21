@@ -207,9 +207,9 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
             "  AND (e2.start_at > e.start_at OR (e2.start_at = e.start_at AND e2.id > e.id)))")
         cancelled += cur.rowcount
         conn.commit()
-        # Recalls follow up the BDE's OWN engaged-but-unconnected prospects (P1/P3 + agency) from their
-        # BDE/BDM-sourced data — not restricted to the Google-Ads pool (that's the fresh-pool pilot).
-        gads_only = False
+        # PILOT phase: recalls carry ONLY the confirmed-Google-Ads pool (calls_gads_only), scheduled only
+        # for the pilot BDEs (CALENDAR_ALLOC_NAMES) — not their BDE/BDM-sourced (non-GAds) data.
+        gads_only = bool(getattr(settings, "calls_gads_only", False))
         gather = _GATHER + (
             " AND a.d9 IN (SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
             "  FROM enrichment e2 JOIN companies co ON co.domain=e2.domain "
@@ -222,6 +222,7 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
     best_hours = _best_call_hours(pool, getattr(settings, "tz", "Australia/Melbourne"), hour)
     # per-prospect answer-hour pattern so a vague recall time lands when THIS prospect picks up.
     from .retry import _prospect_hour_map, _smart_hour, _future_when
+    _alloc = {n.strip().lower() for n in (getattr(settings, "calendar_alloc_bdes", None) or [])}
     _TZ = getattr(settings, "tz", "Australia/Melbourne")
     _hourmap = _prospect_hour_map(pool, _TZ, [
         "".join(ch for ch in (r.get("dest_number") or "") if ch.isdigit())[-9:] for r in rows])
@@ -233,6 +234,9 @@ def sync_weekly_recalls(pool: ConnectionPool, settings: Settings) -> dict:
         is_agency = (r.get("pp_pipeline") == "pipeline2_existing_agency")
         bde = (r.get("assigned_bde") if is_agency else None) or r.get("last_bde")
         if not bde or not r.get("dest_number"):   # must land on a real BDE calendar
+            skipped += 1
+            continue
+        if _alloc and (bde or "").strip().lower() not in _alloc:   # pilot phase: only pilot BDEs
             skipped += 1
             continue
         # exhaust the un-connected recall window after max_weeks (agency rotation never exhausts)

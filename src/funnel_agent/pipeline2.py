@@ -47,19 +47,21 @@ def calling_bdes(pool: ConnectionPool, settings=None, pilot_only: bool = True) -
     Pass pilot_only=False for the FOLLOW-UP allocators (retry/reached/callback/recall): those key on the
     BDE who actually made the call, so every active BDE/BDM follows up THEIR OWN prospects — not gated to
     the pilot. Only the never-called fresh GAds pool is pilot-restricted."""
+    active = active_bdes(pool)
+    allow = [a.strip().lower() for a in getattr(settings, "calendar_alloc_bdes", None) or []] if settings else []
+    # Pilot mode: when CALENDAR_ALLOC_NAMES is set, deal the FRESH pool to EXACTLY those hand-picked BDEs
+    # (run the GAds pool with a few first, then add the rest). The allowlist is DEFINITIVE — it overrides
+    # the non-calling exclusion, so a normally non-calling BDM explicitly chosen for the pilot (e.g. Ben)
+    # still gets a GAds worklist. Empty allowlist = every calling BDE (post-roll-out).
+    if pilot_only and allow:
+        return [b for b in active if (b or "").strip().lower() in set(allow)]
     exclude = set()
     raw = getattr(settings, "non_calling_names", "") if settings is not None else ""
     for n in (raw or "").split(","):
         n = n.strip().lower()
         if n:
             exclude.add(n)
-    res = [b for b in active_bdes(pool) if (b or "").strip().lower() not in exclude]
-    # Pilot mode: when CALENDAR_ALLOC_NAMES is set, deal the FRESH pool to ONLY those BDEs (run the GAds
-    # pool with one BDE first, then add the rest). Empty = every calling BDE. Follow-ups ignore this.
-    allow = [a.strip().lower() for a in getattr(settings, "calendar_alloc_bdes", None) or []] if settings else []
-    if pilot_only and allow:
-        res = [b for b in res if (b or "").strip().lower() in set(allow)]
-    return res
+    return [b for b in active if (b or "").strip().lower() not in exclude]
 
 
 def _pick_next_bde(roster: list[str], last_bde: str | None, counts: dict[str, int],

@@ -581,6 +581,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         u = getattr(request.state, "user", None) or {}
         return u.get("role") == "bde" and u.get("bde_name") in settings.private_bdes
 
+    def _is_pilot_bde_viewer(request: Request) -> bool:
+        """True when the viewer is a BDE on the GAds-pool PILOT (CALENDAR_ALLOC_NAMES — e.g. Mohit,
+        Alfred, Ben). They work the WHOLE confirmed-Google-Ads pool, so the prospect/call ACL lets
+        them open any pool prospect (not just ones they personally dialled), matching their calendar
+        and next-call queue which surface the pool."""
+        u = getattr(request.state, "user", None) or {}
+        return u.get("role") == "bde" and u.get("bde_name") in settings.calendar_alloc_bdes
+
     def _mask_bde(request: Request, name, ext=None):
         """For an isolated BDE, hide colleagues' identities: show 'BDE <ext>' instead of their real name
         (their own name is left intact). No-op for everyone else."""
@@ -2412,7 +2420,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _deny_if_hidden(request, call.get("bde_name"))   # a private BDE's call is admin/own-only
         # A BDE may open any call to a prospect they can access (they dialled it OR it's assigned to
         # them) — the rotation hand-off, consistent with the prospect page (which lists every call).
-        if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
+        # A GAds-pool pilot BDE (Mohit/Alfred/Ben) may open any pool call (they work the whole pool).
+        if (_is_bde(request) and not _is_pilot_bde_viewer(request)
+                and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number"))):
             raise HTTPException(403, "not your call")
         call["bde_name"] = _mask_bde(request, call.get("bde_name"), call.get("bde_extension"))  # isolated BDE: hide colleagues
         call["started_at"] = str(call["started_at"]) if call["started_at"] else None
@@ -2682,8 +2692,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         call = rows[0]
         _deny_if_hidden(request, call.get("bde_name"))   # a private BDE's recording is admin/own-only
         # Same rotation-handoff rule as the call page: a rep may hear any call to a prospect they can
-        # access (dialled it OR assigned to them), not only calls they personally made.
-        if _is_bde(request) and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number")):
+        # access (dialled it OR assigned to them), not only calls they personally made. A GAds-pool
+        # pilot BDE (Mohit/Alfred/Ben) may hear any pool call — they work the whole pool.
+        if (_is_bde(request) and not _is_pilot_bde_viewer(request)
+                and not _bde_access_ok(_scoped_bde(request, None), call.get("dest_number"))):
             raise HTTPException(403, "not your call")
         if not call.get("recording_id"):
             raise HTTPException(404, "no recording for this call")
@@ -3032,7 +3044,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # rotation), even before they've dialled it. Without the assignment path a rep can't open the
         # very prospect they've been told to call next (reported: 385185715 assigned to Bharat but
         # first called by Syed/Alfred → Bharat got a 403 on his own worklist prospect).
-        if _is_bde(request):
+        # A GAds-pool PILOT BDE (Mohit / Alfred / Ben) works the WHOLE confirmed-Google-Ads pool — their
+        # next-call queue, calendar and pipeline all surface pool prospects they haven't personally
+        # dialled yet — so they must be able to OPEN any of them. Only a NON-pilot BDE is restricted to
+        # prospects they've called or that are assigned to them.
+        if _is_bde(request) and not _is_pilot_bde_viewer(request):
             own = _scoped_bde(request, None)
             allowed = any((c.get("bde_name") or c.get("bde_extension")) == own for c in calls)
             if not allowed:
