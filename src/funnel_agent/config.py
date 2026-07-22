@@ -232,7 +232,9 @@ class Settings(BaseSettings):
     # PLUS fresh confirmed-ads prospects to top up. The allocator fills the remainder with fresh,
     # fully-enriched, value×90-day-performance-matched prospects. 0 disables the allocator.
     fresh_alloc_enabled: bool = True
-    bde_daily_call_target: int = 200
+    # Whole daily worklist per BDE = follow-ups (callbacks/recalls/retries/reached) FIRST, then fresh
+    # tops up to this number. Pilot go-live target is 75/day (was 200); override with BDE_DAILY_CALL_TARGET.
+    bde_daily_call_target: int = 75
     # Restrict every calling-worklist allocator (fresh / retry / reached + the agency rotation) to ONLY
     # these BDEs when set — used to pilot the GAds calendar & pool with one BDE before rolling out to the
     # whole team. Empty = allocate to every calling BDE (normal behaviour). CSV of canonical names.

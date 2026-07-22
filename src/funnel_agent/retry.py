@@ -30,6 +30,14 @@ _ENSURE_INDEX = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_retry "
     "ON calendar_events (dest_number) WHERE type='retry' AND status='pending'")
 
+# A do_not_contact flag is only a HARD "stop calling" when we actually spoke to a real person who asked
+# us to stop. A GATEKEEPER's brush-off ("not interested", "she's not here today") is routinely mis-flagged
+# as do_not_contact by the classifier, so it is NOT treated as a hard DNC — those prospects stay retryable
+# with a fresh voice/line (the whole premise of the retry engine). MUST match cancel_stale_followups so the
+# gather and the canceller agree — otherwise a soft-flagged prospect is scheduled then cancelled every cycle
+# (a create/cancel thrash that silently deletes thousands of next-moves).
+_HARD_DNC = "(cl.do_not_contact IS TRUE AND COALESCE(cl.call_outcome,'') <> 'gatekeeper')"
+
 # confirmed-Google-Ads phone numbers (last-9) — the calling universe.
 _GADS_D9 = (
     "SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) "
@@ -60,6 +68,7 @@ def _gather_sql(gads_only: bool) -> str:
              bool_or(cl.pipeline_stage='p5')                                AS ever_booked,
              bool_or(cl.pipeline_stage IN ('p1','p3') OR cl.rpc_connect IS TRUE) AS ever_engaged,
              bool_or(cl.pipeline='pipeline2_existing_agency')               AS ever_agency,
+             bool_or({_HARD_DNC})                                          AS ever_dnc,
              max(c.started_at)                                             AS last_attempt,
              (array_agg(COALESCE(c.bde_name,c.bde_extension) ORDER BY c.started_at DESC)
                 FILTER (WHERE COALESCE(c.bde_name,c.bde_extension) IS NOT NULL))[1] AS last_bde,
@@ -78,6 +87,7 @@ def _gather_sql(gads_only: bool) -> str:
       AND COALESCE(a.ever_booked,false)=false
       AND COALESCE(a.ever_engaged,false)=false
       AND COALESCE(a.ever_agency,false)=false
+      AND COALESCE(a.ever_dnc,false)=false
       AND a.attempts < %(maxatt)s{gads}
     """
 
@@ -95,6 +105,7 @@ def reached_no_next_sql(gads_only: bool) -> str:
              bool_or(cl.pipeline_stage='p5')                                 AS ever_booked,
              bool_or(cl.pipeline_stage IN ('p1','p3'))                       AS ever_callback,
              bool_or(cl.pipeline='pipeline2_existing_agency')                AS ever_agency,
+             bool_or({_HARD_DNC})                                            AS ever_dnc,
              -- any signal the prospect wants further contact (interested) -> reserved for the ORIGINAL
              -- BDE, never handed to the pilot BDE. A CALLBACK REQUEST counts as interested (they asked
              -- us to call back), so a callback-agreed prospect stays with the BDE who earned it.
@@ -119,7 +130,8 @@ def reached_no_next_sql(gads_only: bool) -> str:
       AND COALESCE(a.ever_dm,false)=true
       AND COALESCE(a.ever_booked,false)=false
       AND COALESCE(a.ever_callback,false)=false
-      AND COALESCE(a.ever_agency,false)=false{gads}
+      AND COALESCE(a.ever_agency,false)=false
+      AND COALESCE(a.ever_dnc,false)=false{gads}
     """
 
 
@@ -247,11 +259,20 @@ class _DayCap:
         return None
 
 
-def _pending_dest9s(pool: ConnectionPool, ev_type: str) -> set:
-    """dest9 of prospects that already have an open event of this type (skip → don't double-schedule)."""
-    return {r["d9"] for r in _fetch(pool,
-        "SELECT DISTINCT right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
-        "FROM calendar_events WHERE type=%s AND status='pending'", (ev_type,)) if r.get("d9")}
+def _pending_dest9s(pool: ConnectionPool, ev_type: str, *, recent_done_days: int = 0) -> set:
+    """dest9 of prospects that already have an OPEN event of this type (skip → don't double-schedule).
+    When recent_done_days>0, ALSO skip prospects whose event of this type was marked DONE within that many
+    days — so a BDE marking a call done doesn't instantly re-spawn the same follow-up before its cadence
+    (the 'it reappears right after I tick it off' bug)."""
+    sql = ("SELECT DISTINCT right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
+           "FROM calendar_events WHERE type=%s AND (status='pending'")
+    params: list = [ev_type]
+    if recent_done_days > 0:
+        sql += (" OR (status='done' AND COALESCE(start_at, created_at) "
+                ">= current_date - make_interval(days => %s))")
+        params.append(int(recent_done_days))
+    sql += ")"
+    return {r["d9"] for r in _fetch(pool, sql, tuple(params)) if r.get("d9")}
 
 
 def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
@@ -287,7 +308,7 @@ def schedule_retry_calls(pool: ConnectionPool, settings: Settings) -> dict:
     cap = _DayCap(pool, getattr(settings, "bde_daily_call_target", 200),
                   tz, getattr(settings, "fresh_alloc_horizon_days", 1))
     today = now.date()
-    already = _pending_dest9s(pool, "retry")             # skip prospects that already have an open retry
+    already = _pending_dest9s(pool, "retry", recent_done_days=cadence)   # skip open OR just-completed retries
     rows = _fetch(pool, _gather_sql(gads_only), {"maxatt": maxatt})[:limit]
     rows.sort(key=lambda r: r.get("last_attempt") or now)  # oldest-overdue first claim the day's slots
     hour_map = _prospect_hour_map(pool, tz, [r.get("d9") for r in rows])
@@ -357,7 +378,7 @@ def schedule_reached_calls(pool: ConnectionPool, settings: Settings) -> dict:
     cap = _DayCap(pool, getattr(settings, "bde_daily_call_target", 200),
                   tz, getattr(settings, "fresh_alloc_horizon_days", 1))
     today = now.date()
-    already = _pending_dest9s(pool, "reached_call")
+    already = _pending_dest9s(pool, "reached_call", recent_done_days=cadence)
     rows = _fetch(pool, reached_no_next_sql(gads_only))
     rows.sort(key=lambda r: r.get("last_attempt") or now)   # oldest-overdue first
     hour_map = _prospect_hour_map(pool, tz, [r.get("d9") for r in rows])

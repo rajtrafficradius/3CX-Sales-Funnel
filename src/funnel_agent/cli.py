@@ -764,6 +764,14 @@ def refresh(
             cancel_stale_followups(ana)
         except Exception as exc:
             log.warning("cancel_stale_followups_failed", error=str(exc)[:160])
+        # De-duplicate: keep ONE open auto event per prospect (a lingering cold retry + a newer
+        # reached_call, or a stale fresh_call left after the number was dialled, otherwise show the
+        # same company two/three times). Runs AFTER all allocators so the winner is the latest picture.
+        try:
+            from .calendar import dedupe_pending_followups
+            dedupe_pending_followups(ana)
+        except Exception as exc:
+            log.warning("dedupe_pending_followups_failed", error=str(exc)[:160])
         # Housekeeping: hard-delete stale cancelled events so the recall engine's per-cycle
         # cancellations don't accumulate into the hundreds of thousands and flood the calendar.
         try:

@@ -182,9 +182,14 @@ def list_events(pool: ConnectionPool, start: str, end: str, bde_name: str | None
 
 def cancel_stale_followups(pool: ConnectionPool) -> int:
     """Cancel pending AUTO chase events (callback / retry / reached / recall / rpc_retry) for a prospect
-    who is now BOOKED (a firm meeting that still stands) or Do-Not-Contact — we don't keep chasing a
+    who is now BOOKED (a firm meeting that still stands) or a HARD Do-Not-Contact — we don't keep chasing a
     booked or dead lead. This cleans up a follow-up that was scheduled BEFORE the prospect converted
-    (e.g. a callback that drove the booking, then lingered). Meetings themselves are never cancelled."""
+    (e.g. a callback that drove the booking, then lingered). Meetings themselves are never cancelled.
+
+    IMPORTANT: the do_not_contact test MUST match retry._HARD_DNC (gatekeeper brush-offs, which the
+    classifier over-flags as DNC, are NOT hard DNC). If it doesn't, the retry/reached gathers keep
+    re-scheduling a soft-flagged prospect that this then cancels — a per-cycle create/cancel thrash that
+    silently deletes thousands of legitimate next-moves each day."""
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE calendar_events e SET status='cancelled' "
@@ -195,10 +200,61 @@ def cancel_stale_followups(pool: ConnectionPool) -> int:
             "       AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) "
             "         = right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) "
             "       AND ( (cl.meeting_booked IS TRUE AND COALESCE(cl.booking_status,'') <> 'cancelled_or_declined') "
-            "             OR COALESCE(cl.do_not_contact, false) IS TRUE ))")
+            "             OR (COALESCE(cl.do_not_contact,false) IS TRUE "
+            "                 AND COALESCE(cl.call_outcome,'') <> 'gatekeeper') ))")
         n = cur.rowcount
         conn.commit()
     return n
+
+
+def dedupe_pending_followups(pool: ConnectionPool) -> int:
+    """Enforce ONE pending AUTO event per prospect (dest9). A prospect can otherwise accumulate several
+    open events at once — e.g. an old cold `retry` that lingers after we later reach the decision-maker
+    and add a `reached_call`, or a stale `fresh_call` left over after the number was dialled — so the
+    same company shows up two or three times on the board. Keep the single highest-priority open event
+    (callback > reached_call > recall > rpc_retry > retry > fresh_call) and cancel the rest. Idempotent."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "WITH ranked AS ("
+            "  SELECT id, row_number() OVER ("
+            "     PARTITION BY right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) "
+            "     ORDER BY CASE type WHEN 'callback' THEN 1 WHEN 'reached_call' THEN 2 WHEN 'recall' THEN 3 "
+            "                        WHEN 'rpc_retry' THEN 4 WHEN 'retry' THEN 5 WHEN 'fresh_call' THEN 6 "
+            "                        ELSE 7 END, start_at ASC, id ASC) AS rn "
+            "  FROM calendar_events "
+            "  WHERE status='pending' AND created_by='auto' "
+            "    AND type IN ('callback','reached_call','recall','rpc_retry','retry','fresh_call') "
+            "    AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) <> '') "
+            "UPDATE calendar_events SET status='cancelled' "
+            "WHERE id IN (SELECT id FROM ranked WHERE rn > 1)")
+        n = cur.rowcount
+        conn.commit()
+    return n
+
+
+def append_note(pool: ConnectionPool, eid: int, note: str, author: str, *,
+                done: bool = False, restrict_bde: str | None = None) -> bool:
+    """Append a BDE's free-text note to an event (stamped with author + Melbourne time) and, optionally,
+    mark the event done in the SAME action — so a rep can tick a call off WITH a comment on what happened.
+    The note is added under the event's existing notes so it never clobbers the scheduler's reasoning."""
+    note = (note or "").strip()
+    if not note and not done:
+        return False
+    where = "id = %s" + (" AND bde_name = %s" if restrict_bde else "")
+    tail = (eid,) if not restrict_bde else (eid, restrict_bde)
+    line = None
+    if note:
+        stamp = datetime.now(ZoneInfo("Australia/Melbourne")).strftime("%-d %b %-I:%M %p")
+        line = f"\n📝 {author} · {stamp}: {note}"
+    with pool.connection() as conn, conn.cursor() as cur:
+        if line:
+            cur.execute(f"UPDATE calendar_events SET notes = COALESCE(notes,'') || %s WHERE {where}",
+                        (line, *tail))
+        if done:
+            cur.execute(f"UPDATE calendar_events SET status='done' WHERE {where}", tail)
+        n = cur.rowcount
+        conn.commit()
+    return bool(n)
 
 
 def purge_cancelled(pool: ConnectionPool, older_than_days: int = 3) -> int:

@@ -4318,6 +4318,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                      restrict_bde=_scoped_bde(request, None) if _is_bde(request) else None)
         return JSONResponse({"ok": ok})
 
+    @app.post("/api/calendar/{eid}/note")
+    async def calendar_note(request: Request, eid: int) -> JSONResponse:
+        """Append a rep's note to an event and (optionally) mark it done in the same action — so a call
+        can be ticked off WITH a comment on what happened. A BDE may only annotate their own events."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            raise HTTPException(403, "read-only")
+        from ..calendar import append_note
+        b = await request.json()
+        author = u.get("bde_name") or u.get("name") or u.get("email") or "user"
+        ok = await run_in_threadpool(
+            append_note, pool, eid, b.get("note") or "", author,
+            done=bool(b.get("done")),
+            restrict_bde=_scoped_bde(request, None) if _is_bde(request) else None)
+        return JSONResponse({"ok": ok})
+
     @app.post("/api/calendar/{eid}/delete")
     async def calendar_delete(request: Request, eid: int) -> JSONResponse:
         u = getattr(request.state, "user", None) or {}

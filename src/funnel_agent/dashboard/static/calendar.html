@@ -469,6 +469,8 @@ async function addEvent(ds){
   await load();
 }
 async function toggleDone(id,st){ await jpost(`/api/calendar/${id}/update`,{status: st==='done'?'pending':'done'}); await load(); }
+async function saveNote(id,done){ const el=document.getElementById('evNote'); const t=(el&&el.value||'').trim(); if(!t&&!done)return;
+  await jpost(`/api/calendar/${id}/note`,{note:t,done}); closeEvent(); await load(); }
 async function del(id){ if(confirm('Delete this event?')){ await jpost(`/api/calendar/${id}/delete`,{}); await load(); } }
 async function editTime(id){ const t=prompt('New time (HH:MM)'); if(!t) return; const e=EVENTS.find(x=>x.id===id); if(!e)return; const ds=(e.start_at||'').slice(0,10); await jpost(`/api/calendar/${id}/update`,{start_at:`${ds}T${t}:00`}); await load(); }
 function move(n){ view=new Date(view.getFullYear(),view.getMonth()+n,1); load(); }
@@ -504,6 +506,13 @@ async function openEvent(id){
     const canWrite = ME.role!=='kiosk' && !(ME.role==='bde' && e.bde_name && e.bde_name!==ME.bde_name);
     const openBtn = d.prospect_key ? `<a class="btn-primary" href="/prospect/${encodeURIComponent(d.prospect_key)}" style="text-decoration:none">Open prospect page →</a>` : '';
     const acts = canWrite ? `<button onclick="toggleDone(${id},'${e.status}');closeEvent()">${e.status==='done'?'↺ Reopen':'✓ Mark done'}</button><button onclick="closeEvent();editTime(${id})">🕑 Reschedule</button><button onclick="closeEvent();del(${id})">🗑 Delete</button>` : '';
+    // rep's own call notes (lines the BDE added via "Save note") shown as a thread, newest last.
+    const userNotes = notes.split('\n').map(s=>s.trim()).filter(l=>l.startsWith('📝'));
+    const notesThread = userNotes.length ? `<div class="subh">🗒️ Call notes</div><div class="evnotes">${userNotes.map(l=>esc(l.replace(/^📝\s*/,''))).join('<br>')}</div>` : '';
+    // add-a-note + mark-done-with-comment: a rep ticks the call off WITH what happened on it.
+    const noteBox = canWrite ? `<div class="subh" style="margin-top:14px">📝 Add a note</div>
+      <textarea id="evNote" rows="2" placeholder="What happened on this call — e.g. left voicemail, gatekeeper blocked, book Tue…" style="width:100%;box-sizing:border-box;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r1);padding:8px 10px;font:inherit;font-size:var(--t-cap);resize:vertical"></textarea>
+      <div class="evactions" style="margin-top:8px"><button onclick="saveNote(${id},false)">Save note</button><button class="btn-primary" onclick="saveNote(${id},true)">✓ Mark done + save note</button></div>` : '';
     card.innerHTML=`
       <div class="evhead">
         <span class="etype ${e.type}">${TYPE_ICON[e.type]||''} ${esc(TYPE_LABEL[e.type]||e.type||'')}</span>
@@ -522,8 +531,10 @@ async function openEvent(id){
       ${moveBox}
       ${plan}
       ${reasonBox}
+      ${notesThread}
       ${missedBox}
-      <div class="evactions">${openBtn}${acts}</div>`;
+      <div class="evactions">${openBtn}${acts}</div>
+      ${noteBox}`;
   }catch(err){ card.innerHTML=`<div style="padding:24px">Couldn't load this event (${esc(String(err.message||err))}). <button onclick="closeEvent()">Close</button></div>`; }
 }
 function closeEvent(){ $('#evModal').classList.remove('show'); }
