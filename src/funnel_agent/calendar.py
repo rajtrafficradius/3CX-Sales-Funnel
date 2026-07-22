@@ -186,10 +186,10 @@ def cancel_stale_followups(pool: ConnectionPool) -> int:
     booked or dead lead. This cleans up a follow-up that was scheduled BEFORE the prospect converted
     (e.g. a callback that drove the booking, then lingered). Meetings themselves are never cancelled.
 
-    IMPORTANT: the do_not_contact test MUST match retry._HARD_DNC (gatekeeper brush-offs, which the
-    classifier over-flags as DNC, are NOT hard DNC). If it doesn't, the retry/reached gathers keep
-    re-scheduling a soft-flagged prospect that this then cancels — a per-cycle create/cancel thrash that
-    silently deletes thousands of legitimate next-moves each day."""
+    IMPORTANT: the do_not_contact test MUST match retry._HARD_DNC (gatekeeper brush-offs AND voicemails,
+    which the classifier over-flags as DNC even though nobody asked us to stop, are NOT hard DNC). If it
+    doesn't, the retry/reached gathers keep re-scheduling a soft-flagged prospect that this then cancels —
+    a per-cycle create/cancel thrash that silently deletes thousands of legitimate next-moves each day."""
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE calendar_events e SET status='cancelled' "
@@ -201,7 +201,7 @@ def cancel_stale_followups(pool: ConnectionPool) -> int:
             "         = right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) "
             "       AND ( (cl.meeting_booked IS TRUE AND COALESCE(cl.booking_status,'') <> 'cancelled_or_declined') "
             "             OR (COALESCE(cl.do_not_contact,false) IS TRUE "
-            "                 AND COALESCE(cl.call_outcome,'') <> 'gatekeeper') ))")
+            "                 AND COALESCE(cl.call_outcome,'') NOT IN ('gatekeeper','voicemail')) ))")
         n = cur.rowcount
         conn.commit()
     return n

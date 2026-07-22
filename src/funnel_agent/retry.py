@@ -31,12 +31,14 @@ _ENSURE_INDEX = (
     "ON calendar_events (dest_number) WHERE type='retry' AND status='pending'")
 
 # A do_not_contact flag is only a HARD "stop calling" when we actually spoke to a real person who asked
-# us to stop. A GATEKEEPER's brush-off ("not interested", "she's not here today") is routinely mis-flagged
-# as do_not_contact by the classifier, so it is NOT treated as a hard DNC — those prospects stay retryable
-# with a fresh voice/line (the whole premise of the retry engine). MUST match cancel_stale_followups so the
-# gather and the canceller agree — otherwise a soft-flagged prospect is scheduled then cancelled every cycle
-# (a create/cancel thrash that silently deletes thousands of next-moves).
-_HARD_DNC = "(cl.do_not_contact IS TRUE AND COALESCE(cl.call_outcome,'') <> 'gatekeeper')"
+# us to stop. The classifier over-flags do_not_contact on calls where NOBODY asked: a GATEKEEPER's
+# brush-off ("not interested", "she's not here today") and a VOICEMAIL (nobody even spoke) are both
+# routinely mis-flagged. Those are NOT hard DNC — the prospect stays retryable with a fresh voice/line
+# (the whole premise of the retry engine). Only a real conversation / wrong-number / explicit refusal
+# counts. MUST match cancel_stale_followups so the gather and the canceller agree — otherwise a
+# soft-flagged prospect is scheduled then cancelled every cycle (a create/cancel thrash that silently
+# deletes thousands of next-moves).
+_HARD_DNC = "(cl.do_not_contact IS TRUE AND COALESCE(cl.call_outcome,'') NOT IN ('gatekeeper','voicemail'))"
 
 # confirmed-Google-Ads phone numbers (last-9) — the calling universe.
 _GADS_D9 = (
