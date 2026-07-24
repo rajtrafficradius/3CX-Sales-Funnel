@@ -137,6 +137,9 @@
     </div>
   </div>
 
+  <div id="flow" class="card" style="margin-bottom:18px;padding:16px 18px"></div>
+  <div id="system" style="margin-bottom:20px"></div>
+
   <div class="kpis" id="kpis"></div>
 
   <div id="coach" class="card" style="margin-bottom:18px;display:none"></div>
@@ -184,6 +187,31 @@ async function load(){
     $('progTxt').textContent=done+' of '+size+' worked';
     $('dueTxt').textContent=(s.due_now||0)+' due now · '+(s.daily_target||0)+'/day';
     $('campNote').textContent=s.autodial_enabled?'Lisa is dialing her calendar automatically within business hours.':'Calendar is loaded and ready. Auto-dial is OFF — set LISA_AUTODIAL_ENABLED=true to go live.';
+    // ---- how the calling system works (live flow strip) ----
+    const pb0=s.playbook||{}, qa0=s.qa||{};
+    const steps=[['🎯','Reserved pool',(s.pool_reserved||0)+' prospects'],['📋','Brief built',(s.briefs_built||0)+'/'+(s.pool_reserved||0)],
+      [s.autodial_enabled?'📞':'⏸','Dialer',s.autodial_enabled?'LIVE':'paused'],['🎙️','Lisa talks','open→insight→book→qualify'],
+      ['🗓️','System books','+ SMS on miss'],['🧠','Coach learns','won + lost']];
+    $('flow').innerHTML='<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px">How Lisa\'s calling system runs</div>'+
+      '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px">'+
+      steps.map((x,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line2);border-radius:999px;padding:5px 11px"><b style="font-size:14px">${x[0]}</b><span>${esc(x[1])}</span><span class="muted">${esc(x[2])}</span></span>`+(i<steps.length-1?'<span class="muted">→</span>':'')).join('')+'</div>';
+    // ---- Lisa's team: 6 roles, live status ----
+    const roles=[
+      ['🔎','Researcher · Brief-builder','AI','ok',(s.briefs_built||0)+'/'+(s.pool_reserved||0)+' briefs ready'],
+      ['🧠','Sales Coach · Trainer','AI',s.playbook_built_at?'ok':'idle',((pb0.do||[]).length)+' do · '+((pb0.avoid||[]).length)+' avoid · from '+(pb0._won||0)+'w/'+(pb0._lost||0)+'l'],
+      ['📋','QA · Compliance','AI','ok',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'],
+      [s.autodial_enabled?'📞':'⏸','Sales Manager · Dialer','AI',s.autodial_enabled?'live':'paused',(s.dialed_today||0)+'/'+(s.daily_target||0)+' today · '+(s.due_now||0)+' due'],
+      ['👤','Head of Sales','Human','you',(s.booked||0)+' booked to review'],
+      ['🤝','BDM closers','Human','human',(s.booked||0)+' meetings to close']];
+    const sc={ok:'var(--good)',live:'var(--good)',idle:'var(--warn)',paused:'var(--warn)',you:'var(--vio2)',human:'var(--muted)'};
+    const stx={ok:'Active',live:'LIVE',idle:'Idle',paused:'Paused',you:'You',human:'Human'};
+    $('system').innerHTML='<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px">Lisa\'s team — live status</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:12px">'+
+      roles.map(r=>`<div class="card" style="padding:13px 15px"><div style="display:flex;align-items:center;gap:9px">
+        <span style="font-size:18px">${r[0]}</span>
+        <div style="flex:1;min-width:0"><div style="font-weight:650;font-size:12.5px">${esc(r[1])}</div><div class="muted" style="font-size:10.5px">${r[2]==='AI'?'🤖 AI staff':'👋 Human'}</div></div>
+        <span style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;color:${sc[r[3]]};background:${sc[r[3]]}22;border:1px solid ${sc[r[3]]}55">${stx[r[3]]}</span>
+      </div><div class="muted" style="font-size:11.5px;margin-top:8px">${esc(r[4])}</div></div>`).join('')+'</div>';
     // KPIs
     const k=[['n','Calls',s.calls||0],['n','Completed',s.completed||0],['good','Booked',s.booked||0],
       ['good','Book rate',(s.book_rate||0)+'%'],['vio','Callbacks',s.callbacks||0],['warn','Missed',s.missed||0],

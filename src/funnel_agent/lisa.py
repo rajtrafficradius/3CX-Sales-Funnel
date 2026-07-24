@@ -997,6 +997,7 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
     # campaign / reserved-pool status for the console
     tz = "Australia/Melbourne"
     s["pool_reserved"] = _fetch(pool, "SELECT count(*) c FROM lisa_pool")[0]["c"]
+    s["briefs_built"] = _fetch(pool, "SELECT count(*) c FROM lisa_briefs")[0]["c"]
     s["pool_scheduled"] = _fetch(pool,
         "SELECT count(*) c FROM calendar_events WHERE bde_name='Lisa' AND status='pending' AND type='fresh_call'")[0]["c"]
     s["pool_dialed"] = _fetch(pool,
