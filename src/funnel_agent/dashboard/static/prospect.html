@@ -950,13 +950,20 @@ function overallSummary(d){
   const connectedYet = calls.some(c=>c.rpc_connect) || ro.ever_rpc;
   const plbl = (p5.pipeline&&PIPELBL[p5.pipeline])||null;
   const bde = m.assigned_bde || (ro.bdes&&ro.bdes[0]) || null;
+  // A BOOKED prospect is WON — it is NOT "assigned" for more outbound (it holds no calendar/queue slot).
+  // So never show the calling-assignment label on it; show who actually BOOKED it (the BDE on the booked
+  // call), not the first BDE who ever dialled. (Fixes a booked deal reading "assigned <first caller>".)
+  const booked = p5.pipeline==='p5' || calls.some(c=>c.meeting_booked && !c.meeting_confirmation);
+  let booker=null; for(let i=calls.length-1;i>=0;i--){ const c=calls[i]; if(c.meeting_booked && !c.meeting_confirmation){ booker=c.bde_name||c.bde_extension; break; } }
 
   // ---- headline status line ----
   const head=[
     `<b>${calls.length}</b> call${calls.length>1?'s':''}`,
     connectedYet?'<span style="color:var(--good)">✓ reached decision-maker</span>':'<span class="muted">not connected yet</span>',
-    plbl?`<span style="color:var(--txt-dim)">${esc(plbl)}</span>`:null,
-    bde?`<span class="muted">assigned ${esc(bde)}</span>`:'<span style="color:var(--warn)">unassigned</span>',
+    (plbl && !booked)?`<span style="color:var(--txt-dim)">${esc(plbl)}</span>`:null,
+    booked
+      ? `<span style="color:var(--good)">🏆 Booked${booker?' by '+esc(booker):''} — no further calls needed</span>`
+      : (bde?`<span class="muted">assigned ${esc(bde)}</span>`:'<span style="color:var(--warn)">unassigned</span>'),
   ].filter(Boolean).join('<span class="muted"> · </span>');
 
   // ---- KEY FACTS chips (derived across all calls) ----
