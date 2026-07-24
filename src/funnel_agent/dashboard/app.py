@@ -4344,4 +4344,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                      restrict_bde=_scoped_bde(request, None) if _is_bde(request) else None)
         return JSONResponse({"ok": ok})
 
+    # ------------------------------------------------------------------ #
+    # Lisa-1 — AI cold-caller subsystem. Console + funnel are ADMIN-ONLY (Raj/Vysakh); the post-call
+    # webhook is token-guarded (Retell posts to it, no session). Fully isolated from the 3CX funnel.
+    # ------------------------------------------------------------------ #
+    @app.get("/lisa", response_class=HTMLResponse)
+    def lisa_page(request: Request):
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            return RedirectResponse("/", status_code=302)
+        return HTMLResponse(_static("lisa.html"), headers=_NOCACHE)
+
+    @app.get("/api/lisa/summary")
+    def lisa_summary(request: Request, days: int = 30) -> JSONResponse:
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        return JSONResponse(jsonable_encoder(_lisa.summary(pool, days=days)))
+
+    @app.get("/api/lisa/calls")
+    def lisa_calls(request: Request, limit: int = 100) -> JSONResponse:
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        return JSONResponse(jsonable_encoder({"calls": _lisa.recent_calls(pool, limit=limit)}))
+
+    @app.post("/api/lisa/call")
+    async def lisa_start_call(request: Request) -> JSONResponse:
+        """Launch ONE Lisa call to a number (admin-only). Body: {to_number, dest9?, domain?, from_number?}."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        b = await request.json()
+        if not b.get("to_number"):
+            raise HTTPException(400, "to_number required")
+        r = await run_in_threadpool(
+            _lisa.start_call, pool, settings, to_number=b["to_number"],
+            dest9=b.get("dest9"), domain=b.get("domain"), from_number=b.get("from_number"))
+        return JSONResponse(jsonable_encoder(r))
+
+    @app.get("/api/lisa/brief")
+    def lisa_brief(request: Request, dest9: str | None = None, domain: str | None = None) -> JSONResponse:
+        """Preview the injected brief for a prospect (admin-only) — so you can see exactly what Lisa is
+        handed before any call. Nothing is dialed."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        return JSONResponse(jsonable_encoder(_lisa.build_brief(pool, settings, dest9=dest9, domain=domain)))
+
+    @app.post("/api/lisa/postcall")
+    async def lisa_postcall(request: Request) -> JSONResponse:
+        """Retell post-call webhook. Token-guarded (?token= must match LISA_WEBHOOK_TOKEN). Records the
+        outcome, books the agreed meeting server-side, and fires the minimal SMS on a missed call."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa as _lisa
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(400, "bad payload")
+        r = await run_in_threadpool(_lisa.handle_postcall, pool, settings, payload)
+        return JSONResponse(jsonable_encoder(r))
+
     return app

@@ -109,6 +109,17 @@ class Settings(BaseSettings):
     message_classify_days: int = 21  # only classify inbound SMS/chat within this recency window
     messages_enabled: bool = False   # gate the refresh loop's SMS capture+auto-booking (off until validated)
 
+    # --- Lisa-1: the AI cold-caller subsystem (Retell talk-only). Isolated from the 3CX/Aircall funnel. ---
+    retellai_api_key: str = ""
+    lisa_enabled: bool = False                    # master switch for outbound Lisa calls
+    lisa_agent_id: str = "agent_a2a482e7f3bc1fad2fde7360d3"
+    lisa_from_numbers: str = ""                   # CSV of Lisa's Retell-registered caller numbers (E.164)
+    lisa_session_minutes: int = 45               # length of the booked strategy session
+    lisa_webhook_token: str = ""                 # shared secret guarding /api/lisa/postcall
+    lisa_sms_enabled: bool = False               # send the minimal curiosity SMS on a missed call
+    twilio_account_sid: str = ""                 # for Lisa SMS (Twilio account behind her numbers)
+    twilio_auth_token: str = ""
+
     # --- DataForSEO (SEO metrics + Google Ads Transparency Center; PAID, pay-per-request) ---
     # Auto-enriched for Raghav $1-10M paid-ads-gated prospects; on-demand for everyone else.
     dataforseo_login: str = ""        # account email
@@ -330,6 +341,11 @@ class Settings(BaseSettings):
     def calendar_alloc_bdes(self) -> list[str]:
         """If non-empty, the ONLY BDEs the calling allocators deal a worklist to. See calendar_alloc_names."""
         return _csv(self.calendar_alloc_names)
+
+    @property
+    def lisa_numbers(self) -> list[str]:
+        """Lisa's Retell-registered caller numbers (E.164), rotated across calls. From LISA_FROM_NUMBERS."""
+        return _csv(self.lisa_from_numbers)
 
     @property
     def aircall_agents(self) -> list[str]:

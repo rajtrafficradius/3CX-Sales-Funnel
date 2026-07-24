@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>(function(){try{var t=localStorage.getItem("tr-theme-v2");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}catch(e){}})();</script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lisa · AI Cold-Caller</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
+    --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
+    --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
+    --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14);
+    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    --r1:8px; --r2:10px; --r3:12px;
+    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;-webkit-font-smoothing:antialiased}
+  header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:linear-gradient(180deg,#11161f,#0b0e14);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header a{color:var(--accent);text-decoration:none}
+  h1{font-size:18px;margin:0;letter-spacing:.2px}
+  .sub{color:var(--muted);font-size:12px}
+  main{max-width:1200px;margin:0 auto;padding:22px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;background:var(--chip);color:var(--txt-dim);border:1px solid var(--line)}
+  .pill.iso{background:rgba(91,140,255,.12);color:var(--accent);border-color:rgba(91,140,255,.3)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:6px 0 20px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:14px 16px;box-shadow:var(--elev2)}
+  .kpi .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .kpi .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+  .kpi.good .n{color:var(--good)} .kpi.warn .n{color:var(--warn)}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  input,button,select{font:inherit}
+  input[type=tel],input[type=text]{background:var(--panel2);border:1px solid var(--line2);color:var(--txt);border-radius:var(--r1);padding:8px 10px;min-width:190px}
+  button{background:var(--accent);color:#fff;border:none;border-radius:var(--r1);padding:8px 14px;cursor:pointer;font-weight:600}
+  button.ghost{background:var(--panel2);color:var(--txt-dim);border:1px solid var(--line2)}
+  button:disabled{opacity:.5;cursor:default}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev2);overflow:hidden}
+  .card h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);color:var(--txt-dim);text-transform:uppercase;letter-spacing:.5px}
+  .scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:820px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  th{color:var(--faint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:var(--panel)}
+  tr:hover td{background:var(--panel2)}
+  .oc{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line2);background:var(--chip)}
+  .oc.booked{background:rgba(74,222,128,.14);color:var(--good);border-color:rgba(74,222,128,.35)}
+  .oc.callback_requested{background:rgba(91,140,255,.14);color:var(--accent);border-color:rgba(91,140,255,.35)}
+  .oc.not_interested,.oc.do_not_call{background:rgba(248,113,113,.12);color:var(--bad);border-color:rgba(248,113,113,.3)}
+  .muted{color:var(--muted)} .mono{font-variant-numeric:tabular-nums}
+  .sumtxt{max-width:340px;color:var(--txt-dim)}
+  .ai{color:var(--warn);font-weight:600}
+  .empty{padding:34px;text-align:center;color:var(--muted)}
+  .note{font-size:11.5px;color:var(--faint);margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← Dashboard</a>
+  <div class="hdr-titles"><h1>🎙️ Lisa — AI Cold-Caller <span class="pill iso">isolated · admin only</span></h1>
+    <span class="sub">Digital Expo outbound · talk-only · booking handled by the system</span></div>
+  <div style="margin-left:auto"><select id="days" onchange="load()">
+    <option value="1">Today</option><option value="7">7 days</option>
+    <option value="30" selected>30 days</option><option value="90">90 days</option></select></div>
+</header>
+<main>
+  <div id="kpis" class="kpis"></div>
+
+  <div class="bar">
+    <input id="toNum" type="tel" placeholder="+61 4xx xxx xxx to call" />
+    <input id="toDom" type="text" placeholder="domain (optional)" />
+    <button id="callBtn" onclick="launch()">📞 Launch a Lisa call</button>
+    <button class="ghost" onclick="previewBrief()">👁 Preview brief</button>
+    <span id="launchMsg" class="muted"></span>
+  </div>
+
+  <div class="card">
+    <h2>Recent Lisa calls</h2>
+    <div class="scroll"><table id="tbl"><thead><tr>
+      <th>When</th><th>Prospect</th><th>Outcome</th><th>Booked for</th><th>Objection</th>
+      <th>Dur</th><th>Rec</th><th>Summary</th>
+    </tr></thead><tbody id="rows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody></table></div>
+  </div>
+  <div class="note">Brand spoken to prospects: <b>Digital Expo</b> (never “Traffic Radius”). Lisa is human-first
+    (admits she’s an AI only if directly asked). Missed calls get a minimal curiosity SMS — no company, no reason.
+    This page and all Lisa data are visible to Raj &amp; Vysakh only.</div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json();}
+async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
+function dur(ms){ms=+ms||0;const s=Math.round(ms/1000);return s<60?s+'s':Math.floor(s/60)+'m'+String(s%60).padStart(2,'0')}
+function money(c){return '$'+((+c||0)/100).toFixed(2)}
+
+async function load(){
+  const days=$('#days').value;
+  try{
+    const s=await jget('/api/lisa/summary?days='+days);
+    const k=[
+      ['n','Calls',s.calls||0,''],['n','Completed',s.completed||0,''],
+      ['good','Booked',s.booked||0,''],['good','Book rate',(s.book_rate||0)+'%',''],
+      ['n','Callbacks',s.callbacks||0,''],['warn','Missed',s.missed||0,''],
+      ['n','SMS sent',s.sms||0,''],['n','Asked if AI',s.asked_ai||0,''],
+      ['n','Talk time',dur(s.duration_ms),''],['n','Spend',money(s.cost_cents),''],
+    ];
+    $('#kpis').innerHTML=k.map(([c,l,n])=>`<div class="kpi ${c==='n'?'':c}"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join('');
+    const d=await jget('/api/lisa/calls?limit=150');
+    const rows=(d.calls||[]);
+    $('#rows').innerHTML = rows.length ? rows.map(c=>{
+      const oc=(c.call_outcome||c.status||'—');
+      const rec=c.recording_url?`<a href="${esc(c.recording_url)}" target="_blank">▶</a>`:'';
+      const when=(c.created_local||'').replace('T',' ').slice(0,16);
+      const booked=c.meeting_agreed?`<span class="oc booked">${esc(c.agreed_day_time||'agreed')}</span>`:(c.callback_when?`<span class="muted">cb: ${esc(c.callback_when)}</span>`:'');
+      return `<tr>
+        <td class="mono muted">${esc(when)}</td>
+        <td>${esc(c.prospect_name||'')}<div class="muted">${esc(c.company_name||c.domain||c.dest9||'')}</div></td>
+        <td><span class="oc ${esc(oc)}">${esc(oc)}</span>${c.asked_if_ai?' <span class="ai">· asked AI</span>':''}</td>
+        <td>${booked}</td>
+        <td class="muted">${esc(c.main_objection||'')}</td>
+        <td class="mono muted">${dur(c.duration_ms)}</td>
+        <td>${rec}</td>
+        <td class="sumtxt">${esc(c.call_summary||'')}</td></tr>`;
+    }).join('') : `<tr><td colspan="8" class="empty">No Lisa calls yet. Launch one above to test.</td></tr>`;
+  }catch(e){ $('#rows').innerHTML=`<tr><td colspan="8" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
+}
+async function launch(){
+  const to=$('#toNum').value.trim(); if(!to){$('#launchMsg').textContent='Enter a number';return;}
+  $('#callBtn').disabled=true; $('#launchMsg').textContent='Dialing…';
+  const r=await jpost('/api/lisa/call',{to_number:to,domain:$('#toDom').value.trim()||undefined});
+  $('#callBtn').disabled=false;
+  $('#launchMsg').textContent = r.call_id ? ('✓ started '+r.call_id) : ('✗ '+(r.error||'failed'));
+  setTimeout(load,1500);
+}
+async function previewBrief(){
+  const dom=$('#toDom').value.trim(); const to=$('#toNum').value.trim();
+  const q=dom?('domain='+encodeURIComponent(dom)):('dest9='+encodeURIComponent(to));
+  try{ const b=await jget('/api/lisa/brief?'+q);
+    alert('BRIEF Lisa would be given:\n\n'+Object.entries(b).map(([k,v])=>k+': '+v).join('\n\n'));
+  }catch(e){ alert('Could not build brief: '+(e.message||e)); }
+}
+load(); setInterval(load, 20000);
+</script>
+</body>
+</html>

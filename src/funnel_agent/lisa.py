@@ -1,0 +1,527 @@
+"""Lisa-1 — the AI cold-caller subsystem (talk-only architecture).
+
+Design (owner-confirmed): Lisa is a MOUTH, not a brain or hands. Everything she might need to say is
+pre-computed by the Brief-builder and injected as Retell dynamic variables BEFORE the call; everything she
+"does" (booking, SMS, recording the outcome) happens HERE, server-side, AFTER the call — so she can never
+hallucinate a fact she was handed or fumble a tool she doesn't have.
+
+This subsystem is deliberately ISOLATED from the 3CX/Aircall funnel:
+  • its own table `lisa_calls` (never mixed into `calls`), and
+  • admin-only endpoints (Raj/Vysakh),
+so Lisa's numbers never leak into team totals, the TV kiosk, or any BDE/BDM view.
+
+Brand safety: to a prospect the brand is ALWAYS "Digital Expo"; "Traffic Radius" is never spoken.
+Pieces:
+  build_brief()     -> the injected dynamic variables (real audit insight + context + objection lines)
+  start_call()      -> Retell create-phone-call with the brief; logs a pending lisa_calls row
+  handle_postcall() -> parse Retell's call_analyzed webhook; record outcome; book if agreed; SMS if missed
+"""
+from __future__ import annotations
+
+import base64
+import json
+import re
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from psycopg_pool import ConnectionPool
+
+from .config import Settings
+from .logging import get_logger
+
+log = get_logger(__name__)
+
+RETELL_BASE = "https://api.retellai.com"
+_TZ = "Australia/Melbourne"
+
+
+# --------------------------------------------------------------------------- #
+# schema
+# --------------------------------------------------------------------------- #
+def ensure_tables(pool: ConnectionPool) -> None:
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS lisa_calls ("
+            "  call_id text PRIMARY KEY,"
+            "  dest9 text, to_number text, from_number text,"
+            "  prospect_name text, company_name text, domain text, prospect_email text,"
+            "  status text DEFAULT 'pending',"           # pending -> ongoing -> ended -> analyzed
+            "  call_outcome text, meeting_agreed boolean DEFAULT false, agreed_day_time text,"
+            "  confirmed_email text, callback_when text, main_objection text,"
+            "  asked_if_ai boolean DEFAULT false, call_summary text,"
+            "  transcript text, recording_url text, duration_ms integer, cost_cents numeric,"
+            "  disconnect_reason text, booked_event_id integer, sms_sent boolean DEFAULT false,"
+            "  brief jsonb, started_at timestamptz DEFAULT now(), ended_at timestamptz,"
+            "  created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_calls_dest9 ON lisa_calls(dest9)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_calls_created ON lisa_calls(created_at)")
+        conn.commit()
+
+
+def _fetch(pool, sql, params=None):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(sql, params or ())
+        return cur.fetchall()
+
+
+def _d9(s: str | None) -> str:
+    return re.sub(r"[^0-9]", "", s or "")[-9:]
+
+
+# --------------------------------------------------------------------------- #
+# Brief-builder — the heart of talk-only: pre-compute everything Lisa will say
+# --------------------------------------------------------------------------- #
+def _money(v) -> str:
+    try:
+        v = float(v)
+    except Exception:
+        return ""
+    if v >= 1000:
+        return f"${round(v/1000):,}k"
+    return f"${int(v):,}"
+
+
+def _spoken_findings(audit: dict, niche: str) -> dict:
+    """Turn the audit model into 1-2 SPOKEN, curiosity-friendly insights + a plain proof point + the one
+    channel to lead with. Conversational, never a data dump — Lisa reads these as her own observation."""
+    niche = niche or "your industry"
+    running_ads = bool((audit.get("ads") or {}).get("running") or (audit.get("ads") or {}).get("count"))
+    opp = audit.get("opportunity") or {}
+    comps = audit.get("competitors") or []
+    top = comps[0] if comps else {}
+    gap = opp.get("gap_capturable") or opp.get("gap_value") or 0
+    quickwin = opp.get("quickwin_value") or 0
+
+    f1 = f2 = proof = ""
+    channel = "your online presence"
+    if running_ads and (gap or comps):
+        f1 = ("from what I'm seeing you're already paying for Google Ads — but there's a fair bit of the "
+              "free search demand, people actively looking for what you do, that seems to be landing on "
+              "competitors instead of you")
+        channel = "the free/organic side alongside your ads"
+        if top.get("domain"):
+            proof = (f"for instance {top.get('domain')} looks like it's pulling a good chunk of those "
+                     "searches in your space that you're not showing up for")
+        elif gap:
+            proof = f"there's roughly {_money(gap)} a month of that search demand within reach"
+    elif comps and (gap or top):
+        f1 = (f"a couple of your competitors seem to be showing up for searches your customers are "
+              f"actually typing in — and from what I can see, you're not on that page for a lot of them")
+        channel = "search / SEO"
+        if top.get("domain"):
+            proof = (f"{top.get('domain')} is one of the main ones capturing that demand")
+    elif quickwin:
+        f1 = ("you've actually got pages sitting just off the first page of Google for terms people search "
+              "a lot — really close to the top, which is usually the fastest win")
+        channel = "SEO quick-wins"
+        proof = f"there's around {_money(quickwin)} a month of traffic value sitting right there"
+    else:
+        # generic but niche-shaped fallback (used only if the audit has no strong signal)
+        f1 = (f"in {niche}, a lot of ready-to-buy demand comes through search — and often some of it slips "
+              "to competitors when the path from search to enquiry isn't clean")
+        channel = "search / SEO"
+
+    # a second, supporting insight only if it strengthens the same story
+    if running_ads and quickwin and "ads" in channel:
+        f2 = ("and there are a few pages already close to page one that a small push would lift, which "
+              "usually brings the cost-per-lead down on the paid side too")
+    elif comps and len(comps) > 1:
+        f2 = ""
+    return {"finding_1": f1, "finding_2": f2, "finding_proof": proof, "primary_channel": channel,
+            "competitor_hook": (top.get("domain") or "")}
+
+
+def _enrichment_signals(pool: ConnectionPool, domain: str) -> dict:
+    """Cheap, already-stored DataForSEO signals for a domain (no paid call): is it running Google Ads,
+    and how many live creatives. Available for the whole GAds pool even without a full SEO audit."""
+    r = _fetch(pool, "SELECT dataforseo df FROM enrichment WHERE domain=%s", (domain,))
+    if not r or not r[0].get("df"):
+        return {}
+    df = r[0]["df"] or {}
+    ads = df.get("ads") or {}
+    return {"running_ads": str(df.get("running_google_ads")).lower() == "true",
+            "ads_count": ads.get("count")}
+
+
+def _ads_finding(sig: dict, niche: str) -> dict:
+    """A REAL, specific hook for a confirmed Google-Ads advertiser (true for the whole pilot pool): they're
+    paying for clicks, and the free/organic demand next to those ads is the gap worth a look."""
+    n = sig.get("ads_count")
+    f1 = ("from what I can see you're actively running Google Ads — so you're clearly investing in getting "
+          "found, which is great; the thing I noticed is there's usually a good slice of free, organic "
+          "search demand sitting right next to those ads that tends to leak across to competitors")
+    proof = (f"you've actually got around {n} ad creatives live right now, so you're definitely serious "
+             "about it" if n else "")
+    return {"finding_1": f1, "finding_2": "", "finding_proof": proof,
+            "primary_channel": "the free/organic side next to your ads", "competitor_hook": ""}
+
+
+def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None = None,
+                domain: str | None = None) -> dict:
+    """Compute the Retell dynamic variables for one prospect: identity + the REAL audit insight + prior
+    context + tailored objection lines. Everything Lisa is allowed to say, handed to her up front.
+    Returns a flat {str: str} map (Retell dynamic variables must be strings)."""
+    dest9 = _d9(dest9) if dest9 else None
+    b: dict = {}
+
+    # --- identity from our own call intelligence / master / companies ---
+    row = None
+    if dest9:
+        r = _fetch(pool,
+            "SELECT (array_agg(cl.prospect_company ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.prospect_company,'') IS NOT NULL))[1] company, "
+            "       (array_agg(cl.prospect_website ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.prospect_website,'') IS NOT NULL))[1] website, "
+            "       (array_agg(cl.prospect_contact_name ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.prospect_contact_name,'') IS NOT NULL))[1] contact, "
+            "       (array_agg(cl.prospect_industry ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.prospect_industry,'') IS NOT NULL))[1] industry, "
+            "       (array_agg(cl.prospect_email ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.prospect_email,'') IS NOT NULL))[1] email, "
+            "       bool_or(cl.rpc_connect) ever_rpc, "
+            "       (array_agg(cl.problem_summary ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.problem_summary,'') IS NOT NULL))[1] problem "
+            "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            "WHERE c.in_scope AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%s",
+            (dest9,))
+        row = r[0] if r else None
+    if row and not domain:
+        domain = _clean_domain(row.get("website"))
+    if not domain and dest9:
+        pr = _fetch(pool, "SELECT domain, business_name FROM prospect_pipeline WHERE dest9=%s AND NULLIF(domain,'') IS NOT NULL LIMIT 1", (dest9,))
+        if pr:
+            domain = pr[0].get("domain")
+
+    company = (row or {}).get("company") or ""
+    niche = (row or {}).get("industry") or ""
+    email = (row or {}).get("email") or ""
+    contact = (row or {}).get("contact") or ""
+
+    # company/industry from companies table if missing
+    if domain and (not company or not niche):
+        cr = _fetch(pool, "SELECT business_name, industry FROM companies WHERE domain=%s LIMIT 1", (domain,))
+        if cr:
+            company = company or (cr[0].get("business_name") or "")
+            niche = niche or (cr[0].get("industry") or "")
+
+    # --- the REAL insight, best source first: full SEO audit > confirmed-Google-Ads signal > niche generic ---
+    findings = None
+    if domain:
+        try:
+            from .audit import assemble_audit
+            audit = assemble_audit(pool, domain)
+            _opp = (audit or {}).get("opportunity") or {}
+            # only use the full-audit narrative when there's SUBSTANTIVE SEO data (competitors / capturable
+            # gap / quick-wins). A thin audit that only knows "running ads" routes to the ads finding below.
+            if audit and (audit.get("competitors") or _opp.get("quickwin_value") or _opp.get("gap_capturable")):
+                niche = niche or ((audit.get("business") or {}).get("industry") or "")
+                findings = _spoken_findings(audit, niche)
+        except Exception as exc:
+            log.warning("lisa_brief_audit_failed", domain=domain, error=str(exc)[:160])
+    if (not findings or not findings.get("finding_1")) and domain:
+        sig = _enrichment_signals(pool, domain)
+        if sig.get("running_ads"):
+            findings = _ads_finding(sig, niche)
+    if not findings or not findings.get("finding_1"):
+        findings = _spoken_findings({}, niche)
+
+    # --- prior-contact hook (warm) ---
+    prior = ""
+    if row and row.get("ever_rpc"):
+        prior = ("I think one of our team may have had a quick chat with someone there a little while back")
+
+    # --- known context so Lisa never re-asks ---
+    known = ""
+    if row and row.get("problem"):
+        known = f"Earlier they mentioned: {row['problem']}"
+
+    # --- tailored objection lines (defaults; can be upgraded from winning transcripts later) ---
+    obj_agency = ("Good — makes sense. The session's completely independent, so it either confirms your "
+                  "agency's nailing it, or gives you sharper questions to ask them. Either way you come out ahead.")
+    obj_price = ("The session and the audit are free — pricing only comes up later and it's tailored, which "
+                 "is exactly what the fifteen minutes is for.")
+    obj_email = ("Happy to send something — so it's actually useful and not just another email you ignore, "
+                 "what's the one thing about your online enquiries you'd most want answered?")
+
+    b.update({
+        "prospect_name": contact or "",
+        "company_name": company or "",
+        "prospect_website": domain or ((row or {}).get("website") or ""),
+        "prospect_niche": niche or "",
+        "prospect_email": email or "",
+        "decision_maker": contact or "",
+        "finding_1": findings["finding_1"],
+        "finding_2": findings["finding_2"],
+        "finding_proof": findings["finding_proof"],
+        "primary_channel": findings["primary_channel"],
+        "competitor_hook": findings["competitor_hook"],
+        "known_context": known,
+        "prior_contact_line": prior,
+        "objection_agency": obj_agency,
+        "objection_price": obj_price,
+        "objection_email": obj_email,
+    })
+    # Retell wants strings; drop Nones
+    return {k: ("" if v is None else str(v)) for k, v in b.items()}
+
+
+def _clean_domain(url: str | None) -> str | None:
+    if not url:
+        return None
+    u = re.sub(r"^https?://", "", url.strip().lower()).split("/")[0]
+    u = u[4:] if u.startswith("www.") else u
+    return u or None
+
+
+# --------------------------------------------------------------------------- #
+# Retell API
+# --------------------------------------------------------------------------- #
+def _retell(settings: Settings, method: str, path: str, body: dict | None = None) -> dict:
+    key = getattr(settings, "retellai_api_key", "") or ""
+    req = urllib.request.Request(
+        f"{RETELL_BASE}/{path}",
+        data=(json.dumps(body).encode() if body is not None else None), method=method,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    resp = urllib.request.urlopen(req, timeout=45)
+    t = resp.read().decode()
+    return json.loads(t) if t.strip() else {}
+
+
+def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest9: str | None = None,
+               domain: str | None = None, from_number: str | None = None) -> dict:
+    """Kick off ONE Lisa call: build the brief, create the Retell phone call with the brief injected as
+    dynamic variables, and log a pending lisa_calls row. Returns {call_id,...} or {error}."""
+    ensure_tables(pool)
+    if not getattr(settings, "lisa_enabled", False):
+        return {"error": "lisa disabled (set LISA_ENABLED=true)"}
+    froms = list(getattr(settings, "lisa_numbers", []) or [])
+    frm = from_number or (froms[0] if froms else None)
+    if not frm:
+        return {"error": "no LISA_FROM_NUMBERS configured"}
+    d9 = _d9(dest9 or to_number)
+    brief = build_brief(pool, settings, dest9=d9, domain=domain)
+    body = {
+        "from_number": frm,
+        "to_number": to_number,
+        "override_agent_id": getattr(settings, "lisa_agent_id", "") or None,
+        "retell_llm_dynamic_variables": brief,
+        "metadata": {"dest9": d9, "domain": brief.get("prospect_website") or (domain or "")},
+    }
+    try:
+        r = _retell(settings, "POST", "create-phone-call", body)
+    except Exception as exc:
+        log.warning("lisa_start_call_failed", to=to_number, error=str(exc)[:200])
+        return {"error": str(exc)[:200]}
+    cid = r.get("call_id")
+    if cid:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO lisa_calls (call_id, dest9, to_number, from_number, prospect_name, "
+                "  company_name, domain, prospect_email, status, brief) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'ongoing',%s) ON CONFLICT (call_id) DO NOTHING",
+                (cid, d9, to_number, frm, brief.get("prospect_name"), brief.get("company_name"),
+                 brief.get("prospect_website"), brief.get("prospect_email"), json.dumps(brief)))
+            conn.commit()
+    return r
+
+
+# --------------------------------------------------------------------------- #
+# Post-call webhook handling — record outcome, book if agreed, SMS if missed
+# --------------------------------------------------------------------------- #
+def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> dict:
+    """Process a Retell webhook. On call_analyzed we persist the structured outcome, book the agreed
+    meeting server-side, and (if we only reached voicemail / no-answer) fire the minimal curiosity SMS.
+    Idempotent per call_id."""
+    ensure_tables(pool)
+    event = payload.get("event") or ""
+    call = payload.get("call") or payload
+    cid = call.get("call_id")
+    if not cid:
+        return {"ok": False, "error": "no call_id"}
+
+    analysis = call.get("call_analysis") or {}
+    cad = analysis.get("custom_analysis_data") or {}
+    meta = call.get("metadata") or {}
+    dyn = call.get("retell_llm_dynamic_variables") or {}
+    d9 = _d9(meta.get("dest9") or call.get("to_number"))
+    outcome = (cad.get("call_outcome") or "").strip().lower()
+    meeting_agreed = bool(cad.get("meeting_agreed"))
+    cost_cents = None
+    try:
+        cost_cents = (call.get("call_cost") or {}).get("combined_cost")
+    except Exception:
+        cost_cents = None
+
+    status = {"call_started": "ongoing", "call_ended": "ended", "call_analyzed": "analyzed"}.get(event, "ended")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lisa_calls (call_id, dest9, to_number, from_number, prospect_name, company_name, "
+            "  domain, prospect_email, status, call_outcome, meeting_agreed, agreed_day_time, "
+            "  confirmed_email, callback_when, main_objection, asked_if_ai, call_summary, transcript, "
+            "  recording_url, duration_ms, cost_cents, disconnect_reason, brief, ended_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),now()) "
+            "ON CONFLICT (call_id) DO UPDATE SET status=EXCLUDED.status, call_outcome=EXCLUDED.call_outcome, "
+            "  meeting_agreed=EXCLUDED.meeting_agreed, agreed_day_time=EXCLUDED.agreed_day_time, "
+            "  confirmed_email=EXCLUDED.confirmed_email, callback_when=EXCLUDED.callback_when, "
+            "  main_objection=EXCLUDED.main_objection, asked_if_ai=EXCLUDED.asked_if_ai, "
+            "  call_summary=EXCLUDED.call_summary, transcript=EXCLUDED.transcript, "
+            "  recording_url=EXCLUDED.recording_url, duration_ms=EXCLUDED.duration_ms, "
+            "  cost_cents=COALESCE(EXCLUDED.cost_cents, lisa_calls.cost_cents), "
+            "  disconnect_reason=EXCLUDED.disconnect_reason, ended_at=now(), updated_at=now()",
+            (cid, d9, call.get("to_number"), call.get("from_number"),
+             dyn.get("prospect_name"), dyn.get("company_name"), dyn.get("prospect_website"),
+             cad.get("confirmed_email") or dyn.get("prospect_email"), status, outcome, meeting_agreed,
+             cad.get("agreed_day_time"), cad.get("confirmed_email"), cad.get("callback_when"),
+             cad.get("main_objection"), bool(cad.get("asked_if_ai")), cad.get("call_summary"),
+             call.get("transcript"), call.get("recording_url"),
+             call.get("duration_ms") or call.get("call_length_ms"), cost_cents,
+             call.get("disconnection_reason"), json.dumps(dyn) if dyn else None))
+        conn.commit()
+
+    result = {"ok": True, "call_id": cid, "event": event, "outcome": outcome}
+    if event != "call_analyzed":
+        return result  # actions only run on the final analyzed event
+
+    # 1) book the agreed meeting server-side (Lisa never booked it herself)
+    if meeting_agreed and cad.get("agreed_day_time"):
+        try:
+            eid = _book_meeting(pool, settings, cid, dyn, cad, d9)
+            result["booked_event_id"] = eid
+        except Exception as exc:
+            log.warning("lisa_book_failed", call_id=cid, error=str(exc)[:160])
+
+    # 2) minimal curiosity SMS if we didn't reach a real conversation
+    if outcome in ("no_answer", "voicemail", "") and not meeting_agreed:
+        try:
+            if _send_followup_sms(pool, settings, cid, call.get("to_number"), dyn.get("prospect_name")):
+                result["sms_sent"] = True
+        except Exception as exc:
+            log.warning("lisa_sms_failed", call_id=cid, error=str(exc)[:160])
+    return result
+
+
+def _book_meeting(pool: ConnectionPool, settings: Settings, call_id: str, dyn: dict, cad: dict,
+                  d9: str) -> int | None:
+    """Create the agreed strategy session as a calendar event on Lisa's (isolated) calendar. We store the
+    agreed time verbatim + a best-effort parsed datetime; a human strategist confirms the exact slot."""
+    from .calendar import create_event
+    when_txt = cad.get("agreed_day_time") or "time TBC"
+    start = _parse_when(when_txt) or (datetime.now(ZoneInfo(_TZ)) + timedelta(days=1)).replace(
+        hour=10, minute=0, second=0, microsecond=0)
+    who = dyn.get("company_name") or dyn.get("prospect_name") or "prospect"
+    email = cad.get("confirmed_email") or dyn.get("prospect_email") or ""
+    notes = (f"🎙️ Booked by Lisa (AI) — Digital Expo strategy session.\n"
+             f"Agreed time (prospect's words): {when_txt}\n"
+             f"Contact: {dyn.get('prospect_name') or ''}  ·  {email}\n"
+             f"Company: {who}  ·  {dyn.get('prospect_website') or ''}\n\n"
+             f"Call summary: {cad.get('call_summary') or ''}")
+    eid = create_event(
+        pool, bde_name="Lisa", type="meeting",
+        title=f"📅 Strategy session (Lisa-booked): {who}",
+        start_at=start, end_at=start + timedelta(minutes=int(getattr(settings, "lisa_session_minutes", 45))),
+        notes=notes, dest_number=None, created_by="lisa")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE lisa_calls SET booked_event_id=%s, updated_at=now() WHERE call_id=%s", (eid, call_id))
+        conn.commit()
+    return eid
+
+
+_WD = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6,
+       "mon": 0, "tue": 1, "tues": 1, "wed": 2, "thu": 3, "thur": 3, "thurs": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def _parse_when(txt: str) -> datetime | None:
+    """Best-effort parse of a spoken time like 'Tuesday 2pm', 'tomorrow 10am', 'Friday afternoon' into a
+    future Melbourne datetime. Never authoritative — the human strategist confirms — just seeds the slot."""
+    if not txt:
+        return None
+    t = txt.lower().strip()
+    now = datetime.now(ZoneInfo(_TZ))
+    hour = 10
+    m = re.search(r"(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)", t)
+    if m:
+        hour = int(m.group(1)) % 12 + (12 if m.group(3) == "pm" else 0)
+    elif "afternoon" in t:
+        hour = 14
+    elif "morning" in t:
+        hour = 10
+    elif "evening" in t:
+        hour = 17
+    day = None
+    if "tomorrow" in t:
+        day = now.date() + timedelta(days=1)
+    elif "today" in t:
+        day = now.date()
+    else:
+        for name, wd in _WD.items():
+            if re.search(rf"\b{name}\b", t):
+                ahead = (wd - now.weekday()) % 7
+                ahead = ahead or 7
+                day = now.date() + timedelta(days=ahead)
+                break
+    if not day:
+        day = now.date() + timedelta(days=1)
+    return datetime(day.year, day.month, day.day, min(max(hour, 8), 18), 0, tzinfo=ZoneInfo(_TZ))
+
+
+def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, to_number: str | None,
+                       name: str | None) -> bool:
+    """Fire the MINIMAL curiosity SMS on a missed call — first name + callback ask, NOTHING that reveals
+    a company or a sales reason (details kill the callback). Sent from Lisa's own number via Twilio.
+    Gated: needs LISA_SMS_ENABLED + Twilio creds; no-ops (logged) otherwise so nothing breaks."""
+    if not to_number or not getattr(settings, "lisa_sms_enabled", False):
+        return False
+    sid = getattr(settings, "twilio_account_sid", "") or ""
+    token = getattr(settings, "twilio_auth_token", "") or ""
+    froms = list(getattr(settings, "lisa_numbers", []) or [])
+    frm = froms[0] if froms else ""
+    if not (sid and token and frm):
+        log.info("lisa_sms_skipped_no_creds", call_id=call_id)
+        return False
+    first = (name or "").strip().split(" ")[0] if name else ""
+    body = (f"Hi {first}, it's Lisa — tried to reach you, could you give me a quick call back when you get "
+            "a sec? 🙂") if first else "Hi, it's Lisa — tried to reach you, could you give me a quick call back? 🙂"
+    data = urllib.parse.urlencode({"To": to_number, "From": frm, "Body": body}).encode()
+    auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
+    req = urllib.request.Request(
+        f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json", data=data, method="POST",
+        headers={"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"})
+    urllib.request.urlopen(req, timeout=20)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE lisa_calls SET sms_sent=true, updated_at=now() WHERE call_id=%s", (call_id,))
+        conn.commit()
+    return True
+
+
+# --------------------------------------------------------------------------- #
+# reporting (admin-only console + funnel)
+# --------------------------------------------------------------------------- #
+def summary(pool: ConnectionPool, days: int = 30) -> dict:
+    ensure_tables(pool)
+    r = _fetch(pool,
+        "SELECT count(*) calls, "
+        "  count(*) FILTER (WHERE status='analyzed') completed, "
+        "  count(*) FILTER (WHERE meeting_agreed) booked, "
+        "  count(*) FILTER (WHERE call_outcome='callback_requested') callbacks, "
+        "  count(*) FILTER (WHERE call_outcome IN ('no_answer','voicemail')) missed, "
+        "  count(*) FILTER (WHERE sms_sent) sms, "
+        "  count(*) FILTER (WHERE asked_if_ai) asked_ai, "
+        "  COALESCE(sum(cost_cents),0) cost_cents, "
+        "  COALESCE(sum(duration_ms),0) duration_ms "
+        "FROM lisa_calls WHERE created_at >= now() - make_interval(days => %s)", (days,))
+    s = dict(r[0]) if r else {}
+    calls = s.get("calls") or 0
+    s["book_rate"] = round(100 * (s.get("booked") or 0) / calls, 1) if calls else 0.0
+    return s
+
+
+def recent_calls(pool: ConnectionPool, limit: int = 100) -> list[dict]:
+    ensure_tables(pool)
+    return _fetch(pool,
+        "SELECT call_id, dest9, prospect_name, company_name, domain, status, call_outcome, "
+        "  meeting_agreed, agreed_day_time, callback_when, main_objection, asked_if_ai, call_summary, "
+        "  recording_url, duration_ms, cost_cents, booked_event_id, sms_sent, "
+        "  (created_at AT TIME ZONE 'Australia/Melbourne') AS created_local "
+        "FROM lisa_calls ORDER BY created_at DESC LIMIT %s", (limit,))
