@@ -96,6 +96,25 @@ def _d9(s: str | None) -> str:
     return re.sub(r"[^0-9]", "", s or "")[-9:]
 
 
+def _e164_au(num: str | None) -> str:
+    """Normalise a phone number to E.164 (Retell requires it — it 400s on '0433…' or spaced numbers).
+    Handles the AU formats people actually type: '0433 136 022' → '+61433136022', '61…' → '+61…',
+    a bare 9-digit mobile → '+61…'. Anything already starting with '+' is kept."""
+    s = (num or "").strip()
+    if s.startswith("+"):
+        return "+" + re.sub(r"[^0-9]", "", s)
+    d = re.sub(r"[^0-9]", "", s)
+    if not d:
+        return ""
+    if d.startswith("0"):
+        return "+61" + d[1:]
+    if d.startswith("61"):
+        return "+" + d
+    if len(d) == 9:              # mobile/local without the leading 0
+        return "+61" + d
+    return "+" + d
+
+
 # --------------------------------------------------------------------------- #
 # Brief-builder — the heart of talk-only: pre-compute everything Lisa will say
 # --------------------------------------------------------------------------- #
@@ -385,6 +404,9 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
     frm = from_number or (froms[0] if froms else None)
     if not frm:
         return {"error": "no LISA_FROM_NUMBERS configured"}
+    to_number = _e164_au(to_number)            # Retell 400s on non-E.164 (e.g. "0433…") — normalise first
+    if len(re.sub(r"[^0-9]", "", to_number)) < 8:
+        return {"error": f"invalid phone number: {to_number or '(empty)'}"}
     d9 = _d9(dest9 or to_number)
     brief = get_brief(pool, settings, dest9=d9, domain=domain)   # saved per-prospect brief (builds once if missing)
     body = {
