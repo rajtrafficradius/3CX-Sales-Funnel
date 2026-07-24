@@ -427,6 +427,7 @@ boot();
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/lisa','/lisa','Lisa (AI caller)','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
   var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
@@ -439,7 +440,7 @@ boot();
   var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
-    if(m.role==='admin'){var el=document.querySelector('.tr-rail .tr-admin'); if(el) el.style.display='';}
+    if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;
     var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);

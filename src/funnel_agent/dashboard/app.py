@@ -4350,11 +4350,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Lisa-1 — AI cold-caller subsystem. Console + funnel are ADMIN-ONLY (Raj/Vysakh); the post-call
     # webhook is token-guarded (Retell posts to it, no session). Fully isolated from the 3CX funnel.
     # ------------------------------------------------------------------ #
+    _LISA_NOACCESS = (
+        "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>No access · Lisa</title>"
+        "<div style=\"min-height:100vh;display:flex;align-items:center;justify-content:center;"
+        "background:#0a0d13;color:#e8edf5;font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;text-align:center;padding:24px\">"
+        "<div style='max-width:420px'><div style='font-size:44px;margin-bottom:10px'>🔒</div>"
+        "<h1 style='font-size:20px;margin:0 0 8px'>No access</h1>"
+        "<p style='color:#8b96a6;margin:0 0 18px'>The Lisa console is restricted to authorised accounts only.</p>"
+        "<a href='/' style='color:#5b8cff;text-decoration:none'>← Back to dashboard</a></div></div>")
+
     @app.get("/lisa", response_class=HTMLResponse)
     def lisa_page(request: Request):
         u = getattr(request.state, "user", None) or {}
         if not is_admin(u):
-            return RedirectResponse("/", status_code=302)
+            # Explicit "no access" (not a silent redirect) so a non-admin who opens /lisa is told plainly.
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
         return HTMLResponse(_static("lisa.html"), headers=_NOCACHE)
 
     @app.get("/api/lisa/summary")
