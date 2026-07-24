@@ -63,6 +63,12 @@ def ensure_tables(pool: ConnectionPool) -> None:
             "CREATE TABLE IF NOT EXISTS lisa_pool ("
             "  dest9 text PRIMARY KEY, dest_number text, domain text, company text, phone text,"
             "  reserved_at timestamptz DEFAULT now())")
+        # Per-PROSPECT brief store — every variable Lisa will be handed, saved against the prospect (dest9)
+        # so it's persistent, reviewable, and injected at call time (not recomputed each call).
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS lisa_briefs ("
+            "  dest9 text PRIMARY KEY, domain text, prospect_name text, company_name text, brief jsonb,"
+            "  built_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())")
         conn.commit()
     ensure_lisa_agent(pool)
 
@@ -179,16 +185,19 @@ def _ads_finding(sig: dict, niche: str) -> dict:
 
 
 def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None = None,
-                domain: str | None = None) -> dict:
+                domain: str | None = None, skip_history: bool = False) -> dict:
     """Compute the Retell dynamic variables for one prospect: identity + the REAL audit insight + prior
     context + tailored objection lines. Everything Lisa is allowed to say, handed to her up front.
-    Returns a flat {str: str} map (Retell dynamic variables must be strings)."""
+    Returns a flat {str: str} map (Retell dynamic variables must be strings).
+
+    skip_history=True skips the (un-indexed) calls-history scan — use it for FRESH pool prospects (never
+    called → no history to summarise), which keeps briefing the whole 500 fast."""
     dest9 = _d9(dest9) if dest9 else None
     b: dict = {}
 
     # --- identity from our own call intelligence / master / companies ---
     row = None
-    if dest9:
+    if dest9 and not skip_history:
         r = _fetch(pool,
             "SELECT (array_agg(cl.prospect_company ORDER BY c.started_at DESC) "
             "          FILTER (WHERE NULLIF(cl.prospect_company,'') IS NOT NULL))[1] company, "
@@ -209,7 +218,7 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         row = r[0] if r else None
     if row and not domain:
         domain = _clean_domain(row.get("website"))
-    if not domain and dest9:
+    if not domain and dest9 and not skip_history:
         pr = _fetch(pool, "SELECT domain, business_name FROM prospect_pipeline WHERE dest9=%s AND NULLIF(domain,'') IS NOT NULL LIMIT 1", (dest9,))
         if pr:
             domain = pr[0].get("domain")
@@ -230,14 +239,17 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     findings = None
     if domain:
         try:
-            from .audit import assemble_audit
-            audit = assemble_audit(pool, domain)
-            _opp = (audit or {}).get("opportunity") or {}
-            # only use the full-audit narrative when there's SUBSTANTIVE SEO data (competitors / capturable
-            # gap / quick-wins). A thin audit that only knows "running ads" routes to the ads finding below.
-            if audit and (audit.get("competitors") or _opp.get("quickwin_value") or _opp.get("gap_capturable")):
-                niche = niche or ((audit.get("business") or {}).get("industry") or "")
-                findings = _spoken_findings(audit, niche)
+            # CHEAP gate: only run the (heavy) full audit for domains that actually hold competitor SEO
+            # data — otherwise skip straight to the fast running-ads finding. Keeps brief-building quick
+            # across the whole 500 (the full audit exists for only a handful of domains).
+            has_ca = _fetch(pool, "SELECT (dataforseo ? 'competitor_audit') a FROM enrichment WHERE domain=%s", (domain,))
+            if has_ca and has_ca[0].get("a"):
+                from .audit import assemble_audit
+                audit = assemble_audit(pool, domain)
+                _opp = (audit or {}).get("opportunity") or {}
+                if audit and (audit.get("competitors") or _opp.get("quickwin_value") or _opp.get("gap_capturable")):
+                    niche = niche or ((audit.get("business") or {}).get("industry") or "")
+                    findings = _spoken_findings(audit, niche)
         except Exception as exc:
             log.warning("lisa_brief_audit_failed", domain=domain, error=str(exc)[:160])
     if (not findings or not findings.get("finding_1")) and domain:
@@ -287,6 +299,52 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     return {k: ("" if v is None else str(v)) for k, v in b.items()}
 
 
+def build_and_store_brief(pool: ConnectionPool, settings: Settings, *, dest9: str, domain: str | None = None,
+                          skip_history: bool = False) -> dict:
+    """Compute a prospect's brief and PERSIST it against that prospect (dest9) in lisa_briefs, so every
+    variable Lisa will say is saved in the DB, reviewable, and reused at call time. Returns the brief."""
+    ensure_tables(pool)
+    d9 = _d9(dest9)
+    brief = build_brief(pool, settings, dest9=d9, domain=domain, skip_history=skip_history)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lisa_briefs (dest9, domain, prospect_name, company_name, brief, built_at, updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,now(),now()) "
+            "ON CONFLICT (dest9) DO UPDATE SET domain=EXCLUDED.domain, prospect_name=EXCLUDED.prospect_name, "
+            "  company_name=EXCLUDED.company_name, brief=EXCLUDED.brief, updated_at=now()",
+            (d9, brief.get("prospect_website"), brief.get("prospect_name"), brief.get("company_name"),
+             json.dumps(brief)))
+        conn.commit()
+    return brief
+
+
+def get_brief(pool: ConnectionPool, settings: Settings, *, dest9: str, domain: str | None = None) -> dict:
+    """Return a prospect's SAVED brief (building + storing it once if missing)."""
+    d9 = _d9(dest9)
+    r = _fetch(pool, "SELECT brief FROM lisa_briefs WHERE dest9=%s", (d9,))
+    if r and r[0].get("brief"):
+        return r[0]["brief"]
+    return build_and_store_brief(pool, settings, dest9=d9, domain=domain)
+
+
+def refresh_lisa_briefs(pool: ConnectionPool, settings: Settings, *, limit: int = 200) -> dict:
+    """Pre-compute + save a brief for every reserved-pool prospect that doesn't have one yet (a batch per
+    cycle so it never blocks the loop). After a few cycles all 500 have their variables saved in the DB."""
+    ensure_tables(pool)
+    rows = _fetch(pool,
+        "SELECT lp.dest9, lp.domain FROM lisa_pool lp "
+        "LEFT JOIN lisa_briefs b ON b.dest9=lp.dest9 WHERE b.dest9 IS NULL LIMIT %s", (limit,))
+    n = 0
+    for r in rows:
+        try:
+            # pool prospects are FRESH (never called) → skip the un-indexed calls-history scan.
+            build_and_store_brief(pool, settings, dest9=r["dest9"], domain=r.get("domain"), skip_history=True)
+            n += 1
+        except Exception as exc:
+            log.warning("lisa_brief_store_failed", dest9=r.get("dest9"), error=str(exc)[:120])
+    return {"built": n, "remaining_without_brief": max(0, len(rows) - n)}
+
+
 def _clean_domain(url: str | None) -> str | None:
     if not url:
         return None
@@ -328,7 +386,7 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
     if not frm:
         return {"error": "no LISA_FROM_NUMBERS configured"}
     d9 = _d9(dest9 or to_number)
-    brief = build_brief(pool, settings, dest9=d9, domain=domain)
+    brief = get_brief(pool, settings, dest9=d9, domain=domain)   # saved per-prospect brief (builds once if missing)
     body = {
         "from_number": frm,
         "to_number": to_number,

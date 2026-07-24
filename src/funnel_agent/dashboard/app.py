@@ -4407,7 +4407,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not is_admin(getattr(request.state, "user", None) or {}):
             raise HTTPException(403, "admin only")
         from .. import lisa as _lisa
-        return JSONResponse(jsonable_encoder(_lisa.build_brief(pool, settings, dest9=dest9, domain=domain)))
+        # show the SAVED per-prospect brief when we have a dest9; else a live-built preview by domain.
+        b = (_lisa.get_brief(pool, settings, dest9=dest9, domain=domain) if dest9
+             else _lisa.build_brief(pool, settings, dest9=None, domain=domain))
+        return JSONResponse(jsonable_encoder(b))
 
     @app.post("/api/lisa/webcall")
     async def lisa_webcall(request: Request) -> JSONResponse:

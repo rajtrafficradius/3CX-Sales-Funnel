@@ -788,6 +788,8 @@ def refresh(
                 _lisa.ensure_tables(ana)
                 _lisa.reserve_lisa_pool(ana, settings)
                 _lisa.schedule_lisa_fresh(ana, settings)
+                _lisa.refresh_lisa_briefs(ana, settings)   # save each prospect's variables to the DB
+
             except Exception as exc:
                 log.warning("lisa_calendar_failed", error=str(exc)[:160])
         # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
