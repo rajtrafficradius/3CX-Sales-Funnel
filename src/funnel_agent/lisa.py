@@ -57,6 +57,9 @@ def ensure_tables(pool: ConnectionPool) -> None:
             "  created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_calls_dest9 ON lisa_calls(dest9)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_calls_created ON lisa_calls(created_at)")
+        # post-booking qualification answers (current setup / spend / goals / challenge / timeline / …)
+        # captured from the call so the strategist walks in prepped + we qualify internally.
+        cur.execute("ALTER TABLE lisa_calls ADD COLUMN IF NOT EXISTS qualification jsonb")
         # Lisa's EXCLUSIVE reserved prospect pool — these 500 are hers alone; the human fresh allocator
         # skips any dest9 that appears here, so no double-calling.
         cur.execute(
@@ -487,6 +490,13 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
              call.get("disconnection_reason"), json.dumps(dyn) if dyn else None))
         conn.commit()
 
+    # save the full custom-analysis payload (incl. the post-booking qualification answers) for the strategist.
+    if cad:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE lisa_calls SET qualification=%s, updated_at=now() WHERE call_id=%s",
+                        (json.dumps(cad), cid))
+            conn.commit()
+
     result = {"ok": True, "call_id": cid, "event": event, "outcome": outcome}
     if event != "call_analyzed":
         return result  # actions only run on the final analyzed event
@@ -884,6 +894,6 @@ def recent_calls(pool: ConnectionPool, limit: int = 100) -> list[dict]:
     return _fetch(pool,
         "SELECT call_id, dest9, prospect_name, company_name, domain, status, call_outcome, "
         "  meeting_agreed, agreed_day_time, callback_when, main_objection, asked_if_ai, call_summary, "
-        "  recording_url, duration_ms, cost_cents, booked_event_id, sms_sent, "
+        "  recording_url, duration_ms, cost_cents, booked_event_id, sms_sent, qualification, "
         "  (created_at AT TIME ZONE 'Australia/Melbourne') AS created_local "
         "FROM lisa_calls ORDER BY created_at DESC LIMIT %s", (limit,))

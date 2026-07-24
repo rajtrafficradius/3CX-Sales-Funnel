@@ -193,12 +193,15 @@ async function load(){
       const rec=c.recording_url?`<a href="${esc(c.recording_url)}" target="_blank">▶ play</a>`:'';
       const when=(c.created_local||'').replace('T',' ').slice(0,16);
       const booked=c.meeting_agreed?`<span class="oc booked">${esc(c.agreed_day_time||'agreed')}</span>`:(c.callback_when?`<span class="muted">cb: ${esc(c.callback_when)}</span>`:'');
+      const q=c.qualification||{};
+      const qbits=[q.q_current_setup&&('🛠 '+q.q_current_setup), q.q_monthly_spend&&('💰 '+q.q_monthly_spend), q.q_biggest_challenge&&('⚠️ '+q.q_biggest_challenge), q.q_goals&&('🎯 '+q.q_goals), q.q_timeline&&('⏱ '+q.q_timeline), q.q_other_decision_makers&&('👥 '+q.q_other_decision_makers)].filter(Boolean);
+      const qhtml=qbits.length?`<div class="muted" style="margin-top:5px;font-size:11px;line-height:1.5">${qbits.map(esc).join(' · ')}</div>`:'';
       return `<tr><td class="mono muted">${esc(when)}</td>
         <td><b>${esc(c.prospect_name||'—')}</b><div class="muted">${esc(c.company_name||c.domain||c.dest9||'')}</div></td>
         <td><span class="oc ${esc(oc)}">${esc(String(oc).replace(/_/g,' '))}</span>${c.asked_if_ai?' <span class="ai">asked AI</span>':''}</td>
         <td>${booked}</td><td class="muted">${esc(c.main_objection||'')}</td>
         <td class="mono muted">${dur(c.duration_ms)}</td><td>${rec}</td>
-        <td class="sumtxt">${esc(c.call_summary||'')}</td></tr>`;
+        <td class="sumtxt">${esc(c.call_summary||'')}${qhtml}</td></tr>`;
     }).join(''):`<tr><td colspan="8" class="empty">No calls yet — tap the orb to talk to Lisa, or launch a one-off call.</td></tr>`;
   }catch(e){ $('rows').innerHTML=`<tr><td colspan="8" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
 }
