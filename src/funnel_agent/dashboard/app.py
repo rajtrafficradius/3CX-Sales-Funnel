@@ -4373,7 +4373,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not is_admin(getattr(request.state, "user", None) or {}):
             raise HTTPException(403, "admin only")
         from .. import lisa as _lisa
-        return JSONResponse(jsonable_encoder(_lisa.summary(pool, days=days)))
+        s = _lisa.summary(pool, days=days)
+        s.update({"autodial_enabled": settings.lisa_autodial_enabled, "lisa_enabled": settings.lisa_enabled,
+                  "daily_target": settings.lisa_daily_target, "pool_size": settings.lisa_pool_size,
+                  "sms_enabled": settings.lisa_sms_enabled})
+        return JSONResponse(jsonable_encoder(s))
 
     @app.get("/api/lisa/calls")
     def lisa_calls(request: Request, limit: int = 100) -> JSONResponse:
@@ -4404,6 +4408,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(403, "admin only")
         from .. import lisa as _lisa
         return JSONResponse(jsonable_encoder(_lisa.build_brief(pool, settings, dest9=dest9, domain=domain)))
+
+    @app.post("/api/lisa/webcall")
+    async def lisa_webcall(request: Request) -> JSONResponse:
+        """Create a Retell WEB call so anyone with console access can talk to Lisa live in the browser
+        (the 'Voice Orb'). Returns an access token the page feeds to the Retell web SDK."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        try:
+            r = await run_in_threadpool(_lisa.create_web_call, settings)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)[:200]}, status_code=502)
+        return JSONResponse({"access_token": r.get("access_token"), "call_id": r.get("call_id")})
 
     @app.post("/api/lisa/postcall")
     async def lisa_postcall(request: Request) -> JSONResponse:

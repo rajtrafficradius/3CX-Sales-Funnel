@@ -111,6 +111,8 @@ def _fresh_candidates(pool: ConnectionPool, limit: int) -> list[dict]:
                          WHERE ce.status='pending' AND {d9_ce} = c.d9)
         AND NOT EXISTS (SELECT 1 FROM prospect_pipeline pp
                          WHERE {d9_pp} = c.d9 AND COALESCE(pp.dnd,false))
+        -- Lisa (the AI BDE) has an EXCLUSIVE reserved pool; the human worklist never touches her 500.
+        AND NOT EXISTS (SELECT 1 FROM lisa_pool lp WHERE lp.dest9 = c.d9)
       ORDER BY c.d9, CASE WHEN c.revenue_musd BETWEEN 1 AND 50 THEN 0
                           WHEN c.revenue_musd IS NULL THEN 1 ELSE 2 END,
                c.revenue_musd DESC NULLS LAST

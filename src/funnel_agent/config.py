@@ -119,6 +119,15 @@ class Settings(BaseSettings):
     lisa_sms_enabled: bool = False               # send the minimal curiosity SMS on a missed call
     twilio_account_sid: str = ""                 # for Lisa SMS (Twilio account behind her numbers)
     twilio_auth_token: str = ""
+    # Lisa is an isolated AI BDE with her OWN reserved pool + calendar + auto-dialer.
+    lisa_pool_size: int = 500                    # how many GAds-confirmed prospects to reserve for Lisa
+    lisa_daily_target: int = 50                  # calls Lisa places per working day
+    lisa_retry_cadence_days: int = 3             # days between retry attempts on a no-answer
+    lisa_retry_max_attempts: int = 4             # stop retrying after this many attempts
+    lisa_call_window_start: int = 9              # only auto-dial between these local hours (business hours)
+    lisa_call_window_end: int = 17
+    lisa_max_concurrent: int = 3                 # max simultaneous Lisa calls the dialer launches per run
+    lisa_autodial_enabled: bool = False          # MASTER GATE — no call fires until this is true
 
     # --- DataForSEO (SEO metrics + Google Ads Transparency Center; PAID, pay-per-request) ---
     # Auto-enriched for Raghav $1-10M paid-ads-gated prospects; on-demand for everyone else.

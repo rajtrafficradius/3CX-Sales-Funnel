@@ -779,6 +779,17 @@ def refresh(
             purge_cancelled(ana, older_than_days=3)
         except Exception as exc:
             log.warning("purge_cancelled_failed", error=str(exc)[:160])
+        # Lisa (isolated AI BDE): ensure her tables/agent exist, keep her EXCLUSIVE 500-pool reserved and
+        # her calendar filled, THEN (only if LISA_AUTODIAL_ENABLED) place her due calls. ensure_tables must
+        # run before fresh_alloc, which excludes lisa_pool so the human worklist never touches her 500.
+        if settings.lisa_enabled:
+            try:
+                from . import lisa as _lisa
+                _lisa.ensure_tables(ana)
+                _lisa.reserve_lisa_pool(ana, settings)
+                _lisa.schedule_lisa_fresh(ana, settings)
+            except Exception as exc:
+                log.warning("lisa_calendar_failed", error=str(exc)[:160])
         # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
         # 90-day performance). The ONLY cold pool on the calendar; resolves once a number is dialled.
         fx = {"scheduled": 0}
@@ -789,6 +800,13 @@ def refresh(
             except Exception as exc:
                 fx = {"error": str(exc)[:80]}
                 log.warning("schedule_fresh_calls_failed", error=str(exc)[:160])
+        # Lisa auto-dialer — GATED by LISA_AUTODIAL_ENABLED (off by default). Places her due calendar calls.
+        if settings.lisa_enabled:
+            try:
+                from . import lisa as _lisa
+                _lisa.run_lisa_autodial(ana, settings)
+            except Exception as exc:
+                log.warning("lisa_autodial_failed", error=str(exc)[:160])
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}
         if settings.website_scan_per_cycle > 0:

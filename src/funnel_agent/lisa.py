@@ -57,6 +57,26 @@ def ensure_tables(pool: ConnectionPool) -> None:
             "  created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_calls_dest9 ON lisa_calls(dest9)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_calls_created ON lisa_calls(created_at)")
+        # Lisa's EXCLUSIVE reserved prospect pool — these 500 are hers alone; the human fresh allocator
+        # skips any dest9 that appears here, so no double-calling.
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS lisa_pool ("
+            "  dest9 text PRIMARY KEY, dest_number text, domain text, company text, phone text,"
+            "  reserved_at timestamptz DEFAULT now())")
+        conn.commit()
+    ensure_lisa_agent(pool)
+
+
+def ensure_lisa_agent(pool: ConnectionPool) -> None:
+    """Register Lisa as an in-scope, active BDE so the leaderboard / funnel / reports treat her like any
+    other rep (isolation to admins is handled separately by PRIVATE_BDE_NAMES). Idempotent; re-asserted
+    each cycle so a 3CX roster-sync can't drop her (she isn't a 3CX agent)."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO bde_agents (extension, bde_name, email, group_name, role_name, in_scope, active, "
+            "  synced_at) VALUES ('LISA','Lisa','lisa@trafficradius.com.au','AI','AI BDE',true,true,now()) "
+            "ON CONFLICT (extension) DO UPDATE SET bde_name='Lisa', in_scope=true, active=true, "
+            "  role_name='AI BDE'")
         conn.commit()
 
 
@@ -289,6 +309,13 @@ def _retell(settings: Settings, method: str, path: str, body: dict | None = None
     return json.loads(t) if t.strip() else {}
 
 
+def create_web_call(settings: Settings) -> dict:
+    """Create a Retell WEB call (browser voice test / 'Voice Orb') for the Lisa agent. Returns
+    {access_token, call_id} — the console uses the Retell web SDK + this token to let anyone talk to Lisa
+    live from the page. No phone number, no cost of a PSTN call."""
+    return _retell(settings, "POST", "create-web-call", {"agent_id": getattr(settings, "lisa_agent_id", "")})
+
+
 def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest9: str | None = None,
                domain: str | None = None, from_number: str | None = None) -> dict:
     """Kick off ONE Lisa call: build the brief, create the Retell phone call with the brief injected as
@@ -383,6 +410,18 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
     result = {"ok": True, "call_id": cid, "event": event, "outcome": outcome}
     if event != "call_analyzed":
         return result  # actions only run on the final analyzed event
+
+    # 0) mirror into the funnel so Lisa appears as a BDE in the leaderboard/reports (admin-isolated).
+    try:
+        _write_funnel_call(pool, cid, dyn, cad, call)
+    except Exception as exc:
+        log.warning("lisa_funnel_write_failed", call_id=cid, error=str(exc)[:160])
+    # 0b) Lisa's own next-move (callback / retry) on her calendar.
+    try:
+        schedule_lisa_followup(pool, settings, dest9=d9, dest_number=call.get("to_number"),
+                               outcome=outcome, cad=cad, dyn=dyn)
+    except Exception as exc:
+        log.warning("lisa_followup_failed", call_id=cid, error=str(exc)[:160])
 
     # 1) book the agreed meeting server-side (Lisa never booked it herself)
     if meeting_agreed and cad.get("agreed_day_time"):
@@ -496,6 +535,231 @@ def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, t
 
 
 # --------------------------------------------------------------------------- #
+# Lisa as a BDE in the funnel — mirror each completed call into calls+classifications
+# --------------------------------------------------------------------------- #
+_OUTCOME_MAP = {
+    # outcome -> (answered, reached_dm, call_outcome, is_voicemail)
+    "booked": (True, True, "conversation", False),
+    "callback_requested": (True, True, "conversation", False),
+    "not_interested": (True, True, "conversation", False),
+    "do_not_call": (True, True, "conversation", False),
+    "gatekeeper_only": (True, False, "gatekeeper", False),
+    "voicemail": (False, False, "voicemail", True),
+    "no_answer": (False, False, "no_answer", False),
+    "wrong_number": (False, False, "wrong_number", False),
+}
+
+
+def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, call: dict) -> None:
+    """Mirror a completed Lisa call into `calls` + `classifications` (bde_name='Lisa', provider='retell')
+    so the leaderboard / funnel / reports treat her like any BDE. Isolation to admins is via
+    PRIVATE_BDE_NAMES. Idempotent per call_id."""
+    outcome = (cad.get("call_outcome") or "").strip().lower()
+    booked = bool(cad.get("meeting_agreed"))
+    callback = outcome == "callback_requested" or bool(cad.get("callback_when"))
+    answered, reached, co, is_vm = _OUTCOME_MAP.get(outcome, (False, False, "no_answer", False))
+    if booked:
+        answered, reached, co = True, True, "conversation"
+    dur_ms = call.get("duration_ms") or call.get("call_length_ms") or 0
+    talk = int((dur_ms or 0) / 1000)
+    stage = "p5" if booked else ("p1" if callback else None)
+    dest = call.get("to_number")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO calls (call_id, bde_extension, bde_name, direction, dest_number, started_at, "
+            "  talk_seconds, answered, is_voicemail, has_transcript, recording_present, in_scope, provider, "
+            "  fresh_or_followup) VALUES (%s,'LISA','Lisa','outbound',%s,now(),%s,%s,%s,%s,%s,true,'retell','fresh') "
+            "ON CONFLICT (call_id) DO UPDATE SET talk_seconds=EXCLUDED.talk_seconds, answered=EXCLUDED.answered, "
+            "  is_voicemail=EXCLUDED.is_voicemail, has_transcript=EXCLUDED.has_transcript, "
+            "  recording_present=EXCLUDED.recording_present",
+            (cid, dest, talk, answered, is_vm, bool(call.get("transcript")), bool(call.get("recording_url"))))
+        cur.execute(
+            "INSERT INTO classifications (call_id, rpc_connect, full_pitch, is_lead, qualified, meeting_booked, "
+            "  call_outcome, booking_status, meeting_datetime, callback_requested, callback_when, pipeline_stage, "
+            "  prospect_company, prospect_website, prospect_contact_name, prospect_email, do_not_contact, "
+            "  classified_at, model) "
+            "VALUES (%s,%s,%s,%s,false,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),'retell') "
+            "ON CONFLICT (call_id) DO UPDATE SET rpc_connect=EXCLUDED.rpc_connect, full_pitch=EXCLUDED.full_pitch, "
+            "  is_lead=EXCLUDED.is_lead, meeting_booked=EXCLUDED.meeting_booked, call_outcome=EXCLUDED.call_outcome, "
+            "  booking_status=EXCLUDED.booking_status, callback_requested=EXCLUDED.callback_requested, "
+            "  pipeline_stage=EXCLUDED.pipeline_stage, do_not_contact=EXCLUDED.do_not_contact",
+            (cid, reached, reached, (booked or callback), booked, co, ("firm" if booked else None),
+             cad.get("agreed_day_time"), callback, cad.get("callback_when"), stage,
+             dyn.get("company_name"), dyn.get("prospect_website"), dyn.get("prospect_name"),
+             cad.get("confirmed_email") or dyn.get("prospect_email"), outcome == "do_not_call"))
+        conn.commit()
+
+
+def schedule_lisa_followup(pool: ConnectionPool, settings: Settings, *, dest9: str, dest_number: str,
+                           outcome: str, cad: dict, dyn: dict) -> None:
+    """Lisa's own next-move on her calendar (self-contained; does not touch the human pilot allocators):
+    a requested callback at the asked time, or a retry after a no-answer/voicemail up to the cap. Booked /
+    not-interested / do-not-call get nothing."""
+    from .calendar import create_event
+    tz = settings.tz
+    who = dyn.get("company_name") or dyn.get("prospect_name") or dest_number
+    if outcome == "callback_requested" or cad.get("callback_when"):
+        when = _parse_when(cad.get("callback_when")) or (datetime.now(ZoneInfo(tz)) + timedelta(days=1)).replace(
+            hour=10, minute=0, second=0, microsecond=0)
+        create_event(pool, bde_name="Lisa", type="callback", title=f"📞 Lisa callback: {who}",
+                     start_at=when, end_at=when + timedelta(minutes=15),
+                     notes=f"Prospect asked for a callback: {cad.get('callback_when') or ''}",
+                     dest_number=dest_number, created_by="lisa")
+        return
+    if outcome in ("no_answer", "voicemail", "gatekeeper_only"):
+        attempts = _fetch(pool, "SELECT count(*) n FROM calls WHERE provider='retell' AND "
+                          "right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s", (dest9,))[0]["n"]
+        if attempts >= int(getattr(settings, "lisa_retry_max_attempts", 4)):
+            return
+        cad_days = int(getattr(settings, "lisa_retry_cadence_days", 3))
+        when = _future_biz(datetime.now(ZoneInfo(tz)) + timedelta(days=cad_days),
+                           int(getattr(settings, "lisa_call_window_start", 9)))
+        create_event(pool, bde_name="Lisa", type="retry", title=f"🔄 Lisa retry ({attempts+1}): {who}",
+                     start_at=when, end_at=when + timedelta(minutes=15),
+                     notes="No pickup yet — Lisa retries at a different time.", dest_number=dest_number,
+                     created_by="lisa")
+
+
+def _future_biz(dt: datetime, hour: int) -> datetime:
+    d = dt.date()
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return datetime(d.year, d.month, d.day, min(max(hour, 8), 17), 0, tzinfo=dt.tzinfo)
+
+
+# --------------------------------------------------------------------------- #
+# Lisa's reserved pool + calendar + auto-dialer
+# --------------------------------------------------------------------------- #
+def reserve_lisa_pool(pool: ConnectionPool, settings: Settings) -> dict:
+    """Reserve up to lisa_pool_size GAds-CONFIRMED prospects EXCLUSIVELY for Lisa (highest-advertising
+    first), skipping anyone already called in-scope, already on a calendar, or DND. Idempotent — tops the
+    pool up to size. The human fresh allocator excludes every dest9 in lisa_pool (no double-calling)."""
+    ensure_tables(pool)
+    from .prospects import gads_dnb_gate
+    size = int(getattr(settings, "lisa_pool_size", 500))
+    have = _fetch(pool, "SELECT count(*) c FROM lisa_pool")[0]["c"]
+    if have >= size:
+        return {"reserved": 0, "total": have, "note": "pool already at size"}
+    need = size - have
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lisa_pool (dest9, dest_number, domain, company, phone) "
+            "SELECT z.d9, z.phone, z.domain, z.company, z.phone FROM ("
+            "  SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) d9, "
+            "         COALESCE(co.phone,co.phone_norm) phone, co.domain, co.business_name company, "
+            "         COALESCE((ge.dataforseo->'ads'->>'count')::int,0) ads "
+            "  FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
+            "  WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'' "
+            + gads_dnb_gate("ge") + ") z "
+            "WHERE length(z.d9)=9 AND z.d9 NOT IN (SELECT dest9 FROM lisa_pool) "
+            "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.in_scope AND "
+            "     right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=z.d9) "
+            "  AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.status='pending' AND "
+            "     right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=z.d9) "
+            "  AND NOT EXISTS (SELECT 1 FROM prospect_pipeline pp WHERE pp.dest9=z.d9 AND COALESCE(pp.dnd,false)) "
+            "ORDER BY z.ads DESC NULLS LAST LIMIT %s ON CONFLICT (dest9) DO NOTHING", (need,))
+        got = cur.rowcount
+        conn.commit()
+    return {"reserved": got, "total": have + got}
+
+
+def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
+    """Put Lisa's reserved-pool prospects on HER calendar as fresh_call events, filling each working day up
+    to lisa_daily_target, staggered across the call window. Idempotent; only schedules pool prospects not
+    already on her calendar or already called by her."""
+    ensure_tables(pool)
+    tz = settings.tz
+    cap = int(getattr(settings, "lisa_daily_target", 50))
+    wstart = int(getattr(settings, "lisa_call_window_start", 9))
+    wend = int(getattr(settings, "lisa_call_window_end", 17))
+    rows = _fetch(pool,
+        "SELECT lp.dest9, lp.dest_number, lp.company FROM lisa_pool lp "
+        "WHERE NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.bde_name='Lisa' AND e.status IN ('pending','done') "
+        "   AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
+        "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.provider='retell' AND "
+        "   right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
+        "ORDER BY lp.reserved_at")
+    existing = {r["d"]: r["n"] for r in _fetch(pool,
+        "SELECT (start_at AT TIME ZONE %s)::date d, count(*) n FROM calendar_events "
+        "WHERE bde_name='Lisa' AND status='pending' AND type='fresh_call' GROUP BY 1", (tz,))}
+    now = datetime.now(ZoneInfo(tz))
+    day = now.date() + (timedelta(days=1) if now.hour >= wend else timedelta(0))
+    span = max(1, wend - wstart)
+    to_insert = []
+    for r in rows:
+        while day.weekday() >= 5 or existing.get(day, 0) >= cap:
+            if day.weekday() >= 5:
+                day += timedelta(days=1); continue
+            day += timedelta(days=1)
+        used = existing.get(day, 0)
+        mins = int(used * (span * 60) / max(1, cap))
+        when = datetime(day.year, day.month, day.day, min(wstart + mins // 60, wend - 1), mins % 60,
+                        tzinfo=ZoneInfo(tz))
+        existing[day] = used + 1
+        to_insert.append(("Lisa", "fresh_call", f"🎙️ Lisa call: {r['company'] or r['dest_number']}",
+                          when, when + timedelta(minutes=15), None, r["dest_number"]))
+    scheduled = 0
+    if to_insert:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(_ENSURE_FRESH_INDEX)
+            cur.executemany(
+                "INSERT INTO calendar_events (bde_name, type, title, start_at, end_at, notes, dest_number, "
+                "  created_by, status) VALUES (%s,%s,%s,%s,%s,%s,%s,'lisa','pending') "
+                "ON CONFLICT (" + _FRESH_D9 + ") WHERE type='fresh_call' AND status='pending' DO NOTHING",
+                to_insert)
+            scheduled = cur.rowcount
+            conn.commit()
+    return {"scheduled": scheduled, "candidates": len(rows)}
+
+
+_FRESH_D9 = "right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)"
+_ENSURE_FRESH_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_fresh_call ON calendar_events (" + _FRESH_D9 +
+    ") WHERE type='fresh_call' AND status='pending'")
+
+
+def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
+    """GATED daily dialer. When lisa_autodial_enabled, dial Lisa's DUE calendar events (fresh/retry/
+    callback) within the business-hours window, up to the daily target, a few at a time. Marks each dialed
+    event 'done'. No call fires unless lisa_autodial_enabled is true."""
+    ensure_tables(pool)
+    if not getattr(settings, "lisa_autodial_enabled", False):
+        return {"skipped": "autodial disabled"}
+    if not getattr(settings, "lisa_enabled", False):
+        return {"skipped": "lisa disabled"}
+    tz = settings.tz
+    now = datetime.now(ZoneInfo(tz))
+    wstart = int(getattr(settings, "lisa_call_window_start", 9))
+    wend = int(getattr(settings, "lisa_call_window_end", 17))
+    if now.weekday() >= 5 or not (wstart <= now.hour < wend):
+        return {"skipped": "outside call window"}
+    placed_today = _fetch(pool, "SELECT count(*) n FROM lisa_calls WHERE "
+                          "(created_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date", (tz, tz))[0]["n"]
+    remaining = int(getattr(settings, "lisa_daily_target", 50)) - int(placed_today or 0)
+    if remaining <= 0:
+        return {"skipped": "daily target reached", "placed_today": placed_today}
+    batch = min(remaining, int(getattr(settings, "lisa_max_concurrent", 3)))
+    due = _fetch(pool,
+        "SELECT id, dest_number, right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
+        "FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
+        "  AND type IN ('fresh_call','retry','callback','reached_call') AND start_at <= now() "
+        "ORDER BY start_at LIMIT %s", (batch,))
+    dialed = 0
+    for e in due:
+        if not e.get("dest_number"):
+            continue
+        r = start_call(pool, settings, to_number=e["dest_number"], dest9=e["d9"])
+        if r.get("call_id"):
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE calendar_events SET status='done' WHERE id=%s", (e["id"],))
+                conn.commit()
+            dialed += 1
+    stats = {"dialed": dialed, "due": len(due), "placed_today": placed_today, "remaining": remaining}
+    log.info("lisa_autodial", **stats)
+    return stats
+
+
+# --------------------------------------------------------------------------- #
 # reporting (admin-only console + funnel)
 # --------------------------------------------------------------------------- #
 def summary(pool: ConnectionPool, days: int = 30) -> dict:
@@ -514,6 +778,19 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
     s = dict(r[0]) if r else {}
     calls = s.get("calls") or 0
     s["book_rate"] = round(100 * (s.get("booked") or 0) / calls, 1) if calls else 0.0
+    # campaign / reserved-pool status for the console
+    tz = "Australia/Melbourne"
+    s["pool_reserved"] = _fetch(pool, "SELECT count(*) c FROM lisa_pool")[0]["c"]
+    s["pool_scheduled"] = _fetch(pool,
+        "SELECT count(*) c FROM calendar_events WHERE bde_name='Lisa' AND status='pending' AND type='fresh_call'")[0]["c"]
+    s["pool_dialed"] = _fetch(pool,
+        "SELECT count(DISTINCT dest9) c FROM lisa_calls WHERE dest9 IS NOT NULL")[0]["c"]
+    s["dialed_today"] = _fetch(pool,
+        "SELECT count(*) c FROM lisa_calls WHERE (created_at AT TIME ZONE %s)::date=(now() AT TIME ZONE %s)::date",
+        (tz, tz))[0]["c"]
+    s["due_now"] = _fetch(pool,
+        "SELECT count(*) c FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
+        "AND type IN ('fresh_call','retry','callback','reached_call') AND start_at <= now()")[0]["c"]
     return s
 
 
