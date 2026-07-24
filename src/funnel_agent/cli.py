@@ -788,7 +788,7 @@ def refresh(
                 _lisa.ensure_tables(ana)
                 _lisa.reserve_lisa_pool(ana, settings)
                 _lisa.schedule_lisa_fresh(ana, settings)
-                _lisa.refresh_lisa_briefs(ana, settings)   # save each prospect's variables to the DB
+                _lisa.refresh_lisa_briefs(ana, settings, limit=600)  # save each prospect's variables to the DB (all in one cycle; fast on-network)
 
             except Exception as exc:
                 log.warning("lisa_calendar_failed", error=str(exc)[:160])
