@@ -786,6 +786,11 @@ def refresh(
             try:
                 from . import lisa as _lisa
                 _lisa.ensure_tables(ana)
+                # AI Sales Coach: learn the playbook from won/lost calls (throttled ~20h) + QA recent calls,
+                # BEFORE briefs are (re)built, so the learned objection lines + avoid-list flow into them.
+                if settings.lisa_coaching_enabled:
+                    _lisa.refresh_playbook(ana, settings)
+                    _lisa.review_pending_lisa_calls(ana, settings)
                 _lisa.reserve_lisa_pool(ana, settings)
                 _lisa.schedule_lisa_fresh(ana, settings)
                 _lisa.refresh_lisa_briefs(ana, settings, limit=600)  # save each prospect's variables to the DB (all in one cycle; fast on-network)

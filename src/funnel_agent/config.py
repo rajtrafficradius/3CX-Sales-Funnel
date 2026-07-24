@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     lisa_call_window_end: int = 17
     lisa_max_concurrent: int = 3                 # max simultaneous Lisa calls the dialer launches per run
     lisa_autodial_enabled: bool = False          # MASTER GATE — no call fires until this is true
+    lisa_coaching_enabled: bool = True           # AI Sales Coach: learn playbook from won/lost + QA each call
 
     # --- DataForSEO (SEO metrics + Google Ads Transparency Center; PAID, pay-per-request) ---
     # Auto-enriched for Raghav $1-10M paid-ads-gated prospects; on-demand for everyone else.

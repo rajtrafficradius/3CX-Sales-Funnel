@@ -72,6 +72,13 @@ def ensure_tables(pool: ConnectionPool) -> None:
             "CREATE TABLE IF NOT EXISTS lisa_briefs ("
             "  dest9 text PRIMARY KEY, domain text, prospect_name text, company_name text, brief jsonb,"
             "  built_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())")
+        # AI Sales Coach output — the learned PLAYBOOK: best objection lines (from WON calls) + the
+        # avoid-list (from LOST calls). One current row (id=1), refreshed on a cadence by refresh_playbook.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_playbook ("
+                    "  id integer PRIMARY KEY, playbook jsonb, built_at timestamptz DEFAULT now())")
+        # per-call QA / coaching scores (the Head-of-Sales scorecard).
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_call_reviews ("
+                    "  call_id text PRIMARY KEY, scores jsonb, reviewed_at timestamptz DEFAULT now())")
         conn.commit()
     ensure_lisa_agent(pool)
 
@@ -291,13 +298,19 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     if row and row.get("problem"):
         known = f"Earlier they mentioned: {row['problem']}"
 
-    # --- tailored objection lines (defaults; can be upgraded from winning transcripts later) ---
-    obj_agency = ("Good — makes sense. The session's completely independent, so it either confirms your "
-                  "agency's nailing it, or gives you sharper questions to ask them. Either way you come out ahead.")
-    obj_price = ("The session and the audit are free — pricing only comes up later and it's tailored, which "
-                 "is exactly what the fifteen minutes is for.")
-    obj_email = ("Happy to send something — so it's actually useful and not just another email you ignore, "
-                 "what's the one thing about your online enquiries you'd most want answered?")
+    # --- objection lines + avoid-list from the LEARNED PLAYBOOK (AI Sales Coach mines won/lost calls);
+    #     fall back to sensible defaults until the coach has run. ---
+    pb = get_playbook(pool)
+    obj_agency = pb.get("objection_agency") or (
+        "Good — makes sense. The session's completely independent, so it either confirms your agency's "
+        "nailing it, or gives you sharper questions to ask them. Either way you come out ahead.")
+    obj_price = pb.get("objection_price") or (
+        "The session and the audit are free — pricing only comes up later and it's tailored, which is "
+        "exactly what the fifteen minutes is for.")
+    obj_email = pb.get("objection_email") or (
+        "Happy to send something — so it's actually useful and not just another email you ignore, what's "
+        "the one thing about your online enquiries you'd most want answered?")
+    avoid_list = " · ".join(pb.get("avoid") or []) if isinstance(pb.get("avoid"), list) else ""
 
     b.update({
         "prospect_name": contact or "",
@@ -316,6 +329,9 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         "objection_agency": obj_agency,
         "objection_price": obj_price,
         "objection_email": obj_email,
+        "objection_not_interested": pb.get("objection_not_interested") or "",
+        "objection_no_time": pb.get("objection_no_time") or "",
+        "avoid_list": avoid_list,   # what our lost-call analysis says NOT to do
     })
     # Retell wants strings; drop Nones
     return {k: ("" if v is None else str(v)) for k, v in b.items()}
@@ -412,6 +428,14 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
         return {"error": f"invalid phone number: {to_number or '(empty)'}"}
     d9 = _d9(dest9 or to_number)
     brief = get_brief(pool, settings, dest9=d9, domain=domain)   # saved per-prospect brief (builds once if missing)
+    # overlay the CURRENT coach playbook so the objection library + avoid-list are always the latest,
+    # even on a brief that was stored before the last coaching refresh.
+    pb = get_playbook(pool)
+    for k in ("objection_agency", "objection_price", "objection_email", "objection_not_interested", "objection_no_time"):
+        if pb.get(k):
+            brief[k] = str(pb[k])
+    if isinstance(pb.get("avoid"), list) and pb["avoid"]:
+        brief["avoid_list"] = " · ".join(pb["avoid"])
     body = {
         "from_number": frm,
         "to_number": to_number,
@@ -855,6 +879,103 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# AI Sales Coach / Trainer — learn from WON (do) + LOST (don't); QA each Lisa call
+# --------------------------------------------------------------------------- #
+def _llm_json(settings: Settings, system: str, user: str, model: str | None = None) -> dict:
+    """One JSON-returning LLM call (reuses the classifier's OpenAI key/model). Returns {} on failure."""
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=getattr(settings, "llm_api_key", ""))
+        m = model or getattr(settings, "llm_model_strong", None) or "gpt-4o"
+        r = client.chat.completions.create(
+            model=m, temperature=0.2, response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user[:24000]}])
+        return json.loads(r.choices[0].message.content or "{}")
+    except Exception as exc:
+        log.warning("lisa_llm_json_failed", error=str(exc)[:160])
+        return {}
+
+
+def refresh_playbook(pool: ConnectionPool, settings: Settings, *, force: bool = False) -> dict:
+    """AI Sales Coach: mine the team's WON calls (a meeting was booked → what TO do) and LOST calls
+    (reached the decision-maker but no booking → what NOT to do), and distil a current PLAYBOOK — the best
+    objection rebuttals + an avoid-list — that build_brief injects into Lisa. This is how she trains
+    automatically off REAL calls: the human team's winning + losing moments now, and her own once she has
+    volume. Runs on a daily cadence (throttled ~20h); stored in lisa_playbook."""
+    ensure_tables(pool)
+    if not force:
+        last = _fetch(pool, "SELECT built_at FROM lisa_playbook WHERE id=1")
+        if last and last[0].get("built_at"):
+            from datetime import datetime, timezone
+            age_h = (datetime.now(timezone.utc) - last[0]["built_at"]).total_seconds() / 3600
+            if age_h < 20:
+                return {"skipped": f"playbook fresh ({round(age_h,1)}h old)"}
+    won = _fetch(pool, "SELECT left(tr.text,2600) t FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+        "JOIN transcripts tr ON tr.call_id=c.call_id WHERE c.in_scope AND cl.rpc_connect AND cl.meeting_booked "
+        "AND NOT COALESCE(cl.meeting_confirmation,false) AND c.talk_seconds>=120 AND length(COALESCE(tr.text,''))>600 "
+        "ORDER BY c.started_at DESC LIMIT 8")
+    lost = _fetch(pool, "SELECT left(tr.text,2600) t FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+        "JOIN transcripts tr ON tr.call_id=c.call_id WHERE c.in_scope AND cl.rpc_connect AND NOT cl.meeting_booked "
+        "AND NOT COALESCE(cl.callback_requested,false) AND COALESCE(cl.call_outcome,'')='conversation' "
+        "AND c.talk_seconds>=90 AND length(COALESCE(tr.text,''))>600 ORDER BY c.started_at DESC LIMIT 8")
+    if not won and not lost:
+        return {"skipped": "no calls to learn from"}
+    sys = ("You are the sales coach for an Australian digital-marketing agency's appointment-setting AI "
+           "(named Lisa; she books a free strategy session). From WON transcripts (a meeting WAS booked) and "
+           "LOST transcripts (reached the decision-maker but NO booking), distil a concise CURRENT playbook. "
+           "Return STRICT JSON: objection_agency, objection_price, objection_email, objection_not_interested, "
+           "objection_no_time (each = the single best one-sentence rebuttal in warm AU spoken style, taken from "
+           "what actually worked in the WON calls); do = array of up to 6 short 'what to DO' rules that "
+           "correlate with booking; avoid = array of up to 6 short 'what NOT to do' rules that lost the LOST "
+           "calls. Every string ONE sentence, spoken, concrete, no fluff.")
+    usr = ("=== WON CALLS (meeting booked) ===\n" + "\n---\n".join(w["t"] for w in won) +
+           "\n\n=== LOST CALLS (reached DM, no booking) ===\n" + "\n---\n".join(l["t"] for l in lost))
+    pb = _llm_json(settings, sys, usr)
+    if not pb:
+        return {"skipped": "llm returned nothing"}
+    pb["_won"], pb["_lost"] = len(won), len(lost)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO lisa_playbook (id, playbook, built_at) VALUES (1,%s,now()) "
+                    "ON CONFLICT (id) DO UPDATE SET playbook=EXCLUDED.playbook, built_at=now()", (json.dumps(pb),))
+        conn.commit()
+    return {"learned_from_won": len(won), "learned_from_lost": len(lost),
+            "objection_lines": len([k for k in pb if k.startswith("objection_")]),
+            "do": len(pb.get("do") or []), "avoid": len(pb.get("avoid") or [])}
+
+
+def get_playbook(pool: ConnectionPool) -> dict:
+    r = _fetch(pool, "SELECT playbook FROM lisa_playbook WHERE id=1")
+    return (r[0].get("playbook") if r else None) or {}
+
+
+def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, transcript: str) -> dict:
+    """AI QA reviewer: score one Lisa call for quality + brand + compliance; store for the scorecard."""
+    sys = ("Score this AI cold-caller (Lisa, an AU digital-marketing appointment setter) from her call "
+           "transcript. Return STRICT JSON: opening (1-5), discovery (1-5), objection_handling (1-5), "
+           "booking (1-5), compliance (1-5 — did she say 'Digital Expo' only, NOT volunteer she's an AI "
+           "unless directly asked, sound human), overall (1-5), best_line (string), improve (one-sentence "
+           "coaching tip), flags (array of any compliance/quality issues, empty if none).")
+    r = _llm_json(settings, sys, transcript or "")
+    if r:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa_call_reviews (call_id, scores, reviewed_at) VALUES (%s,%s,now()) "
+                        "ON CONFLICT (call_id) DO UPDATE SET scores=EXCLUDED.scores, reviewed_at=now()",
+                        (call_id, json.dumps(r)))
+            conn.commit()
+    return r
+
+
+def review_pending_lisa_calls(pool: ConnectionPool, settings: Settings, limit: int = 8) -> dict:
+    """QA the most recent analysed Lisa calls that don't have a review yet (a small batch per cycle)."""
+    ensure_tables(pool)
+    rows = _fetch(pool, "SELECT call_id, transcript FROM lisa_calls lc WHERE status='analyzed' "
+        "AND length(COALESCE(transcript,''))>200 AND NOT EXISTS "
+        "(SELECT 1 FROM lisa_call_reviews r WHERE r.call_id=lc.call_id) ORDER BY created_at DESC LIMIT %s", (limit,))
+    n = sum(1 for r in rows if review_lisa_call(pool, settings, r["call_id"], r["transcript"]))
+    return {"reviewed": n}
+
+
+# --------------------------------------------------------------------------- #
 # reporting (admin-only console + funnel)
 # --------------------------------------------------------------------------- #
 def summary(pool: ConnectionPool, days: int = 30) -> dict:
@@ -886,6 +1007,16 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
     s["due_now"] = _fetch(pool,
         "SELECT count(*) c FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
         "AND type IN ('fresh_call','retry','callback','reached_call') AND start_at <= now()")[0]["c"]
+    # --- AI Sales Coach: learned playbook + QA scorecard ---
+    s["playbook"] = get_playbook(pool)
+    pbb = _fetch(pool, "SELECT built_at FROM lisa_playbook WHERE id=1")
+    s["playbook_built_at"] = (pbb[0]["built_at"] if pbb else None)
+    qa = _fetch(pool,
+        "SELECT count(*) n, "
+        "  avg(NULLIF(scores->>'overall','')::float) FILTER (WHERE scores->>'overall' ~ '^[0-9.]+$') overall, "
+        "  avg(NULLIF(scores->>'compliance','')::float) FILTER (WHERE scores->>'compliance' ~ '^[0-9.]+$') compliance "
+        "FROM lisa_call_reviews")
+    s["qa"] = dict(qa[0]) if qa else {}
     return s
 
 

@@ -139,6 +139,8 @@
 
   <div class="kpis" id="kpis"></div>
 
+  <div id="coach" class="card" style="margin-bottom:18px;display:none"></div>
+
   <div class="actbar">
     <input id="toNum" type="tel" placeholder="+61 4xx xxx xxx — one-off call" />
     <input id="toDom" type="text" placeholder="domain (optional)" />
@@ -187,6 +189,21 @@ async function load(){
       ['good','Book rate',(s.book_rate||0)+'%'],['vio','Callbacks',s.callbacks||0],['warn','Missed',s.missed||0],
       ['n','SMS',s.sms||0],['n','Asked AI',s.asked_ai||0],['n','Talk',dur(s.duration_ms)],['n','Spend',money(s.cost_cents)]];
     $('kpis').innerHTML=k.map(([c,l,n])=>`<div class="kpi ${c==='n'?'':c}"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join('');
+    // AI Sales Coach panel — DO (won calls) + AVOID (lost calls) + QA scorecard
+    const pb=s.playbook||{}, qa=s.qa||{};
+    const doL=(pb.do||[]).map(x=>`<li>✅ ${esc(x)}</li>`).join('');
+    const avoidL=(pb.avoid||[]).map(x=>`<li>⛔ ${esc(x)}</li>`).join('');
+    const cel=$('coach');
+    if(doL||avoidL){
+      const built=s.playbook_built_at?('updated '+String(s.playbook_built_at).replace('T',' ').slice(0,16)):'not learned yet';
+      cel.style.display='';
+      cel.innerHTML=`<h3 style="font-size:12px;margin:0;padding:13px 18px;border-bottom:1px solid var(--line);color:var(--muted);text-transform:uppercase;letter-spacing:.6px">🧠 AI Sales Coach — trained on your won &amp; lost calls <span style="text-transform:none;color:var(--faint)">· ${esc(built)} · from ${pb._won||0} won / ${pb._lost||0} lost</span></h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:14px 18px">
+          <div><div style="color:var(--good);font-size:11px;font-weight:700;letter-spacing:.4px;margin-bottom:6px">WHAT TO DO (from booked calls)</div><ul style="margin:0;padding-left:18px;line-height:1.7;font-size:12.5px;color:var(--txt-dim)">${doL}</ul></div>
+          <div><div style="color:var(--bad);font-size:11px;font-weight:700;letter-spacing:.4px;margin-bottom:6px">WHAT NOT TO DO (from lost calls)</div><ul style="margin:0;padding-left:18px;line-height:1.7;font-size:12.5px;color:var(--txt-dim)">${avoidL}</ul></div>
+        </div>
+        <div style="padding:0 18px 14px;color:var(--muted);font-size:12px">📋 QA scorecard: <b>${qa.n||0}</b> Lisa calls reviewed · overall <b>${qa.overall?(+qa.overall).toFixed(1):'–'}/5</b> · compliance <b>${qa.compliance?(+qa.compliance).toFixed(1):'–'}/5</b></div>`;
+    } else { cel.style.display='none'; }
     const d=await jget('/api/lisa/calls?limit=150'); const rows=d.calls||[];
     $('rows').innerHTML=rows.length?rows.map(c=>{
       const oc=(c.call_outcome||c.status||'—');
