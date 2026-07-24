@@ -313,7 +313,7 @@ def create_web_call(settings: Settings) -> dict:
     """Create a Retell WEB call (browser voice test / 'Voice Orb') for the Lisa agent. Returns
     {access_token, call_id} — the console uses the Retell web SDK + this token to let anyone talk to Lisa
     live from the page. No phone number, no cost of a PSTN call."""
-    return _retell(settings, "POST", "create-web-call", {"agent_id": getattr(settings, "lisa_agent_id", "")})
+    return _retell(settings, "POST", "v2/create-web-call", {"agent_id": getattr(settings, "lisa_agent_id", "")})
 
 
 def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest9: str | None = None,
@@ -337,7 +337,7 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
         "metadata": {"dest9": d9, "domain": brief.get("prospect_website") or (domain or "")},
     }
     try:
-        r = _retell(settings, "POST", "create-phone-call", body)
+        r = _retell(settings, "POST", "v2/create-phone-call", body)
     except Exception as exc:
         log.warning("lisa_start_call_failed", to=to_number, error=str(exc)[:200])
         return {"error": str(exc)[:200]}
@@ -645,12 +645,17 @@ def reserve_lisa_pool(pool: ConnectionPool, settings: Settings) -> dict:
         cur.execute(
             "INSERT INTO lisa_pool (dest9, dest_number, domain, company, phone) "
             "SELECT z.d9, z.phone, z.domain, z.company, z.phone FROM ("
-            "  SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) d9, "
+            # DISTINCT ON (phone) collapses to ONE row per physical number (highest ad-count) BEFORE the
+            # limit, so two GAds domains that share a phone can't shrink the reserved count.
+            "  SELECT DISTINCT ON (right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9)) "
+            "         right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) d9, "
             "         COALESCE(co.phone,co.phone_norm) phone, co.domain, co.company_name company, "
             "         COALESCE((ge.dataforseo->'ads'->>'count')::int,0) ads "
             "  FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
             "  WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'' "
-            + gads_dnb_gate("ge") + ") z "
+            + gads_dnb_gate("ge") + " "
+            "  ORDER BY right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9), "
+            "           COALESCE((ge.dataforseo->'ads'->>'count')::int,0) DESC) z "
             "WHERE length(z.d9)=9 AND z.d9 NOT IN (SELECT dest9 FROM lisa_pool) "
             "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.in_scope AND "
             "     right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=z.d9) "
