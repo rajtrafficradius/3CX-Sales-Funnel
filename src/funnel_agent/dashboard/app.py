@@ -498,7 +498,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"static/{name}").read_text(encoding="utf-8")
 
     # ---- auth: per-person login + role-based scoping --------------------- #
-    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png"}
+    # /api/lisa/postcall is the Retell webhook — it has NO session (Retell posts server-to-server), so it
+    # must bypass the login gate; it is guarded instead by its own LISA_WEBHOOK_TOKEN query token.
+    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall"}
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
