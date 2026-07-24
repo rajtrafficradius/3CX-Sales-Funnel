@@ -221,7 +221,7 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
 
     # company/industry from companies table if missing
     if domain and (not company or not niche):
-        cr = _fetch(pool, "SELECT business_name, industry FROM companies WHERE domain=%s LIMIT 1", (domain,))
+        cr = _fetch(pool, "SELECT company_name AS business_name, industry FROM companies WHERE domain=%s LIMIT 1", (domain,))
         if cr:
             company = company or (cr[0].get("business_name") or "")
             niche = niche or (cr[0].get("industry") or "")
@@ -646,7 +646,7 @@ def reserve_lisa_pool(pool: ConnectionPool, settings: Settings) -> dict:
             "INSERT INTO lisa_pool (dest9, dest_number, domain, company, phone) "
             "SELECT z.d9, z.phone, z.domain, z.company, z.phone FROM ("
             "  SELECT right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) d9, "
-            "         COALESCE(co.phone,co.phone_norm) phone, co.domain, co.business_name company, "
+            "         COALESCE(co.phone,co.phone_norm) phone, co.domain, co.company_name company, "
             "         COALESCE((ge.dataforseo->'ads'->>'count')::int,0) ads "
             "  FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
             "  WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'' "
