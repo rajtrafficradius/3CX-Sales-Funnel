@@ -88,11 +88,18 @@
     display:flex;flex-direction:column;align-items:center;text-align:center;box-shadow:var(--elev)}
   .orbcard .eyebrow{align-self:center;margin-bottom:2px}
   .orb-stage{position:relative;width:210px;height:210px;display:grid;place-items:center;margin:14px auto 4px}
-  .aura{position:absolute;inset:8px;border-radius:50%;opacity:.5;filter:blur(26px);
-    background:conic-gradient(from 0deg,var(--vio),var(--cyan),var(--pink),var(--vio));
-    animation:auraspin 11s linear infinite}
-  :root[data-theme=light] .aura{opacity:.4}
+  .aura{position:absolute;inset:6px;border-radius:50%;opacity:.5;filter:blur(24px);
+    background:conic-gradient(from 0deg,var(--vio),var(--cyan),var(--vio-2),var(--cyan),var(--vio));
+    animation:auraspin 16s linear infinite, auraPulse 4.5s ease-in-out infinite}
+  :root[data-theme=light] .aura{opacity:.42}
   @keyframes auraspin{to{transform:rotate(360deg)}}
+  @keyframes auraPulse{0%,100%{opacity:.42;filter:blur(24px)}50%{opacity:.64;filter:blur(29px)}}
+  /* idle 'ready' rings — subtle, always breathing outward; hidden while live (ripples take over) */
+  .halo{position:absolute;z-index:1;width:150px;height:150px;border-radius:50%;
+    border:1.5px solid rgba(124,108,255,.45);opacity:0;animation:halo 3.4s ease-out infinite}
+  .halo.h2{animation-delay:1.7s}
+  @keyframes halo{0%{transform:scale(.96);opacity:.5}70%{opacity:0}100%{transform:scale(1.48);opacity:0}}
+  .orb.live ~ .halo{animation:none;opacity:0}
   .orb{position:relative;z-index:2;width:154px;height:154px;border-radius:50%;cursor:pointer;border:none;padding:0;
     display:grid;place-items:center;
     background:
@@ -215,12 +222,26 @@
   .role .rstat b{color:var(--txt-2);font-weight:650}
   .role.soon{opacity:.68;border-style:dashed}
   .role.soon .rav{border-style:dashed}
-  /* tiered command structure */
-  .tier{margin-bottom:15px}
+  /* the orchestrator card reads as the lead of the chain */
+  .role.lead{background:linear-gradient(180deg,rgba(124,108,255,.1),transparent 70%),var(--panel);border-color:rgba(124,108,255,.34)}
+  .role.lead .rav{background:var(--accent-soft);border-color:rgba(124,108,255,.45);color:var(--vio-2)}
+  /* the live agent gets a mini voice-orb avatar (echoes the hero) */
+  .rav.orbmini{border:none;color:#fff;box-shadow:0 6px 16px -8px rgba(110,70,240,.85);
+    background:radial-gradient(42% 40% at 34% 28%,rgba(255,255,255,.5),transparent 60%),
+      radial-gradient(130% 130% at 72% 78%,var(--cyan),var(--vio) 55%,#3a2196)}
+  /* tiered command structure — one top-down spine with a node per tier */
+  #system{position:relative;padding-left:26px}
+  #system::before{content:"";position:absolute;left:6px;top:9px;bottom:9px;width:2px;border-radius:2px;
+    background:linear-gradient(var(--vio),var(--line))}
+  .tier{position:relative;margin-bottom:16px}
   .tier:last-child{margin-bottom:0}
-  .tier-l{font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);
-    margin:0 0 9px;display:flex;align-items:center;gap:10px}
+  .tier-l{position:relative;font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--faint);margin:0 0 10px;display:flex;align-items:center;gap:9px}
+  .tier-l::before{content:"";position:absolute;left:-26px;top:0;width:13px;height:13px;border-radius:50%;
+    background:var(--panel);border:2px solid var(--vio);box-shadow:0 0 0 4px var(--accent-soft)}
   .tier-l::after{content:"";flex:1;height:1px;background:var(--line)}
+  .tier-n{font-size:9.5px;font-weight:700;color:var(--muted);background:var(--panel-3);border:1px solid var(--line-2);
+    border-radius:var(--r-pill);padding:1px 8px;letter-spacing:0}
   .tier-cards{display:grid;gap:12px}
   .tier-cards.c1{grid-template-columns:minmax(0,540px)}
   .tier-cards.c2{grid-template-columns:repeat(2,minmax(0,1fr));max-width:730px}
@@ -304,7 +325,7 @@
   .footnote b{color:var(--txt-2);font-weight:650}
 
   @media (prefers-reduced-motion:reduce){
-    .aura,.orb,.orb.live .orb-eq i,.orb.live ~ .orb-ripple{animation:none!important}
+    .aura,.orb,.halo,.orb.live .orb-eq i,.orb.live ~ .orb-ripple{animation:none!important}
     *{transition-duration:.01ms!important}
   }
 
@@ -394,6 +415,7 @@
       <div class="orb-stage">
         <span class="aura" aria-hidden="true"></span>
         <button id="orb" class="orb" onclick="toggleCall()" aria-label="Talk to Lisa"><span class="orb-eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></button>
+        <span class="halo" aria-hidden="true"></span><span class="halo h2" aria-hidden="true"></span>
         <span class="orb-ripple" aria-hidden="true"></span><span class="orb-ripple r2" aria-hidden="true"></span>
       </div>
       <div class="orblbl" id="orbLbl">Talk to Lisa 1</div>
@@ -406,7 +428,7 @@
       </div>
     </div>
     <div class="camp">
-      <div class="camp-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Campaign · reserved GAds pool · exclusive to Lisa</span></div>
+      <div class="camp-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Campaign · reserved GAds pool · exclusive to Lisa 1</span></div>
       <div class="camp-body">
         <div class="cgrid">
           <div class="cstat"><div class="n" id="cReserved">–</div><div class="l">Reserved</div></div>
@@ -423,7 +445,7 @@
     </div>
   </div>
 
-  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How Lisa's calling system runs</span></div>
+  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How the calling system runs</span></div>
   <div class="flowcard"><div id="flow" class="flow"></div></div>
 
   <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M15 20a5 5 0 0 1 7 0"/></svg>Command structure — live floor</span><span class="beat" id="teamBeat"><span class="bd"></span>Auto · every 60s</span></div>
@@ -564,15 +586,17 @@ async function load(){
       ]],
     ];
     const card=r=>{const c=RC[r[3]]||'var(--muted)', kind=KIND[r[2]]||'Human', ai=r[2]!=='Human';
-      return `<div class="role${r[3]==='soon'?' soon':''}" style="--rc:${c}"><div class="rtop">
-        <span class="rav">${svg(r[0])}</span>
+      const lead=/Head of Sales/.test(r[1]), orbAv=(r[2]==='Agent'&&r[3]!=='soon');
+      return `<div class="role${r[3]==='soon'?' soon':''}${lead?' lead':''}" style="--rc:${c}"><div class="rtop">
+        <span class="rav${orbAv?' orbmini':''}">${svg(r[0])}</span>
         <div class="rmeta"><div class="rname">${esc(r[1])}</div>
           <div class="rkind"><span class="kd" style="background:${ai?'var(--cyan)':'var(--faint)'}"></span>${kind}</div></div>
         <span class="pill">${stx[r[3]]||''}</span></div>
         <div class="rstat">${esc(r[4])}</div></div>`;};
     $('system').innerHTML=tiers.map(t=>{
       const n=t[1].length, cc=n>=4?'c4':(n===2?'c2':'c1');
-      return `<div class="tier"><div class="tier-l">${esc(t[0])}</div><div class="tier-cards ${cc}">${t[1].map(card).join('')}</div></div>`;
+      const cnt=n>1?`<span class="tier-n">${n}</span>`:'';
+      return `<div class="tier"><div class="tier-l">${esc(t[0])}${cnt}</div><div class="tier-cards ${cc}">${t[1].map(card).join('')}</div></div>`;
     }).join('');
 
     // ---- KPIs ----
