@@ -460,7 +460,8 @@ const IC={
   clock:'<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
   dollar:'<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   percent:'<line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
-  missed:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/><line x1="1" y1="1" x2="23" y2="23"/>'
+  missed:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/><line x1="1" y1="1" x2="23" y2="23"/>',
+  strategy:'<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>'
 };
 const svg=(name,sw)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw||1.8}" stroke-linecap="round" stroke-linejoin="round">${IC[name]||''}</svg>`;
 
@@ -498,12 +499,19 @@ async function load(){
       `<div class="fstep${x[3]?' act':''}"><span class="fic">${svg(x[0])}</span><div class="ft">${esc(x[1])}</div><div class="fs">${esc(x[2])}</div></div>`).join('');
 
     // ---- role board: 6 roles, live status ----
+    // Head of Sales = AI strategist: reads the live funnel and issues the current priority.
+    const _bk=+s.book_rate||0, _due=s.due_now||0, _tgt=s.daily_target||0, _bkd=s.booked||0, _cal=s.calls||0;
+    let hos;
+    if(_due>_tgt && _tgt) hos='Directing '+_due+' overdue first · '+_bk+'% book rate';
+    else if(_cal && _bk<12) hos='Tuning the opener · book rate '+_bk+'% below target';
+    else if(_bkd) hos=_bkd+' booked · '+_bk+'% · pacing '+_tgt+'/day on target';
+    else hos='Pipeline primed · pacing '+_tgt+'/day';
     const roles=[
+      ['strategy','Head of Sales · Strategist','AI',_cal?'live':'ok',hos],
       ['audit','Researcher · Brief-builder','AI','ok',(s.briefs_built||0)+'/'+(s.pool_reserved||0)+' briefs ready'],
       ['coach','Sales Coach · Trainer','AI',s.playbook_built_at?'ok':'idle',((pb0.do||[]).length)+' do · '+((pb0.avoid||[]).length)+' avoid · from '+(pb0._won||0)+'w/'+(pb0._lost||0)+'l'],
       ['qa','QA · Compliance','AI','ok',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'],
       [s.autodial_enabled?'phone':'pause','Sales Manager · Dialer','AI',s.autodial_enabled?'live':'paused',(s.dialed_today||0)+'/'+(s.daily_target||0)+' today · '+(s.due_now||0)+' due'],
-      ['user','Head of Sales','Human','you',(s.booked||0)+' booked to review'],
       ['users','BDM closers','Human','human',(s.booked||0)+' meetings to close']];
     const RC={ok:'var(--good)',live:'var(--good)',idle:'var(--warn)',paused:'var(--warn)',you:'var(--vio-2)',human:'var(--muted)'};
     const stx={ok:'Active',live:'Live',idle:'Idle',paused:'Paused',you:'You',human:'Human'};
