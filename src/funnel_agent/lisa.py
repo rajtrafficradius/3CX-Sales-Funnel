@@ -212,6 +212,39 @@ def ensure_audit(pool: ConnectionPool, settings: Settings, domain: str) -> bool:
     return bool(r and r[0].get("a"))
 
 
+_DM_TITLES = ["owner", "founder", "co-founder", "director", "managing director", "chief marketing",
+              "cmo", "head of marketing", "marketing manager", "marketing director", "ceo",
+              "general manager", "principal", "proprietor"]
+
+
+def _prospect_facts(pool: ConnectionPool, domain: str) -> dict:
+    """Spoken-friendly facts about the business from apollo + business_intel + companies (D&B) — what they
+    actually do, where they are, their likely decision-maker's role, and their ideal customer. These let
+    Lisa be SPECIFIC and LOCAL instead of generic. Reliable across the pool; used as context, not a script."""
+    if not domain:
+        return {"what_they_do": "", "location": "", "dm_role": "", "icp": ""}
+    r = _fetch(pool, "SELECT apollo, business_intel FROM enrichment WHERE domain=%s", (domain,))
+    ap = (r[0].get("apollo") if r else None) or {}
+    bi = (r[0].get("business_intel") if r else None) or {}
+    cr = _fetch(pool, "SELECT suburb, state FROM companies WHERE domain=%s AND source='raghav' LIMIT 1", (domain,))
+    cro = cr[0] if cr else {}
+    svc = [s for s in (bi.get("services") or []) if s][:2]
+    prod = [p for p in (bi.get("products") or []) if p][:2]
+    what = ", ".join(dict.fromkeys(svc + prod)) or ", ".join([k for k in (ap.get("keywords") or []) if k][:3])
+    loc = ", ".join([x for x in (ap.get("city"), ap.get("state")) if x]) \
+        or ", ".join([x for x in (cro.get("suburb"), cro.get("state")) if x])
+    people = ap.get("people") or []
+    dm_role = ""
+    for kw in _DM_TITLES:
+        for p in people:
+            if kw in (p.get("title") or "").lower():
+                dm_role = p.get("title"); break
+        if dm_role:
+            break
+    icp = (bi.get("icp") or bi.get("target_audience") or "").strip()
+    return {"what_they_do": what[:180], "location": loc[:60], "dm_role": (dm_role or "")[:60], "icp": icp[:200]}
+
+
 def _enrichment_signals(pool: ConnectionPool, domain: str) -> dict:
     """Cheap, already-stored DataForSEO signals for a domain (no paid call): is it running Google Ads,
     and how many live creatives. Available for the whole GAds pool even without a full SEO audit."""
@@ -357,6 +390,16 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         "objection_no_time": pb.get("objection_no_time") or "",
         "avoid_list": avoid_list,   # what our lost-call analysis says NOT to do
     })
+    # rich, spoken facts (apollo + business_intel + D&B) so Lisa is specific & local, not generic
+    facts = _prospect_facts(pool, domain) if domain else {}
+    b.update({
+        "what_they_do": facts.get("what_they_do", ""),   # tailor examples to their actual products/services
+        "location": facts.get("location", ""),           # a local touch ("customers around <city>…")
+        "dm_role": facts.get("dm_role", ""),             # ask the gatekeeper for the right role
+        "ideal_customer": facts.get("icp", ""),          # who their buyers are
+    })
+    if facts.get("what_they_do") and not niche:
+        b["prospect_niche"] = facts["what_they_do"]
     # Retell wants strings; drop Nones
     return {k: ("" if v is None else str(v)) for k, v in b.items()}
 
@@ -599,10 +642,24 @@ def _book_meeting(pool: ConnectionPool, settings: Settings, call_id: str, dyn: d
         hour=10, minute=0, second=0, microsecond=0)
     who = dyn.get("company_name") or dyn.get("prospect_name") or "prospect"
     email = cad.get("confirmed_email") or dyn.get("prospect_email") or ""
+    # Full STRATEGIST BRIEF on the booked meeting: the audit hook Lisa used + what they do + the
+    # qualification she captured — so the human closer walks in fully prepped.
+    qbits = [(lbl, cad.get(k)) for lbl, k in (
+        ("Current setup", "q_current_setup"), ("Biggest challenge", "q_biggest_challenge"),
+        ("Monthly spend", "q_monthly_spend"), ("Goals (12–18mo)", "q_goals"),
+        ("Timeline", "q_timeline"), ("Other decision-makers", "q_other_decision_makers"),
+        ("Wants covered", "q_session_expectations")) if cad.get(k)]
+    qual = "\n".join(f"  • {lbl}: {v}" for lbl, v in qbits) or "  • (not captured)"
     notes = (f"🎙️ Booked by Lisa (AI) — Digital Expo strategy session.\n"
              f"Agreed time (prospect's words): {when_txt}\n"
              f"Contact: {dyn.get('prospect_name') or ''}  ·  {email}\n"
-             f"Company: {who}  ·  {dyn.get('prospect_website') or ''}\n\n"
+             f"Company: {who}  ·  {dyn.get('prospect_website') or ''}\n"
+             f"What they do: {dyn.get('what_they_do') or dyn.get('prospect_niche') or ''}"
+             + (f"  ·  Based in {dyn.get('location')}" if dyn.get('location') else "") + "\n\n"
+             f"🔬 Audit hook used: {dyn.get('finding_1') or ''}\n"
+             f"   Proof: {dyn.get('finding_proof') or ''}"
+             + (f"  ·  Competitor: {dyn.get('competitor_hook')}" if dyn.get('competitor_hook') else "") + "\n\n"
+             f"📋 Qualification captured:\n{qual}\n\n"
              f"Call summary: {cad.get('call_summary') or ''}")
     eid = create_event(
         pool, bde_name="Lisa", type="meeting",
