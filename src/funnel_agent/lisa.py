@@ -322,7 +322,11 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
             "          FILTER (WHERE NULLIF(cl.prospect_industry,'') IS NOT NULL))[1] industry, "
             "       (array_agg(cl.prospect_email ORDER BY c.started_at DESC) "
             "          FILTER (WHERE NULLIF(cl.prospect_email,'') IS NOT NULL))[1] email, "
-            "       bool_or(cl.rpc_connect) ever_rpc, "
+            "       bool_or(cl.rpc_connect) ever_rpc, bool_or(cl.has_marketing_agency) ever_agency, "
+            "       (array_agg(cl.lead_temperature ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.lead_temperature,'') IS NOT NULL))[1] lead_temp, "
+            "       (array_agg(cl.callback_when ORDER BY c.started_at DESC) "
+            "          FILTER (WHERE NULLIF(cl.callback_when,'') IS NOT NULL))[1] cb_when, "
             "       (array_agg(cl.problem_summary ORDER BY c.started_at DESC) "
             "          FILTER (WHERE NULLIF(cl.problem_summary,'') IS NOT NULL))[1] problem "
             "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
@@ -372,15 +376,25 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     if not findings or not findings.get("finding_1"):
         findings = _spoken_findings({}, niche)
 
-    # --- prior-contact hook (warm) ---
+    # --- prior-contact hook (warm) — reference the last chat so a repeat call feels like a follow-up ---
     prior = ""
     if row and row.get("ever_rpc"):
-        prior = ("I think one of our team may have had a quick chat with someone there a little while back")
+        topic = row.get("problem")
+        prior = ("I think one of our team had a quick chat with someone there recently"
+                 + (f" about {topic}" if topic else "") + " — I'm really just following that up")
 
-    # --- known context so Lisa never re-asks ---
-    known = ""
-    if row and row.get("problem"):
-        known = f"Earlier they mentioned: {row['problem']}"
+    # --- known context so Lisa never re-asks + tailors a warm call (prior problem / agency / interest / callback) ---
+    kb = []
+    if row:
+        if row.get("problem"):
+            kb.append(f"Last time they mentioned: {row['problem']}")
+        if row.get("ever_agency"):
+            kb.append("They already have a marketing agency (so position the session as an independent second opinion)")
+        if row.get("lead_temp"):
+            kb.append(f"Prior interest level: {row['lead_temp']}")
+        if row.get("cb_when"):
+            kb.append(f"They'd asked us to call back around: {row['cb_when']}")
+    known = " · ".join(kb)
 
     # --- objection lines + avoid-list from the LEARNED PLAYBOOK (AI Sales Coach mines won/lost calls);
     #     fall back to sensible defaults until the coach has run. ---
