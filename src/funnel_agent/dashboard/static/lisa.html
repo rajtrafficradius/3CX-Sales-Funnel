@@ -42,6 +42,7 @@
     --glow:0 0 0 1px rgba(124,108,255,.18), 0 22px 60px -30px rgba(88,64,220,.35);
   }}
   *{box-sizing:border-box}
+  @property --pct{syntax:"<number>";inherits:false;initial-value:0}
   body{margin:0;color:var(--txt);min-height:100vh;
     font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
     font-variant-numeric:tabular-nums slashed-zero;-webkit-font-smoothing:antialiased;
@@ -126,6 +127,10 @@
   .orblbl{margin-top:16px;font-weight:720;font-size:16px;letter-spacing:-.01em}
   .orbsub{color:var(--muted);font-size:12px;margin-top:4px;min-height:16px}
   .orbbtns{margin-top:15px;display:flex;gap:8px}
+  .voice-meta{margin-top:auto;padding-top:18px;width:100%;display:flex;flex-wrap:wrap;gap:7px;justify-content:center}
+  .voice-meta span{font-size:10.5px;color:var(--muted);background:var(--panel-3);border:1px solid var(--line);
+    border-radius:var(--r-pill);padding:4px 10px;display:inline-flex;align-items:center;gap:5px}
+  .voice-meta svg{width:11px;height:11px;color:var(--vio-2)}
 
   button.btn{border:none;border-radius:var(--r1);padding:9px 16px;font:inherit;font-weight:640;cursor:pointer;
     transition:filter .15s,transform .1s,background .15s;display:inline-flex;align-items:center;gap:7px}
@@ -140,22 +145,28 @@
 
   /* campaign panel */
   .camp{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);padding:22px 24px;box-shadow:var(--elev);display:flex;flex-direction:column}
-  .camp-head{display:flex;align-items:center;gap:9px;margin-bottom:18px}
+  .camp-head{display:flex;align-items:center;gap:9px;margin-bottom:16px}
   .camp-head .eyebrow{display:flex;align-items:center;gap:7px}
   .camp-head svg{width:14px;height:14px;color:var(--vio-2)}
-  .cgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-  @media(max-width:560px){.cgrid{grid-template-columns:repeat(2,1fr)}}
-  .cstat{padding:2px 0}
-  .cstat .n{font-size:30px;font-weight:760;letter-spacing:-.03em;line-height:1;color:var(--txt)}
-  .cstat .l{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;margin-top:7px}
+  .camp-body{flex:1;display:grid;grid-template-columns:1fr auto;gap:22px;align-items:center}
+  @media(max-width:560px){.camp-body{grid-template-columns:1fr;justify-items:center}}
+  .cgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px 22px}
+  .cstat .n{font-size:29px;font-weight:760;letter-spacing:-.03em;line-height:1;color:var(--txt)}
+  .cstat .l{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;margin-top:6px}
   .cstat.hl .n{color:var(--vio-2)}
-  .prog{margin-top:auto;padding-top:20px}
-  .prog .bar{height:10px;border-radius:6px;background:var(--panel-3);overflow:hidden;border:1px solid var(--line)}
-  .prog .fill{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--vio),var(--cyan));transition:width .6s cubic-bezier(.4,0,.2,1)}
-  .prog .cap{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:9px}
-  .prog .cap b{color:var(--txt-2);font-weight:650}
+  .ring-wrap{display:flex;flex-direction:column;align-items:center;gap:11px}
+  .ring-dial{width:132px;height:132px;border-radius:50%;position:relative;display:grid;place-items:center;
+    background:conic-gradient(from -90deg,var(--vio),var(--cyan) calc(var(--pct,0)*1%),var(--line) calc(var(--pct,0)*1%));
+    transition:--pct .7s cubic-bezier(.4,0,.2,1)}
+  .ring-dial::before{content:"";position:absolute;inset:11px;border-radius:50%;background:var(--panel);box-shadow:inset 0 1px 8px rgba(0,0,0,.28)}
+  :root[data-theme=light] .ring-dial::before{box-shadow:inset 0 1px 8px rgba(20,30,50,.1)}
+  .ring-mid{position:relative;z-index:1;text-align:center;line-height:1.05}
+  .ring-mid .p{font-size:27px;font-weight:770;letter-spacing:-.02em}
+  .ring-mid small{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:4px}
+  .ring-cap{text-align:center;font-size:11.5px;color:var(--muted);line-height:1.6}
+  .ring-cap b{color:var(--txt-2);font-weight:650}
   .note{font-size:11.5px;color:var(--faint);line-height:1.65}
-  .camp .note{margin-top:13px}
+  .camp .note{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 
   /* ── section heading ─────────────────────────────────── */
   .sec-head{display:flex;align-items:center;gap:9px;margin:0 0 11px}
@@ -163,13 +174,12 @@
   .sec-head svg{width:13px;height:13px;color:var(--muted)}
 
   /* ── system pipeline ─────────────────────────────────── */
-  .flowcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:18px 20px;box-shadow:var(--elev);margin-bottom:20px}
-  .flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:2px}
-  .fstep{flex:1 1 0;min-width:118px;display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 6px;position:relative}
-  .fstep:not(:last-child)::after{content:"";position:absolute;top:19px;right:-8px;width:16px;height:2px;
-    background:linear-gradient(90deg,var(--line-2),transparent)}
+  .flowcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:20px 22px;box-shadow:var(--elev);margin-bottom:18px}
+  .flow{position:relative;display:flex;align-items:flex-start;gap:0;overflow-x:auto;padding-bottom:2px}
+  .flow::before{content:"";position:absolute;top:19px;left:7%;right:7%;height:2px;background:var(--line-2);z-index:0}
+  .fstep{position:relative;z-index:1;flex:1 1 0;min-width:110px;display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 6px}
   .fstep .fic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
-    background:var(--panel-3);border:1px solid var(--line-2);color:var(--muted);margin-bottom:9px}
+    background:var(--panel-3);border:1px solid var(--line-2);color:var(--muted);margin-bottom:10px}
   .fstep .fic svg{width:18px;height:18px}
   .fstep.act .fic{background:var(--accent-soft);border-color:rgba(124,108,255,.5);color:var(--vio-2);
     box-shadow:0 0 0 4px rgba(124,108,255,.1)}
@@ -178,7 +188,9 @@
   .fstep.act .fs{color:var(--vio-2)}
 
   /* ── role board ──────────────────────────────────────── */
-  .roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(244px,1fr));gap:13px;margin-bottom:22px}
+  .roles{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:18px}
+  @media(max-width:900px){.roles{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.roles{grid-template-columns:1fr}}
   .role{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);
     border-radius:var(--r2);padding:15px 16px 14px;box-shadow:var(--elev);transition:transform .14s,box-shadow .14s,border-color .14s}
   .role:hover{transform:translateY(-2px);box-shadow:var(--elev-lift);border-color:var(--line-2)}
@@ -197,11 +209,17 @@
   .role .rstat b{color:var(--txt-2);font-weight:650}
 
   /* ── KPI strip ───────────────────────────────────────── */
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:12px;margin:0 0 20px}
-  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:15px 16px;box-shadow:var(--elev)}
-  .kpi .n{font-size:24px;font-weight:740;letter-spacing:-.02em;line-height:1}
-  .kpi .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-top:8px}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:0 0 18px}
+  @media(max-width:900px){.kpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpi{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:14px 15px;box-shadow:var(--elev);transition:transform .14s,border-color .14s}
+  .kpi:hover{transform:translateY(-2px);border-color:var(--line-2)}
+  .kpi .ki{width:36px;height:36px;flex:none;border-radius:10px;display:grid;place-items:center;background:var(--panel-3);border:1px solid var(--line-2);color:var(--muted)}
+  .kpi .ki svg{width:17px;height:17px}
+  .kpi .n{font-size:21px;font-weight:740;letter-spacing:-.02em;line-height:1}
+  .kpi .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-top:6px;white-space:nowrap}
   .kpi.good .n{color:var(--good)} .kpi.warn .n{color:var(--warn)} .kpi.vio .n{color:var(--vio-2)}
+  .kpi.good .ki{color:var(--good)} .kpi.warn .ki{color:var(--warn)} .kpi.vio .ki{color:var(--vio-2)}
 
   /* ── cards ───────────────────────────────────────────── */
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);overflow:hidden;box-shadow:var(--elev)}
@@ -229,8 +247,11 @@
   .qa-tag svg{width:12px;height:12px;color:var(--muted)}
 
   /* ── action bar ──────────────────────────────────────── */
-  .actbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-  .actbar input{background:var(--panel);border:1px solid var(--line-2);color:var(--txt);border-radius:var(--r1);
+  .actbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:14px 16px;box-shadow:var(--elev)}
+  .actbar .abl{display:inline-flex;align-items:center;gap:7px;margin-right:2px;color:var(--faint)}
+  .actbar .abl svg{width:14px;height:14px}
+  .actbar input{background:var(--panel-2);border:1px solid var(--line-2);color:var(--txt);border-radius:var(--r1);
     padding:10px 12px;min-width:190px;font:inherit}
   .actbar input:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
   .actbar input::placeholder{color:var(--faint)}
@@ -358,18 +379,27 @@
       <div class="orblbl" id="orbLbl">Talk to Lisa</div>
       <div class="orbsub" id="orbSub">Tap the orb to speak with her live</div>
       <div class="orbbtns"><button class="btn stop" id="hangBtn" onclick="endCall()" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.8 12.8 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2A19.79 19.79 0 0 1 3.07 8.63"/><line x1="1" y1="1" x2="23" y2="23"/></svg>End call</button></div>
+      <div class="voice-meta">
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>English (AU)</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>Natural voice</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6"/></svg>2 AU lines</span>
+      </div>
     </div>
     <div class="camp">
       <div class="camp-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Campaign · reserved GAds pool · exclusive to Lisa</span></div>
-      <div class="cgrid">
-        <div class="cstat"><div class="n" id="cReserved">–</div><div class="l">Reserved</div></div>
-        <div class="cstat"><div class="n" id="cScheduled">–</div><div class="l">On calendar</div></div>
-        <div class="cstat"><div class="n" id="cDialed">–</div><div class="l">Dialed</div></div>
-        <div class="cstat hl"><div class="n" id="cToday">–</div><div class="l">Today</div></div>
+      <div class="camp-body">
+        <div class="cgrid">
+          <div class="cstat"><div class="n" id="cReserved">–</div><div class="l">Reserved</div></div>
+          <div class="cstat"><div class="n" id="cScheduled">–</div><div class="l">On calendar</div></div>
+          <div class="cstat"><div class="n" id="cDialed">–</div><div class="l">Dialed</div></div>
+          <div class="cstat hl"><div class="n" id="cToday">–</div><div class="l">Dialed today</div></div>
+        </div>
+        <div class="ring-wrap">
+          <div class="ring-dial" id="progRing" style="--pct:0"><div class="ring-mid"><span class="p" id="progPct">0%</span><small>worked</small></div></div>
+          <div class="ring-cap"><span id="progTxt">–</span><br><span id="dueTxt"></span></div>
+        </div>
       </div>
-      <div class="prog"><div class="bar"><div class="fill" id="progFill" style="width:0%"></div></div>
-        <div class="cap"><span id="progTxt">–</span><span id="dueTxt"></span></div>
-        <div class="note" id="campNote"></div></div>
+      <div class="note" id="campNote"></div>
     </div>
   </div>
 
@@ -384,6 +414,7 @@
   <div id="coach" class="card" style="display:none"></div>
 
   <div class="actbar">
+    <span class="abl eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Manual call</span>
     <input id="toNum" type="tel" placeholder="+61 4xx xxx xxx — one-off call" />
     <input id="toDom" type="text" placeholder="domain (optional)" />
     <button class="btn primary" id="callBtn" onclick="launch()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Launch a call</button>
@@ -424,7 +455,12 @@ const IC={
   users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   check:'<polyline points="20 6 9 17 4 12"/>', cross:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   sms:'<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
-  play:'<polygon points="6 4 20 12 6 20 6 4"/>'
+  play:'<polygon points="6 4 20 12 6 20 6 4"/>',
+  refresh:'<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  dollar:'<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  percent:'<line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+  missed:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/><line x1="1" y1="1" x2="23" y2="23"/>'
 };
 const svg=(name,sw)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw||1.8}" stroke-linecap="round" stroke-linejoin="round">${IC[name]||''}</svg>`;
 
@@ -441,7 +477,9 @@ async function load(){
     $('cDialed').textContent=s.pool_dialed||0;
     $('cToday').textContent=s.dialed_today||0;
     const size=s.pool_size||500, done=s.pool_dialed||0;
-    $('progFill').style.width=Math.min(100,Math.round(100*done/Math.max(1,size)))+'%';
+    const pct=Math.min(100,Math.round(100*done/Math.max(1,size)));
+    $('progRing').style.setProperty('--pct',pct);
+    $('progPct').textContent=pct+'%';
     $('progTxt').innerHTML='<b>'+done+'</b> of '+size+' worked';
     $('dueTxt').innerHTML='<b>'+(s.due_now||0)+'</b> due now · '+(s.daily_target||0)+'/day';
     $('campNote').textContent=s.autodial_enabled?'Lisa is dialing her calendar automatically, within each prospect’s local business hours.':'Calendar is loaded and ready. Auto-dial is OFF — set LISA_AUTODIAL_ENABLED=true to go live.';
@@ -480,10 +518,10 @@ async function load(){
     }).join('');
 
     // ---- KPIs ----
-    const k=[['n','Calls',s.calls||0],['n','Completed',s.completed||0],['good','Booked',s.booked||0],
-      ['good','Book rate',(s.book_rate||0)+'%'],['vio','Callbacks',s.callbacks||0],['warn','Missed',s.missed||0],
-      ['n','SMS',s.sms||0],['n','Asked AI',s.asked_ai||0],['n','Talk',dur(s.duration_ms)],['n','Spend',money(s.cost_cents)]];
-    $('kpis').innerHTML=k.map(([c,l,n])=>`<div class="kpi ${c==='n'?'':c}"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join('');
+    const k=[['n','phone','Calls',s.calls||0],['n','check','Completed',s.completed||0],['good','book','Booked',s.booked||0],
+      ['good','percent','Book rate',(s.book_rate||0)+'%'],['vio','refresh','Callbacks',s.callbacks||0],['warn','missed','Missed',s.missed||0],
+      ['n','sms','SMS',s.sms||0],['n','mic','Asked AI',s.asked_ai||0],['n','clock','Talk',dur(s.duration_ms)],['n','dollar','Spend',money(s.cost_cents)]];
+    $('kpis').innerHTML=k.map(([c,ic,l,n])=>`<div class="kpi ${c==='n'?'':c}"><span class="ki">${svg(ic)}</span><div><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div></div>`).join('');
 
     // ---- coach panel ----
     const pb=s.playbook||{}, qa=s.qa||{};
