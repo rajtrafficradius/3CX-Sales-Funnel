@@ -116,8 +116,11 @@ class Settings(BaseSettings):
     lisa_from_numbers: str = ""                   # CSV of Lisa's Retell-registered caller numbers (E.164)
     lisa_session_minutes: int = 45               # length of the booked strategy session
     lisa_webhook_token: str = ""                 # shared secret guarding /api/lisa/postcall
-    lisa_sms_enabled: bool = False               # send the minimal curiosity SMS on a missed call
-    twilio_account_sid: str = ""                 # for Lisa SMS (Twilio account behind her numbers)
+    lisa_sms_enabled: bool = False               # send the minimal curiosity SMS on a missed call (via Retell)
+    lisa_sms_from: str = ""                       # SMS-enabled Retell number to text from (e.g. 827)
+    lisa_sms_agent_id: str = ""                   # Retell chat agent that sends/answers the SMS
+    lisa_transfer_number: str = ""               # human closer's number for a live warm-transfer of a hot lead
+    twilio_account_sid: str = ""                 # (legacy, unused — SMS now goes through Retell)
     twilio_auth_token: str = ""
     # Lisa is an isolated AI BDE with her OWN reserved pool + calendar + auto-dialer.
     lisa_pool_size: int = 500                    # how many GAds-confirmed prospects to reserve for Lisa
