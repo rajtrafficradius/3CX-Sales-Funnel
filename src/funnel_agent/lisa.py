@@ -188,6 +188,30 @@ def _spoken_findings(audit: dict, niche: str) -> dict:
             "competitor_hook": (top.get("domain") or "")}
 
 
+def _domain_for(pool: ConnectionPool, d9: str) -> str | None:
+    """Best-known domain for a prospect (from the reserved pool or a saved brief)."""
+    for tbl in ("lisa_pool", "lisa_briefs"):
+        r = _fetch(pool, f"SELECT domain FROM {tbl} WHERE dest9=%s AND NULLIF(domain,'') IS NOT NULL LIMIT 1", (d9,))
+        if r:
+            return r[0]["domain"]
+    return None
+
+
+def ensure_audit(pool: ConnectionPool, settings: Settings, domain: str) -> bool:
+    """Run the Digital-Marketing-Insight audit (competitor gap + SEO) for a domain so Lisa can open with
+    real hooks. run_competitor_audit is CACHED (free if already done) and hard cost-capped. Returns True
+    if the domain now has competitor-audit data. Never raises."""
+    if not domain:
+        return False
+    try:
+        from .competitor import run_competitor_audit
+        run_competitor_audit(pool, settings, domain)   # cached; caps DataForSEO calls per domain
+    except Exception as exc:
+        log.warning("lisa_ensure_audit_failed", domain=domain, error=str(exc)[:160])
+    r = _fetch(pool, "SELECT (dataforseo ? 'competitor_audit') a FROM enrichment WHERE domain=%s", (domain,))
+    return bool(r and r[0].get("a"))
+
+
 def _enrichment_signals(pool: ConnectionPool, domain: str) -> dict:
     """Cheap, already-stored DataForSEO signals for a domain (no paid call): is it running Google Ads,
     and how many live creatives. Available for the whole GAds pool even without a full SEO audit."""
@@ -427,6 +451,16 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
     if len(re.sub(r"[^0-9]", "", to_number)) < 8:
         return {"error": f"invalid phone number: {to_number or '(empty)'}"}
     d9 = _d9(dest9 or to_number)
+    # AUDIT-BEFORE-CALL: run the Digital-Marketing-Insight audit for this prospect (cached → free if done),
+    # then REBUILD the brief so Lisa opens with the real audit hooks (competitor gap / keyword gap / quick
+    # wins) instead of the generic running-ads line. Falls back gracefully if there's no domain/audit.
+    dom = domain or _domain_for(pool, d9)
+    if getattr(settings, "lisa_audit_before_call", True) and dom:
+        if ensure_audit(pool, settings, dom):
+            try:
+                build_and_store_brief(pool, settings, dest9=d9, domain=dom)   # rebuild with the fresh audit
+            except Exception as exc:
+                log.warning("lisa_rebuild_after_audit_failed", domain=dom, error=str(exc)[:160])
     brief = get_brief(pool, settings, dest9=d9, domain=domain)   # saved per-prospect brief (builds once if missing)
     # overlay the CURRENT coach playbook so the objection library + avoid-list are always the latest,
     # even on a brief that was stored before the last coaching refresh.

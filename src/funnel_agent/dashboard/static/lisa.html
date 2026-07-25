@@ -189,7 +189,8 @@ async function load(){
     $('campNote').textContent=s.autodial_enabled?'Lisa is dialing her calendar automatically within business hours.':'Calendar is loaded and ready. Auto-dial is OFF — set LISA_AUTODIAL_ENABLED=true to go live.';
     // ---- how the calling system works (live flow strip) ----
     const pb0=s.playbook||{}, qa0=s.qa||{};
-    const steps=[['🎯','Reserved pool',(s.pool_reserved||0)+' prospects'],['📋','Brief built',(s.briefs_built||0)+'/'+(s.pool_reserved||0)],
+    const steps=[['🎯','Reserved pool',(s.pool_reserved||0)+' prospects'],['🔬','Audit','before each call'],
+      ['📋','Brief + hooks',(s.briefs_built||0)+'/'+(s.pool_reserved||0)],
       [s.autodial_enabled?'📞':'⏸','Dialer',s.autodial_enabled?'LIVE':'paused'],['🎙️','Lisa talks','open→insight→book→qualify'],
       ['🗓️','System books','+ SMS on miss'],['🧠','Coach learns','won + lost']];
     $('flow').innerHTML='<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px">How Lisa\'s calling system runs</div>'+
