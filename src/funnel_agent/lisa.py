@@ -487,7 +487,10 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
     if not getattr(settings, "lisa_enabled", False):
         return {"error": "lisa disabled (set LISA_ENABLED=true)"}
     froms = list(getattr(settings, "lisa_numbers", []) or [])
-    frm = from_number or (froms[0] if froms else None)
+    # rotate the caller number DETERMINISTICALLY per prospect (spreads volume across numbers to protect
+    # deliverability, but the SAME prospect always sees the SAME number — familiar on a callback).
+    _d = _d9(dest9 or to_number)
+    frm = from_number or (froms[(int(_d[-1]) if _d[-1:].isdigit() else 0) % len(froms)] if froms else None)
     if not frm:
         return {"error": "no LISA_FROM_NUMBERS configured"}
     to_number = _e164_au(to_number)            # Retell 400s on non-E.164 (e.g. "0433…") — normalise first
@@ -607,12 +610,26 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
         _write_funnel_call(pool, cid, dyn, cad, call)
     except Exception as exc:
         log.warning("lisa_funnel_write_failed", call_id=cid, error=str(exc)[:160])
-    # 0b) Lisa's own next-move (callback / retry) on her calendar.
-    try:
-        schedule_lisa_followup(pool, settings, dest9=d9, dest_number=call.get("to_number"),
-                               outcome=outcome, cad=cad, dyn=dyn)
-    except Exception as exc:
-        log.warning("lisa_followup_failed", call_id=cid, error=str(exc)[:160])
+    # 0a-bis) COMPLIANCE: if the prospect asked not to be contacted, suppress them for good — drop from the
+    # reserved pool and cancel every pending Lisa event so she never dials them again.
+    if outcome == "do_not_call" and d9:
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM lisa_pool WHERE dest9=%s", (d9,))
+                cur.execute("UPDATE calendar_events SET status='cancelled' WHERE bde_name='Lisa' "
+                            "AND status='pending' AND right(regexp_replace(COALESCE(dest_number,''),"
+                            "'[^0-9]','','g'),9)=%s", (d9,))
+                conn.commit()
+            result["suppressed_dnc"] = True
+        except Exception as exc:
+            log.warning("lisa_dnc_suppress_failed", call_id=cid, error=str(exc)[:160])
+    else:
+        # 0b) Lisa's own next-move (callback / retry) on her calendar.
+        try:
+            schedule_lisa_followup(pool, settings, dest9=d9, dest_number=call.get("to_number"),
+                                   outcome=outcome, cad=cad, dyn=dyn)
+        except Exception as exc:
+            log.warning("lisa_followup_failed", call_id=cid, error=str(exc)[:160])
 
     # 1) book the agreed meeting server-side (Lisa never booked it herself)
     if meeting_agreed and cad.get("agreed_day_time"):
