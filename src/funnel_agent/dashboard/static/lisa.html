@@ -172,6 +172,12 @@
   .sec-head{display:flex;align-items:center;gap:9px;margin:0 0 11px}
   .sec-head .eyebrow{display:inline-flex;align-items:center;gap:7px}
   .sec-head svg{width:13px;height:13px;color:var(--muted)}
+  .beat{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:600;
+    letter-spacing:.04em;color:var(--good);background:var(--good-d);border:1px solid rgba(52,211,153,.35);
+    border-radius:var(--r-pill);padding:4px 11px;text-transform:none}
+  .beat .bd{width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.beat .bd{animation:none}}
 
   /* ── system pipeline ─────────────────────────────────── */
   .flowcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:20px 22px;box-shadow:var(--elev);margin-bottom:18px}
@@ -406,7 +412,7 @@
   <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How Lisa's calling system runs</span></div>
   <div class="flowcard"><div id="flow" class="flow"></div></div>
 
-  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M15 20a5 5 0 0 1 7 0"/></svg>Lisa's team — live status</span></div>
+  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M15 20a5 5 0 0 1 7 0"/></svg>Lisa's team — live status</span><span class="beat" id="teamBeat"><span class="bd"></span>Auto · every 60s</span></div>
   <div id="system" class="roles"></div>
 
   <div class="kpis" id="kpis"></div>
@@ -499,22 +505,28 @@ async function load(){
       `<div class="fstep${x[3]?' act':''}"><span class="fic">${svg(x[0])}</span><div class="ft">${esc(x[1])}</div><div class="fs">${esc(x[2])}</div></div>`).join('');
 
     // ---- role board: 6 roles, live status ----
-    // Head of Sales = AI strategist: reads the live funnel and issues the current priority.
-    const _bk=+s.book_rate||0, _due=s.due_now||0, _tgt=s.daily_target||0, _bkd=s.booked||0, _cal=s.calls||0;
-    let hos;
-    if(_due>_tgt && _tgt) hos='Directing '+_due+' overdue first · '+_bk+'% book rate';
-    else if(_cal && _bk<12) hos='Tuning the opener · book rate '+_bk+'% below target';
-    else if(_bkd) hos=_bkd+' booked · '+_bk+'% · pacing '+_tgt+'/day on target';
-    else hos='Pipeline primed · pacing '+_tgt+'/day';
+    // All AI staff run automatically every cycle (24/7); the Head of Sales orchestrates them. These read
+    // the REAL persisted strategy (what the strategist actually did this cycle) — not a client-side guess.
+    const st=s.strategy||{}, acts=st.actions||{}, inHours=!!s.in_hours;
+    const hosDid=(acts.briefs_built||acts.qa_reviewed||acts.scheduled||acts.prioritized)
+      ? ' · directed '+(acts.briefs_built||0)+' briefs, '+(acts.qa_reviewed||0)+' QA, ranked '+(acts.prioritized||0)+' prospects' : '';
+    const hosStat=(st.alerts&&st.alerts.length?'⚠ '+st.alerts[0]+' · ':'')+(st.directive||('Pacing '+(s.daily_target||0)+'/day'))+hosDid;
+    const dialState=s.autodial_enabled?(inHours?'live':'offhrs'):'paused';
+    const dialTxt=s.autodial_enabled
+      ?(inHours?(s.dialed_today||0)+'/'+(s.daily_target||0)+' today · '+(s.due_now||0)+' due now'
+               :'Off-hours — resumes 9am · '+(s.due_now||0)+' queued')
+      :(s.dialed_today||0)+'/'+(s.daily_target||0)+' today · '+(s.due_now||0)+' due · gated off';
+    // heartbeat proving the strategist is running on its own
+    const beat=$('teamBeat'); if(beat) beat.textContent=st.updated_local?('Auto · every 60s · last run '+st.updated_local):'Auto · every 60s';
     const roles=[
-      ['strategy','Head of Sales · Strategist','AI',_cal?'live':'ok',hos],
-      ['audit','Researcher · Brief-builder','AI','ok',(s.briefs_built||0)+'/'+(s.pool_reserved||0)+' briefs ready'],
-      ['coach','Sales Coach · Trainer','AI',s.playbook_built_at?'ok':'idle',((pb0.do||[]).length)+' do · '+((pb0.avoid||[]).length)+' avoid · from '+(pb0._won||0)+'w/'+(pb0._lost||0)+'l'],
-      ['qa','QA · Compliance','AI','ok',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'],
-      [s.autodial_enabled?'phone':'pause','Sales Manager · Dialer','AI',s.autodial_enabled?'live':'paused',(s.dialed_today||0)+'/'+(s.daily_target||0)+' today · '+(s.due_now||0)+' due'],
+      ['strategy','Head of Sales · Strategist','AI',(st.alerts&&st.alerts.length)?'idle':'live',hosStat],
+      ['audit','Researcher · Brief-builder','AI','live',(s.briefs_built||0)+'/'+(s.pool_reserved||0)+' briefs saved'+(acts.briefs_built?' · +'+acts.briefs_built+' this cycle':'')],
+      ['coach','Sales Coach · Trainer','AI',s.playbook_built_at?'live':'idle',((pb0.do||[]).length)+' do · '+((pb0.avoid||[]).length)+' avoid · from '+(pb0._won||0)+'w/'+(pb0._lost||0)+'l'],
+      ['qa','QA · Compliance','AI','live',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'+(acts.qa_reviewed?' · +'+acts.qa_reviewed+' new':'')],
+      [s.autodial_enabled&&inHours?'phone':'pause','Sales Manager · Dialer','AI',dialState,dialTxt],
       ['users','BDM closers','Human','human',(s.booked||0)+' meetings to close']];
-    const RC={ok:'var(--good)',live:'var(--good)',idle:'var(--warn)',paused:'var(--warn)',you:'var(--vio-2)',human:'var(--muted)'};
-    const stx={ok:'Active',live:'Live',idle:'Idle',paused:'Paused',you:'You',human:'Human'};
+    const RC={ok:'var(--good)',live:'var(--good)',offhrs:'var(--warn)',idle:'var(--warn)',paused:'var(--warn)',human:'var(--muted)'};
+    const stx={ok:'Active',live:'Live',offhrs:'Off-hrs',idle:'Idle',paused:'Paused',human:'Human'};
     $('system').innerHTML=roles.map(r=>{
       const c=RC[r[3]], ai=r[2]==='AI';
       return `<div class="role" style="--rc:${c}"><div class="rtop">

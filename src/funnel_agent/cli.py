@@ -786,14 +786,11 @@ def refresh(
             try:
                 from . import lisa as _lisa
                 _lisa.ensure_tables(ana)
-                # AI Sales Coach: learn the playbook from won/lost calls (throttled ~20h) + QA recent calls,
-                # BEFORE briefs are (re)built, so the learned objection lines + avoid-list flow into them.
-                if settings.lisa_coaching_enabled:
-                    _lisa.refresh_playbook(ana, settings)
-                    _lisa.review_pending_lisa_calls(ana, settings)
-                _lisa.reserve_lisa_pool(ana, settings)
-                _lisa.schedule_lisa_fresh(ana, settings)
-                _lisa.refresh_lisa_briefs(ana, settings, limit=600)  # save each prospect's variables to the DB (all in one cycle; fast on-network)
+                # Head of Sales · Strategist (AI) ORCHESTRATES the whole team, automatically, every cycle:
+                # value-ranks the pool, then directs the Coach (playbook), QA (reviews), Researcher (briefs),
+                # keeps the pool topped up + the calendar filled in priority order, and guards compliance.
+                # Runs with no instruction — this is the one call that drives all the other AI staff.
+                _lisa.run_head_of_sales(ana, settings)
 
             except Exception as exc:
                 log.warning("lisa_calendar_failed", error=str(exc)[:160])

@@ -79,6 +79,14 @@ def ensure_tables(pool: ConnectionPool) -> None:
         # per-call QA / coaching scores (the Head-of-Sales scorecard).
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_call_reviews ("
                     "  call_id text PRIMARY KEY, scores jsonb, reviewed_at timestamptz DEFAULT now())")
+        # Head of Sales · Strategist output — the current orchestration decision + what it actually did each
+        # cycle (policy, directive, actions taken, compliance alerts). One row (id=1). Surfaced in the console
+        # so the role shows real work, not a label.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_strategy ("
+                    "  id integer PRIMARY KEY, strategy jsonb, updated_at timestamptz DEFAULT now())")
+        # value-rank of the reserved pool (live ad creatives = spend proxy) so the highest-spending
+        # advertisers are called first; set by the Head of Sales each cycle, consumed by schedule_lisa_fresh.
+        cur.execute("ALTER TABLE lisa_pool ADD COLUMN IF NOT EXISTS priority integer DEFAULT 0")
         conn.commit()
     ensure_lisa_agent(pool)
 
@@ -948,7 +956,8 @@ def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
         "   AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
         "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.provider='retell' AND "
         "   right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
-        "ORDER BY lp.reserved_at")
+        # Head-of-Sales value order: highest-spend advertisers (most live ad creatives) first.
+        "ORDER BY lp.priority DESC NULLS LAST, lp.reserved_at")
     existing = {r["d"]: r["n"] for r in _fetch(pool,
         "SELECT (start_at AT TIME ZONE %s)::date d, count(*) n FROM calendar_events "
         "WHERE bde_name='Lisa' AND status='pending' AND type='fresh_call' GROUP BY 1", (tz,))}
@@ -1133,6 +1142,131 @@ def review_pending_lisa_calls(pool: ConnectionPool, settings: Settings, limit: i
 
 
 # --------------------------------------------------------------------------- #
+# Head of Sales · Strategist — the AI orchestrator (runs every cycle, automatically)
+# --------------------------------------------------------------------------- #
+def _biz_now(settings: Settings) -> tuple[bool, datetime]:
+    """(in AU business hours?, now) — Mon–Fri within the call window. The strategist uses this to switch
+    between LIVE mode (dial/pace) and PREP mode (brief/coach/QA for tomorrow), so the team's rhythm follows
+    the working day on its own."""
+    now = datetime.now(ZoneInfo(_TZ))
+    ws = int(getattr(settings, "lisa_call_window_start", 9))
+    we = int(getattr(settings, "lisa_call_window_end", 17))
+    return (now.weekday() < 5 and ws <= now.hour < we), now
+
+
+def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
+    """Head of Sales · Strategist (AI) — the ORCHESTRATOR, run automatically every refresh cycle (24/7).
+    It doesn't wait for instructions: each pass it (1) value-ranks Lisa's reserved pool so the highest-spend
+    advertisers are called first, (2) DIRECTS the other AI staff — keeps the pool topped up, has the Coach
+    re-learn the playbook, the QA reviewer score new calls, the Researcher fill any missing briefs, and the
+    calendar filled in priority order, (3) guards brand/compliance, and (4) persists the decision + exactly
+    what it did (lisa_strategy) so the console shows real work. Safe + idempotent; never raises."""
+    ensure_tables(pool)
+    in_hours, now = _biz_now(settings)
+    actions = {"prioritized": 0, "reserved": 0, "coach": "skip", "qa_reviewed": 0, "briefs_built": 0, "scheduled": 0}
+    alerts: list[str] = []
+
+    # 1) value-rank the pool — live ad creatives = spend proxy (all pool prospects are GAds-confirmed)
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE lisa_pool lp SET priority=COALESCE((e.dataforseo->'ads'->>'count')::int,0) "
+                        "FROM enrichment e WHERE e.domain=lp.domain")
+            actions["prioritized"] = cur.rowcount
+            conn.commit()
+    except Exception as exc:
+        log.warning("hos_priority_failed", error=str(exc)[:140])
+
+    # 2–3) direct the team (each idempotent; refresh_playbook self-throttles ~20h, briefs only fill gaps)
+    try:
+        actions["reserved"] = reserve_lisa_pool(pool, settings).get("reserved", 0)
+    except Exception as exc:
+        log.warning("hos_reserve_failed", error=str(exc)[:140])
+    if getattr(settings, "lisa_coaching_enabled", True):
+        try:
+            pb = refresh_playbook(pool, settings)
+            actions["coach"] = "skipped" if pb.get("skipped") else f"learned {pb.get('learned_from_won',0)}w/{pb.get('learned_from_lost',0)}l"
+        except Exception as exc:
+            log.warning("hos_coach_failed", error=str(exc)[:140])
+        try:
+            actions["qa_reviewed"] = review_pending_lisa_calls(pool, settings).get("reviewed", 0)
+        except Exception as exc:
+            log.warning("hos_qa_failed", error=str(exc)[:140])
+    try:
+        actions["briefs_built"] = refresh_lisa_briefs(pool, settings, limit=600).get("built", 0)
+    except Exception as exc:
+        log.warning("hos_briefs_failed", error=str(exc)[:140])
+    try:
+        actions["scheduled"] = schedule_lisa_fresh(pool, settings).get("scheduled", 0)
+    except Exception as exc:
+        log.warning("hos_schedule_failed", error=str(exc)[:140])
+
+    # 4) read the funnel + guardrails
+    snap = _fetch(pool,
+        "SELECT count(*) calls, count(*) FILTER (WHERE meeting_agreed) booked, "
+        "  count(*) FILTER (WHERE asked_if_ai) asked_ai "
+        "FROM lisa_calls WHERE created_at >= now() - interval '30 days'")[0]
+    calls = snap["calls"] or 0
+    booked = snap["booked"] or 0
+    book_rate = round(100 * booked / calls, 1) if calls else 0.0
+    due = _fetch(pool, "SELECT count(*) c FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
+        "AND type IN ('fresh_call','retry','callback','reached_call') AND start_at<=now()")[0]["c"]
+    due_cb = _fetch(pool, "SELECT count(*) c FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
+        "AND type IN ('callback','retry') AND start_at<=now()")[0]["c"]
+    comp = _fetch(pool, "SELECT avg(NULLIF(scores->>'compliance','')::float) "
+        "FILTER (WHERE scores->>'compliance' ~ '^[0-9.]+$') c FROM lisa_call_reviews")[0]["c"]
+    pool_left = _fetch(pool, "SELECT count(*) c FROM lisa_pool")[0]["c"]
+    if comp is not None and comp < 4:
+        alerts.append(f"Compliance {round(comp,1)}/5 — tighten brand / AI-disclosure")
+    if calls and (snap["asked_ai"] or 0) / calls > 0.25:
+        alerts.append("Prospects often ask 'are you AI?' — soften the opener")
+    if pool_left < 50:
+        alerts.append(f"Pool low ({pool_left}) — reserving more GAds prospects")
+
+    # 5) decide mode + directive (follows the working day on its own)
+    tgt = int(getattr(settings, "lisa_daily_target", 50))
+    autodial = bool(getattr(settings, "lisa_autodial_enabled", False))
+    if not autodial:
+        policy = "staged"
+        directive = f"Pool primed & value-ranked ({pool_left} ready) — awaiting go-live, pacing {tgt}/day"
+    elif not in_hours:
+        policy = "prep"
+        directive = f"Off-hours — prepping briefs & coaching for tomorrow · {book_rate}% booking"
+    elif due_cb:
+        policy = "callbacks_first"
+        directive = f"Live — clearing {due_cb} due callbacks first, then top-spend fresh"
+    elif calls and book_rate < 12:
+        policy = "tune_opener"
+        directive = f"Live — book rate {book_rate}%; Coach sharpening the opener, top-spenders first"
+    else:
+        policy = "value_rank"
+        directive = f"Live — pacing {tgt}/day, highest-spend advertisers first · {book_rate}% booking"
+
+    strategy = {"directive": directive, "policy": policy, "in_hours": in_hours, "book_rate": book_rate,
+                "booked": booked, "calls": calls, "due": due, "due_callbacks": due_cb, "pool": pool_left,
+                "compliance": (round(comp, 1) if comp is not None else None),
+                "actions": actions, "alerts": alerts}
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa_strategy (id, strategy, updated_at) VALUES (1,%s,now()) "
+                        "ON CONFLICT (id) DO UPDATE SET strategy=EXCLUDED.strategy, updated_at=now()",
+                        (json.dumps(strategy),))
+            conn.commit()
+    except Exception as exc:
+        log.warning("hos_persist_failed", error=str(exc)[:140])
+    log.info("lisa_head_of_sales", policy=policy, in_hours=in_hours, **actions)
+    return strategy
+
+
+def get_strategy(pool: ConnectionPool) -> dict:
+    r = _fetch(pool, "SELECT strategy, (updated_at AT TIME ZONE 'Australia/Melbourne') u FROM lisa_strategy WHERE id=1")
+    if not r:
+        return {}
+    s = (r[0].get("strategy") or {})
+    s["updated_local"] = str(r[0].get("u") or "").replace("T", " ")[:16]
+    return s
+
+
+# --------------------------------------------------------------------------- #
 # reporting (admin-only console + funnel)
 # --------------------------------------------------------------------------- #
 def summary(pool: ConnectionPool, days: int = 30) -> dict:
@@ -1175,6 +1309,10 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
         "  avg(NULLIF(scores->>'compliance','')::float) FILTER (WHERE scores->>'compliance' ~ '^[0-9.]+$') compliance "
         "FROM lisa_call_reviews")
     s["qa"] = dict(qa[0]) if qa else {}
+    # --- Head of Sales · Strategist: the persisted orchestration decision + what it last did (real work) ---
+    s["strategy"] = get_strategy(pool)
+    now_mel = datetime.now(ZoneInfo(tz))
+    s["in_hours"] = bool(now_mel.weekday() < 5 and 9 <= now_mel.hour < 17)
     return s
 
 
