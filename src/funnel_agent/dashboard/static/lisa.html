@@ -665,6 +665,9 @@ async function load(){
     } else { cel.style.display='none'; }
 
     // ---- recent calls ----
+    // Never rebuild the calls table while a recording is playing — re-rendering would destroy the <audio>
+    // element and stop playback partway. Skip this cycle's table refresh until it's paused/ended.
+    if([...document.querySelectorAll('.recplay')].some(a=>!a.paused && !a.ended)) return;
     const d=await jget('/api/lisa/calls?limit=150'); const rows=d.calls||[];
     $('rows').innerHTML=rows.length?rows.map(c=>{
       const oc=(c.call_outcome||c.status||'—');
