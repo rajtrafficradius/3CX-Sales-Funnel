@@ -116,12 +116,16 @@ class Settings(BaseSettings):
     lisa_from_numbers: str = ""                   # CSV of Lisa's Retell-registered caller numbers (E.164)
     lisa_session_minutes: int = 45               # length of the booked strategy session
     lisa_webhook_token: str = ""                 # shared secret guarding /api/lisa/postcall
-    lisa_sms_enabled: bool = False               # send the minimal curiosity SMS on a missed call (via Retell)
-    lisa_sms_from: str = ""                       # SMS-enabled Retell number to text from (e.g. 827)
-    lisa_sms_agent_id: str = ""                   # Retell chat agent that sends/answers the SMS
+    lisa_sms_enabled: bool = False               # send the minimal curiosity SMS on a missed call
+    lisa_sms_from: str = ""                       # primary SMS-capable number to text from (e.g. 827)
+    lisa_sms_numbers: str = ""                    # CSV of ALL SMS-capable numbers (backend picks one; e.g. 827,<new>)
+    lisa_sms_agent_id: str = ""                   # (legacy) Retell chat agent — only used if Twilio isn't configured
     lisa_transfer_number: str = ""               # human closer's number for a live warm-transfer of a hot lead
-    twilio_account_sid: str = ""                 # (legacy, unused — SMS now goes through Retell)
-    twilio_auth_token: str = ""
+    # SMS is a BACKEND process via Twilio direct (decoupled from the Retell voice agent → zero call-latency
+    # impact; Lisa only talks). Set these to send SMS straight from Twilio instead of through Retell.
+    twilio_account_sid: str = ""                 # Twilio Account SID (AC…) — or API Key SID for scoped auth
+    twilio_auth_token: str = ""                   # Twilio Auth Token — or the API Key Secret
+    twilio_messaging_service_sid: str = ""       # optional: Messaging Service SID (MG…); Twilio picks the number
     # Lisa is an isolated AI BDE with her OWN reserved pool + calendar + auto-dialer.
     lisa_pool_size: int = 500                    # how many GAds-confirmed prospects to reserve for Lisa
     lisa_daily_target: int = 50                  # calls Lisa places per working day
@@ -360,6 +364,11 @@ class Settings(BaseSettings):
     def lisa_numbers(self) -> list[str]:
         """Lisa's Retell-registered caller numbers (E.164), rotated across calls. From LISA_FROM_NUMBERS."""
         return _csv(self.lisa_from_numbers)
+
+    @property
+    def lisa_sms_number_list(self) -> list[str]:
+        """All SMS-capable numbers (E.164). From LISA_SMS_NUMBERS, else falls back to LISA_SMS_FROM."""
+        return _csv(self.lisa_sms_numbers) or ([self.lisa_sms_from] if self.lisa_sms_from else [])
 
     @property
     def aircall_agents(self) -> list[str]:
