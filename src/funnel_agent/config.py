@@ -123,8 +123,10 @@ class Settings(BaseSettings):
     lisa_transfer_number: str = ""               # human closer's number for a live warm-transfer of a hot lead
     # SMS is a BACKEND process via Twilio direct (decoupled from the Retell voice agent → zero call-latency
     # impact; Lisa only talks). Set these to send SMS straight from Twilio instead of through Retell.
-    twilio_account_sid: str = ""                 # Twilio Account SID (AC…) — or API Key SID for scoped auth
-    twilio_auth_token: str = ""                   # Twilio Auth Token — or the API Key Secret
+    twilio_account_sid: str = ""                 # Twilio Account SID (AC…) — used in the API URL
+    twilio_auth_token: str = ""                   # Twilio Auth Token (used only if no API key is set)
+    twilio_api_key_sid: str = ""                 # Twilio API Key SID (SK…) — preferred, revocable auth
+    twilio_api_key_secret: str = ""              # Twilio API Key Secret (pairs with the API Key SID)
     twilio_messaging_service_sid: str = ""       # optional: Messaging Service SID (MG…); Twilio picks the number
     # Lisa is an isolated AI BDE with her OWN reserved pool + calendar + auto-dialer.
     lisa_pool_size: int = 500                    # how many GAds-confirmed prospects to reserve for Lisa

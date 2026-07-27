@@ -829,13 +829,23 @@ def _pick_sms_from(settings: Settings, call_from: str | None = None) -> str:
     return cf if cf in nums else nums[0]
 
 
+def _twilio_ready(settings: Settings) -> bool:
+    """Twilio backend SMS is usable when we have the AC account (for the URL) + a secret (API key or token)."""
+    acct = getattr(settings, "twilio_account_sid", "") or ""
+    secret = getattr(settings, "twilio_api_key_secret", "") or getattr(settings, "twilio_auth_token", "") or ""
+    return bool(acct.startswith("AC") and secret)
+
+
 def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number: str) -> bool:
     """Send one SMS DIRECTLY via the Twilio REST API (backend process — never through the Retell voice
-    agent, so it can't touch Lisa's call latency). Uses a Messaging Service if configured, else the given
-    from-number. Returns True on 2xx. Raises on HTTP error (caller logs)."""
-    sid = getattr(settings, "twilio_account_sid", "") or ""
-    tok = getattr(settings, "twilio_auth_token", "") or ""
-    if not (sid and tok):
+    agent, so it can't touch Lisa's call latency). Auth prefers an API Key (SK…:secret) and falls back to
+    Account SID:Auth Token; the URL always uses the AC… account. Uses a Messaging Service if configured,
+    else the given from-number. Returns True on 2xx. Raises on HTTP error (caller logs)."""
+    acct = getattr(settings, "twilio_account_sid", "") or ""          # AC… — the account in the URL
+    key_sid = getattr(settings, "twilio_api_key_sid", "") or ""       # SK… — API key (preferred auth user)
+    secret = getattr(settings, "twilio_api_key_secret", "") or getattr(settings, "twilio_auth_token", "") or ""
+    user = key_sid or acct                                            # API key SID if present, else account SID
+    if not (acct.startswith("AC") and user and secret):
         return False
     params = {"To": _e164_au(to_number), "Body": body}
     msvc = getattr(settings, "twilio_messaging_service_sid", "") or ""
@@ -846,9 +856,9 @@ def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number:
     else:
         return False
     data = urllib.parse.urlencode(params).encode()
-    auth = base64.b64encode(f"{sid}:{tok}".encode()).decode()
+    auth = base64.b64encode(f"{user}:{secret}".encode()).decode()
     req = urllib.request.Request(
-        f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json", data=data, method="POST",
+        f"https://api.twilio.com/2010-04-01/Accounts/{acct}/Messages.json", data=data, method="POST",
         headers={"Authorization": f"Basic {auth}", "Content-Type": "application/x-www-form-urlencoded"})
     urllib.request.urlopen(req, timeout=30)
     return True
@@ -868,7 +878,7 @@ def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, t
     sms_from = _pick_sms_from(settings, call_from)
     sent = False
     try:
-        if getattr(settings, "twilio_account_sid", "") and getattr(settings, "twilio_auth_token", ""):
+        if _twilio_ready(settings):
             sent = _send_sms_twilio(settings, to_number, body, sms_from)          # backend Twilio (preferred)
         elif getattr(settings, "lisa_sms_agent_id", "") and sms_from:            # legacy Retell fallback
             _retell(settings, "POST", "create-sms-chat", {
