@@ -953,6 +953,15 @@ def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, cal
              cad.get("agreed_day_time"), callback, cad.get("callback_when"), stage,
              dyn.get("company_name"), dyn.get("prospect_website"), dyn.get("prospect_name"),
              cad.get("confirmed_email") or dyn.get("prospect_email"), outcome == "do_not_call"))
+        # Store the transcript in the shared `transcripts` table too, so the Sales Coach (refresh_playbook,
+        # which mines WON/LOST from `transcripts`) also learns from Lisa's OWN calls — not just the humans'.
+        tx = call.get("transcript") or ""
+        if len(tx) > 200:
+            cur.execute(
+                "INSERT INTO transcripts (call_id, source, diarized, text, sentiment, summary) "
+                "VALUES (%s,'retell',true,%s,%s,%s) ON CONFLICT (call_id) DO UPDATE SET "
+                "text=EXCLUDED.text, summary=EXCLUDED.summary",
+                (cid, tx, (call.get("call_analysis") or {}).get("user_sentiment"), cad.get("call_summary")))
         conn.commit()
 
 
