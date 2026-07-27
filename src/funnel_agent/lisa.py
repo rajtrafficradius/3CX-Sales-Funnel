@@ -1263,11 +1263,21 @@ def get_playbook(pool: ConnectionPool) -> dict:
 
 def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, transcript: str) -> dict:
     """AI QA reviewer: score one Lisa call for quality + brand + compliance; store for the scorecard."""
-    sys = ("Score this AI cold-caller (Lisa, an AU digital-marketing appointment setter) from her call "
-           "transcript. Return STRICT JSON: opening (1-5), discovery (1-5), objection_handling (1-5), "
-           "booking (1-5), compliance (1-5 — did she say 'DE Group' only, NOT volunteer she's an AI "
-           "unless directly asked, sound human), overall (1-5), best_line (string), improve (one-sentence "
-           "coaching tip), flags (array of any compliance/quality issues, empty if none).")
+    sys = ("You are the QA reviewer + coach for an AU appointment-setting AI caller (Lisa, brand 'DE Group', "
+           "who books a free strategy session). Review her transcript strictly. Return STRICT JSON: "
+           "opening (1-5), discovery (1-5), objection_handling (1-5), booking (1-5), "
+           "compliance (1-5 — said ONLY 'DE Group', NEVER 'Traffic Radius'/'Digital Expo'; didn't volunteer "
+           "she's an AI unless directly asked; sounded human), overall (1-5), best_line (string), "
+           "improve (one-sentence coaching tip). "
+           "ALSO detect these SPECIFIC failure modes as booleans (true ONLY if it clearly happened): "
+           "gatekeeper_leak (told a receptionist/non-decision-maker it was about marketing/advertising/sales/"
+           "SEO or 'how people find the business', instead of just asking for the person by name or giving a "
+           "neutral curiosity reason), pushed_wrong_person (kept pitching or asking questions after someone "
+           "said they're not the right person), brand_slip (said any brand other than 'DE Group'), "
+           "robotic_name (greeted using a full name or an obviously wrong/mismatched name), "
+           "talked_over_or_repeated (talked over the prospect, or asked the same question twice), "
+           "over_questioned (kept asking questions after the prospect signalled they were busy). "
+           "flags = array of short human-readable labels for every problem found (empty array if none).")
     r = _llm_json(settings, sys, transcript or "")
     if r:
         with pool.connection() as conn, conn.cursor() as cur:
@@ -1368,6 +1378,19 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
         alerts.append("Prospects often ask 'are you AI?' — soften the opener")
     if pool_left < 50:
         alerts.append(f"Pool low ({pool_left}) — reserving more GAds prospects")
+    # QA failure-modes: surface any that recurred so a real problem becomes visible + actionable
+    _FLBL = {"gatekeeper_leak": "outed as marketing to gatekeepers", "pushed_wrong_person": "kept pitching wrong people",
+             "brand_slip": "said the wrong brand", "robotic_name": "robotic/wrong names",
+             "talked_over_or_repeated": "talked over / repeated", "over_questioned": "over-questioned busy prospects"}
+    try:
+        _F = list(_FLBL)
+        flr = _fetch(pool, "SELECT " + ", ".join(f"count(*) FILTER (WHERE scores->>'{f}'='true') {f}" for f in _F) +
+                     " FROM lisa_call_reviews WHERE reviewed_at >= now() - interval '7 days'")
+        for f, n in (dict(flr[0]) if flr else {}).items():
+            if n and n >= 2:
+                alerts.append(f"QA: {n} calls {_FLBL[f]} — Coach to fix")
+    except Exception as exc:
+        log.warning("hos_qaflags_failed", error=str(exc)[:120])
 
     # 5) decide mode + directive (follows the working day on its own)
     tgt = int(getattr(settings, "lisa_daily_target", 50))
@@ -1456,6 +1479,12 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
         "  avg(NULLIF(scores->>'compliance','')::float) FILTER (WHERE scores->>'compliance' ~ '^[0-9.]+$') compliance "
         "FROM lisa_call_reviews")
     s["qa"] = dict(qa[0]) if qa else {}
+    # --- QA failure-mode flags the reviewer caught across recent calls (the AI staff doing its duty) ---
+    _F = ["gatekeeper_leak", "pushed_wrong_person", "brand_slip", "robotic_name", "talked_over_or_repeated", "over_questioned"]
+    fl = _fetch(pool, "SELECT " + ", ".join(
+        f"count(*) FILTER (WHERE scores->>'{f}' = 'true') {f}" for f in _F) +
+        " FROM lisa_call_reviews WHERE reviewed_at >= now() - interval '21 days'")
+    s["qa_flags"] = {k: v for k, v in (dict(fl[0]) if fl else {}).items() if v}
     # --- Head of Sales · Strategist: the persisted orchestration decision + what it last did (real work) ---
     s["strategy"] = get_strategy(pool)
     now_mel = datetime.now(ZoneInfo(tz))

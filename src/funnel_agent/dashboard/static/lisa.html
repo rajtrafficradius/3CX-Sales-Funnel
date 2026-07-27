@@ -311,6 +311,7 @@
     background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 12px}
   .qa-tag b{color:var(--txt-2)}
   .qa-tag svg{width:12px;height:12px;color:var(--muted)}
+  .qa-tag.flag{color:var(--bad);border-color:rgba(251,113,133,.4);background:var(--bad-d);text-transform:capitalize}
 
   /* ── action bar ──────────────────────────────────────── */
   .actbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;
@@ -592,6 +593,7 @@ async function load(){
     // All AI staff run automatically every cycle (24/7); the Head of Sales orchestrates them. These read
     // the REAL persisted strategy (what the strategist actually did this cycle) — not a client-side guess.
     const st=s.strategy||{}, acts=st.actions||{}, inHours=!!s.in_hours;
+    const qf=s.qa_flags||{}, qfTop=Object.entries(qf).sort((a,b)=>b[1]-a[1])[0];
     const hosDid=(acts.briefs_built||acts.qa_reviewed||acts.scheduled||acts.prioritized)
       ? ' · directed '+(acts.briefs_built||0)+' briefs, '+(acts.qa_reviewed||0)+' QA, ranked '+(acts.prioritized||0)+' prospects' : '';
     const hosStat=(st.alerts&&st.alerts.length?'⚠ '+st.alerts[0]+' · ':'')+(st.directive||('Pacing '+(s.daily_target||0)+'/day'))+hosDid;
@@ -614,7 +616,7 @@ async function load(){
       ['AI staff · always on, automatic',[
         ['audit','Researcher · Brief-builder','AI','live',(s.briefs_built||0)+'/'+(s.pool_reserved||0)+' briefs saved'+(acts.briefs_built?' · +'+acts.briefs_built+' this cycle':'')],
         ['coach','Sales Coach · Trainer','AI',s.playbook_built_at?'live':'idle',((pb0.do||[]).length)+' do · '+((pb0.avoid||[]).length)+' avoid · '+(pb0._won||0)+'w/'+(pb0._lost||0)+'l'],
-        ['qa','QA · Compliance','AI','live',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'+(acts.qa_reviewed?' · +'+acts.qa_reviewed+' new':'')],
+        ['qa','QA · Compliance','AI','live',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'+(qfTop?' · ⚠ '+qfTop[1]+' '+qfTop[0].replace(/_/g,' '):(acts.qa_reviewed?' · +'+acts.qa_reviewed+' new':''))],
         [s.autodial_enabled&&inHours?'phone':'pause','Sales Manager · Dialer','AI',dialState,dialTxt],
       ]],
       ['AI agents · the callers',[
@@ -665,6 +667,7 @@ async function load(){
           <span class="qa-tag">${svg('qa',1.9)}QA reviewed <b>${qa.n||0}</b> calls</span>
           <span class="qa-tag">Overall <b>${qa.overall?(+qa.overall).toFixed(1):'–'}/5</b></span>
           <span class="qa-tag">Compliance <b>${qa.compliance?(+qa.compliance).toFixed(1):'–'}/5</b></span>
+          ${Object.entries(qf).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="qa-tag flag">⚠ ${v} · ${esc(k.replace(/_/g,' '))}</span>`).join('')}
         </div>`;
     } else { cel.style.display='none'; }
 
