@@ -95,6 +95,12 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_control ("
                     "  id integer PRIMARY KEY, autodial boolean, updated_at timestamptz DEFAULT now(),"
                     "  updated_by text)")
+        # two-way SMS log — every outbound curiosity SMS + every inbound reply (so prospect replies are
+        # captured, threaded, and Lisa can reply). Was previously lost (Twilio had them, we didn't).
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_sms ("
+                    "  id bigserial PRIMARY KEY, dest9 text, direction text, from_number text, to_number text,"
+                    "  body text, handled boolean DEFAULT false, created_at timestamptz DEFAULT now())")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa_sms_dest9 ON lisa_sms(dest9)")
         # resolved TRUE decision-maker per company (cross-checked from call-intel + BD data + Apollo), with
         # the best number (mobile preferred). Lisa dials THIS so the dialer reaches the right person.
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_dm ("
@@ -1038,10 +1044,55 @@ def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, t
         log.warning("lisa_sms_failed", call_id=call_id, error=str(exc)[:200])
         return False
     if sent:
+        _log_sms(pool, "outbound", sms_from, to_number, body, _d9(to_number))
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("UPDATE lisa_calls SET sms_sent=true, updated_at=now() WHERE call_id=%s", (call_id,))
             conn.commit()
     return sent
+
+
+def _log_sms(pool: ConnectionPool, direction: str, frm: str | None, to: str | None, body: str | None,
+             dest9: str | None) -> None:
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa_sms (dest9, direction, from_number, to_number, body) VALUES (%s,%s,%s,%s,%s)",
+                        (dest9, direction, frm, to, body))
+            conn.commit()
+    except Exception as exc:
+        log.warning("lisa_sms_log_failed", error=str(exc)[:120])
+
+
+def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: str, body: str) -> dict:
+    """A prospect TEXTED BACK. Capture it (was previously lost), then reply as Lisa — short, human, aiming
+    to lock a quick call — using their saved brief for context. Two-way SMS, backend-driven."""
+    ensure_tables(pool)
+    d9 = _d9(from_number)
+    _log_sms(pool, "inbound", from_number, getattr(settings, "lisa_sms_from", ""), body, d9)
+    br = _fetch(pool, "SELECT brief FROM lisa_briefs WHERE dest9=%s", (d9,))
+    brief = (br[0]["brief"] if br and br[0].get("brief") else {}) or {}
+    name = _first_name(brief.get("prospect_name") or "")
+    hist = _fetch(pool, "SELECT direction, body FROM lisa_sms WHERE dest9=%s ORDER BY created_at DESC LIMIT 6", (d9,))
+    thread = "\n".join(f"{'Them' if h['direction']=='inbound' else 'Lisa'}: {h['body']}" for h in reversed(hist))
+    sys = ("You are Lisa from DE Group, an Australian digital-marketing team, replying by SMS to a prospect who "
+           "texted back after you tried to call them. Reply SHORT (1-2 sentences), warm, human and casual — like "
+           "a real person texting. Your goal: get them to agree to a quick 15-minute chat with our strategist "
+           "about how they're showing up on Google (they run Google Ads). If they ask who you are or how they "
+           "know you, be honest and friendly (you'd tried to reach them about their online presence). If they "
+           "ask whether you're an AI, admit it briefly and warmly. Never pushy, never long, never a placeholder. "
+           "Return STRICT JSON: {\"reply\": \"...\"}.")
+    usr = (f"Prospect first name: {name or 'there'}\nCompany: {brief.get('company_name') or ''}\n"
+           f"What I'd flag: {brief.get('finding_1') or 'how they show up on Google next to their ads'}\n\nThread so far:\n{thread}")
+    r = _llm_json(settings, sys, usr)
+    reply = ((r.get("reply") or "").strip() if isinstance(r, dict) else "") or (
+        f"Hi{(' ' + name) if name else ''}! It's Lisa from DE Group — I'd tried you about how you're showing up "
+        "on Google next to your ads. Worth a quick 15-min chat? What time roughly suits you?")
+    sms_from = _pick_sms_from(settings)
+    try:
+        if _twilio_ready(settings) and _send_sms_twilio(settings, from_number, reply, sms_from):
+            _log_sms(pool, "outbound", sms_from, from_number, reply, d9)
+    except Exception as exc:
+        log.warning("lisa_sms_reply_failed", error=str(exc)[:150])
+    return {"ok": True, "reply": reply}
 
 
 # --------------------------------------------------------------------------- #

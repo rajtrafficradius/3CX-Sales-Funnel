@@ -500,7 +500,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- auth: per-person login + role-based scoping --------------------- #
     # /api/lisa/postcall is the Retell webhook — it has NO session (Retell posts server-to-server), so it
     # must bypass the login gate; it is guarded instead by its own LISA_WEBHOOK_TOKEN query token.
-    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall", "/api/lisa/inbound"}
+    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall",
+               "/api/lisa/inbound", "/api/lisa/sms-inbound"}
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
@@ -4486,5 +4487,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         frm = ci.get("from_number") or ci.get("from") or ""
         r = await run_in_threadpool(_lisa.inbound_variables, pool, settings, frm)
         return JSONResponse({"call_inbound": r})
+
+    @app.post("/api/lisa/sms-inbound")
+    async def lisa_sms_inbound(request: Request) -> Response:
+        """Twilio inbound-SMS webhook (827). A prospect texted back → capture it + Lisa replies. Token-guarded."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa as _lisa
+        try:
+            form = await request.form()
+        except Exception:
+            form = {}
+        frm = form.get("From") or ""
+        body = form.get("Body") or ""
+        if frm:
+            await run_in_threadpool(_lisa.handle_inbound_sms, pool, settings, frm, body)
+        return Response(content="<Response></Response>", media_type="application/xml")
 
     return app
