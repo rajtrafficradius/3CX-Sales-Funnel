@@ -345,6 +345,10 @@
   .qbits span{background:var(--panel-3);border:1px solid var(--line);border-radius:6px;padding:1px 7px}
   .rec{display:inline-flex;align-items:center;gap:5px;color:var(--vio-2);font-weight:600}
   .rec svg{width:13px;height:13px}
+  .recplay{height:34px;width:230px;max-width:230px;vertical-align:middle}
+  :root[data-theme=dark] .recplay{filter:invert(.92) hue-rotate(180deg) saturate(.8)}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]) .recplay{filter:invert(.92) hue-rotate(180deg) saturate(.8)}}
+  th.rec-col,td.rec-col{min-width:244px}
   .empty{padding:44px;text-align:center;color:var(--muted)}
   .footnote{font-size:11.5px;color:var(--faint);margin-top:16px;line-height:1.7}
   .footnote b{color:var(--txt-2);font-weight:650}
@@ -492,7 +496,7 @@
   <div class="card">
     <div class="chead"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Recent calls</span></div>
     <div class="scroll"><table><thead><tr>
-      <th>When</th><th>Prospect</th><th>Outcome</th><th>Booked for</th><th>Objection</th><th>Dur</th><th>Rec</th><th>Summary</th>
+      <th>When</th><th>Prospect</th><th>Outcome</th><th>Booked for</th><th>Objection</th><th>Dur</th><th class="rec-col">Recording</th><th>Summary</th>
     </tr></thead><tbody id="rows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody></table></div>
   </div>
   <div class="footnote"><b>Outbound Intelligence</b> is the autonomous AI sales floor — the Head of Sales orchestrates the
@@ -664,7 +668,7 @@ async function load(){
     const d=await jget('/api/lisa/calls?limit=150'); const rows=d.calls||[];
     $('rows').innerHTML=rows.length?rows.map(c=>{
       const oc=(c.call_outcome||c.status||'—');
-      const rec=c.recording_url?`<a class="rec" href="${esc(c.recording_url)}" target="_blank">${svg('play',2)}play</a>`:'';
+      const rec=c.recording_url?`<audio class="recplay" controls preload="none" src="${esc(c.recording_url)}"></audio>`:'<span class="muted">—</span>';
       const when=(c.created_local||'').replace('T',' ').slice(0,16);
       const booked=c.meeting_agreed?`<span class="oc booked">${esc(c.agreed_day_time||'agreed')}</span>`:(c.callback_when?`<span class="muted">cb: ${esc(c.callback_when)}</span>`:'');
       const q=c.qualification||{};
@@ -674,7 +678,7 @@ async function load(){
         <td><b>${esc(c.prospect_name||'—')}</b><div class="muted">${esc(c.company_name||c.domain||c.dest9||'')}</div></td>
         <td><span class="oc ${esc(oc)}">${esc(String(oc).replace(/_/g,' '))}</span>${c.asked_if_ai?' <span class="ai">'+svg('mic',2)+'asked AI</span>':''}</td>
         <td>${booked}</td><td class="muted">${esc(c.main_objection||'')}</td>
-        <td class="mono muted">${dur(c.duration_ms)}</td><td>${rec}</td>
+        <td class="mono muted">${dur(c.duration_ms)}</td><td class="rec-col">${rec}</td>
         <td class="sumtxt">${esc(c.call_summary||'')}${qhtml}</td></tr>`;
     }).join(''):`<tr><td colspan="8" class="empty">No calls yet — tap the orb to talk to Lisa, or launch a one-off call.</td></tr>`;
   }catch(e){ $('rows').innerHTML=`<tr><td colspan="8" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
