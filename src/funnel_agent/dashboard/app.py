@@ -500,7 +500,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- auth: per-person login + role-based scoping --------------------- #
     # /api/lisa/postcall is the Retell webhook — it has NO session (Retell posts server-to-server), so it
     # must bypass the login gate; it is guarded instead by its own LISA_WEBHOOK_TOKEN query token.
-    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall"}
+    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall", "/api/lisa/inbound"}
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
@@ -4452,5 +4452,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(400, "bad payload")
         r = await run_in_threadpool(_lisa.handle_postcall, pool, settings, payload)
         return JSONResponse(jsonable_encoder(r))
+
+    @app.post("/api/lisa/inbound")
+    async def lisa_inbound(request: Request) -> JSONResponse:
+        """Retell INBOUND webhook. When a prospect calls Lisa's number back, look them up by their number
+        and return their brief as dynamic variables so Lisa recognises them. Token-guarded (?token=)."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa as _lisa
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        ci = body.get("call_inbound") or body
+        frm = ci.get("from_number") or ci.get("from") or ""
+        r = await run_in_threadpool(_lisa.inbound_variables, pool, settings, frm)
+        return JSONResponse({"call_inbound": r})
 
     return app

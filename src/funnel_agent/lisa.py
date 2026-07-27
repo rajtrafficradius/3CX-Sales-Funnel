@@ -10,7 +10,7 @@ This subsystem is deliberately ISOLATED from the 3CX/Aircall funnel:
   • admin-only endpoints (Raj/Vysakh),
 so Lisa's numbers never leak into team totals, the TV kiosk, or any BDE/BDM view.
 
-Brand safety: to a prospect the brand is ALWAYS "Digital Expo"; "Traffic Radius" is never spoken.
+Brand safety: to a prospect the brand is ALWAYS "DE Group"; "Traffic Radius" is never spoken.
 Pieces:
   build_brief()     -> the injected dynamic variables (real audit insight + context + objection lines)
   start_call()      -> Retell create-phone-call with the brief; logs a pending lisa_calls row
@@ -163,6 +163,14 @@ def _e164_au(num: str | None) -> str:
     if len(d) == 9:              # mobile/local without the leading 0
         return "+61" + d
     return "+" + d
+
+
+def _first_name(name: str | None) -> str:
+    """First name only, stripped of titles — so Lisa says 'Hi Clint', never 'Hi Clint Robinson' (robotic)
+    or a wrong/mixed full name. Empty string if we have no usable name (Lisa then greets without one)."""
+    n = re.sub(r"\b(mr|mrs|ms|dr|miss|mx)\b\.?", "", (name or "").strip(), flags=re.I).strip()
+    parts = [p for p in re.split(r"[ ,]+", n) if p and p.isalpha()]
+    return parts[0][:40].capitalize() if parts else ""
 
 
 # --------------------------------------------------------------------------- #
@@ -383,7 +391,7 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     company = (row or {}).get("company") or ""
     niche = (row or {}).get("industry") or ""
     email = (row or {}).get("email") or ""
-    contact = (row or {}).get("contact") or ""
+    contact = _first_name((row or {}).get("contact") or "")   # FIRST name only (never "Clint Robinson")
 
     # company/industry from companies table if missing
     if domain and (not company or not niche):
@@ -554,6 +562,32 @@ def _retell(settings: Settings, method: str, path: str, body: dict | None = None
     resp = urllib.request.urlopen(req, timeout=45)
     t = resp.read().decode()
     return json.loads(t) if t.strip() else {}
+
+
+def inbound_variables(pool: ConnectionPool, settings: Settings, from_number: str) -> dict:
+    """INBOUND: a prospect is calling Lisa's number BACK. Look them up by their number and hand Lisa their
+    saved brief + name + prior context so she recognises them and picks up where they left off (instead of
+    answering as a stranger). Returns {dynamic_variables, metadata} for Retell's inbound webhook."""
+    ensure_tables(pool)
+    d9 = _d9(from_number)
+    brief: dict = {}
+    r = _fetch(pool, "SELECT brief FROM lisa_briefs WHERE dest9=%s", (d9,))
+    if r and r[0].get("brief"):
+        brief = dict(r[0]["brief"])
+    else:
+        try:
+            brief = build_brief(pool, settings, dest9=d9, domain=_domain_for(pool, d9))
+        except Exception as exc:
+            log.warning("lisa_inbound_brief_failed", d9=d9, error=str(exc)[:120])
+            brief = {}
+    name = brief.get("prospect_name") or ""
+    brief["inbound_callback"] = "true"          # tells the prompt this is a call-BACK, greet warmly by name
+    brief["prior_contact_line"] = ("Great to hear back from you" + (f", {name}" if name else "")
+                                   + " — thanks for calling back!")
+    known = bool(r and r[0].get("brief"))
+    log.info("lisa_inbound", d9=d9, known=known, name=name)
+    return {"dynamic_variables": {k: ("" if v is None else str(v)) for k, v in brief.items()},
+            "metadata": {"dest9": d9, "inbound": "true", "known": str(known).lower()}}
 
 
 def create_web_call(settings: Settings) -> dict:
@@ -758,7 +792,7 @@ def _book_meeting(pool: ConnectionPool, settings: Settings, call_id: str, dyn: d
         ("Timeline", "q_timeline"), ("Other decision-makers", "q_other_decision_makers"),
         ("Wants covered", "q_session_expectations")) if cad.get(k)]
     qual = "\n".join(f"  • {lbl}: {v}" for lbl, v in qbits) or "  • (not captured)"
-    notes = (f"🎙️ Booked by Lisa (AI) — Digital Expo strategy session.\n"
+    notes = (f"🎙️ Booked by Lisa (AI) — DE Group strategy session.\n"
              f"Agreed time (prospect's words): {when_txt}\n"
              f"Contact: {dyn.get('prospect_name') or ''}  ·  {email}\n"
              f"Company: {who}  ·  {dyn.get('prospect_website') or ''}\n"
@@ -1231,7 +1265,7 @@ def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, tra
     """AI QA reviewer: score one Lisa call for quality + brand + compliance; store for the scorecard."""
     sys = ("Score this AI cold-caller (Lisa, an AU digital-marketing appointment setter) from her call "
            "transcript. Return STRICT JSON: opening (1-5), discovery (1-5), objection_handling (1-5), "
-           "booking (1-5), compliance (1-5 — did she say 'Digital Expo' only, NOT volunteer she's an AI "
+           "booking (1-5), compliance (1-5 — did she say 'DE Group' only, NOT volunteer she's an AI "
            "unless directly asked, sound human), overall (1-5), best_line (string), improve (one-sentence "
            "coaching tip), flags (array of any compliance/quality issues, empty if none).")
     r = _llm_json(settings, sys, transcript or "")
