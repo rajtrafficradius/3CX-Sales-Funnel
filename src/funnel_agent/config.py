@@ -133,7 +133,8 @@ class Settings(BaseSettings):
     lisa_retry_max_attempts: int = 4             # stop retrying after this many attempts
     lisa_call_window_start: int = 9              # only auto-dial between these local hours (business hours)
     lisa_call_window_end: int = 17
-    lisa_max_concurrent: int = 3                 # max simultaneous Lisa calls the dialer launches per run
+    lisa_max_concurrent: int = 1                 # natural dialing: ONE call at a time (no concurrency)
+    lisa_min_call_gap_seconds: int = 0           # min gap between calls; 0 = auto (window / daily_target, ~8h/50=~9.6min)
     lisa_autodial_enabled: bool = False          # MASTER GATE — no call fires until this is true
     lisa_coaching_enabled: bool = True           # AI Sales Coach: learn playbook from won/lost + QA each call
     lisa_audit_before_call: bool = True          # run the Digital-Marketing-Insight audit before each call (cached)

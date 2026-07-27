@@ -1072,12 +1072,21 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     remaining = int(getattr(settings, "lisa_daily_target", 50)) - int(placed_today or 0)
     if remaining <= 0:
         return {"skipped": "daily target reached", "placed_today": placed_today}
-    batch = min(remaining, int(getattr(settings, "lisa_max_concurrent", 3)))
+    # NATURAL PACING — dial like a human: ONE call at a time, evenly spread so ~daily_target calls fill the
+    # whole business-hours window (no concurrency, no fast bursts). The gap = window / daily_target
+    # (e.g. 8h / 50 ≈ 9.6 min between calls); overridable via LISA_MIN_CALL_GAP_SECONDS.
+    gap = int(getattr(settings, "lisa_min_call_gap_seconds", 0)) or \
+        int(((wend - wstart) * 3600) / max(1, int(getattr(settings, "lisa_daily_target", 50))))
+    since = _fetch(pool, "SELECT extract(epoch from (now() - max(created_at))) s FROM lisa_calls "
+                   "WHERE (created_at AT TIME ZONE %s)::date=(now() AT TIME ZONE %s)::date", (tz, tz))[0]["s"]
+    if since is not None and since < gap:
+        return {"skipped": "natural pacing", "wait_s": int(gap - since), "gap_s": gap, "placed_today": placed_today}
+    # look at a few due candidates but place AT MOST ONE this cycle (skipping any outside its local hours)
     due = _fetch(pool,
         "SELECT id, dest_number, right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
         "FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
         "  AND type IN ('fresh_call','retry','callback','reached_call') AND start_at <= now() "
-        "ORDER BY start_at LIMIT %s", (batch,))
+        "ORDER BY start_at LIMIT 8")
     dialed = 0
     skipped_tz = 0
     for e in due:
@@ -1094,7 +1103,9 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
                 cur.execute("UPDATE calendar_events SET status='done' WHERE id=%s", (e["id"],))
                 conn.commit()
             dialed += 1
-    stats = {"dialed": dialed, "due": len(due), "skipped_tz": skipped_tz, "placed_today": placed_today, "remaining": remaining}
+            break   # ONE call per cycle — natural, human-like spacing
+    stats = {"dialed": dialed, "candidates": len(due), "skipped_tz": skipped_tz,
+             "placed_today": placed_today, "gap_s": gap}
     log.info("lisa_autodial", **stats)
     return stats
 
