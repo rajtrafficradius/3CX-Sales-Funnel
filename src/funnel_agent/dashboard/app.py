@@ -4411,7 +4411,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"autodial_enabled": on})
 
     @app.get("/api/lisa/costs")
-    def lisa_costs(request: Request, days: int = 30) -> JSONResponse:
+    async def lisa_costs(request: Request, days: int = 30) -> JSONResponse:
         """Accurate full running cost of the Lisa system (Retell + OpenAI + Twilio). Admin-only."""
         if not is_admin(getattr(request.state, "user", None) or {}):
             raise HTTPException(403, "admin only")
