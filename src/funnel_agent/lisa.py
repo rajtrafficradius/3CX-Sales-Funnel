@@ -95,6 +95,12 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_control ("
                     "  id integer PRIMARY KEY, autodial boolean, updated_at timestamptz DEFAULT now(),"
                     "  updated_by text)")
+        # resolved TRUE decision-maker per company (cross-checked from call-intel + BD data + Apollo), with
+        # the best number (mobile preferred). Lisa dials THIS so the dialer reaches the right person.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_dm ("
+                    "  domain text PRIMARY KEY, dm_name text, dm_first text, dm_title text, dm_phone text,"
+                    "  dm_is_mobile boolean, source text, confidence integer, candidates jsonb,"
+                    "  resolved_at timestamptz DEFAULT now())")
         conn.commit()
     ensure_lisa_agent(pool)
 
@@ -318,6 +324,94 @@ def _prospect_facts(pool: ConnectionPool, domain: str) -> dict:
     icp = (bi.get("icp") or bi.get("target_audience") or "").strip()
     return {"what_they_do": what[:180], "location": loc[:60], "dm_role": (dm_role or "")[:60],
             "dm_name": dm_name[:40], "icp": icp[:200]}
+
+
+# --------------------------------------------------------------------------- #
+# Decision-maker resolver — the TRUE top DM + best number (mobile preferred)
+# --------------------------------------------------------------------------- #
+_DM_SENIORITY = [("owner", 100), ("founder", 100), ("co-founder", 98), ("proprietor", 96), ("principal", 95),
+                 ("ceo", 94), ("chief executive", 94), ("managing director", 93), ("managing dir", 93),
+                 ("partner", 86), ("director", 85), ("chief marketing", 84), ("cmo", 84), ("general manager", 82),
+                 ("head of marketing", 78), ("marketing director", 78), ("marketing manager", 68), ("manager", 52)]
+
+
+def _dm_rank(title: str | None) -> int:
+    t = (title or "").lower()
+    return max([sc for kw, sc in _DM_SENIORITY if kw in t], default=0)
+
+
+def _is_mobile_au(num: str | None) -> bool:
+    d9 = re.sub(r"[^0-9]", "", num or "")[-9:]
+    return len(d9) == 9 and d9[0] == "4"          # AU mobiles are 04xx… → last 9 digits start with 4
+
+
+def resolve_decision_maker(pool: ConnectionPool, settings: Settings, domain: str) -> dict:
+    """Cross-check who the TRUE top decision-maker is for a company from three sources — (1) our own call
+    intelligence (who our BDEs actually reached, + the number that worked), (2) uploaded BD / D&B contacts,
+    (3) Apollo people by title — pick the most senior, choose the best number (a MOBILE first, then a number
+    we've actually reached), and save it. Lisa then dials THIS. Never raises."""
+    if not domain:
+        return {}
+    cands = []
+    ci = _fetch(pool,
+        "SELECT cl.prospect_contact_name nm, c.dest_number num, bool_or(cl.rpc_connect) rpc "
+        "FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+        "WHERE c.in_scope AND split_part(regexp_replace(lower(coalesce(cl.prospect_website,'')),"
+        "  '^https?://(www\\.)?',''),'/',1)=%s AND coalesce(cl.prospect_contact_name,'')<>'' "
+        "GROUP BY 1,2 ORDER BY rpc DESC NULLS LAST LIMIT 6", (domain,))
+    for r in ci:
+        cands.append({"name": r["nm"], "title": "", "phone": r["num"], "source": "call_intel", "reached": bool(r["rpc"])})
+    co = _fetch(pool, "SELECT contacts, phone FROM companies WHERE domain=%s AND NULLIF(phone,'') IS NOT NULL LIMIT 1", (domain,))
+    cophone = (co[0].get("phone") if co else None)
+    if co and isinstance(co[0].get("contacts"), list):
+        for p in co[0]["contacts"][:8]:
+            if isinstance(p, dict):
+                cands.append({"name": p.get("name") or p.get("full_name") or "", "title": p.get("title") or p.get("role") or "",
+                              "phone": p.get("mobile") or p.get("phone") or "", "source": "bd", "reached": False})
+    ap = _fetch(pool, "SELECT apollo FROM enrichment WHERE domain=%s", (domain,))
+    for p in (((ap[0].get("apollo") if ap else None) or {}).get("people") or [])[:10]:
+        nm = p.get("name") or ((p.get("first_name") or "") + " " + (p.get("last_name") or "")).strip()
+        cands.append({"name": nm, "title": p.get("title") or "",
+                      "phone": p.get("mobile_phone") or p.get("direct_phone") or p.get("phone") or "",
+                      "source": "apollo", "reached": False})
+    cands = [c for c in cands if (c.get("name") or "").strip()]
+    if not cands:
+        return {}
+    cands.sort(key=lambda c: (_dm_rank(c.get("title")), c.get("reached"), bool(c.get("phone"))), reverse=True)
+    dm = cands[0]
+    phones = [c["phone"] for c in cands if c.get("phone")] + ([cophone] if cophone else [])
+    best = next((p for p in phones if _is_mobile_au(p)), None) \
+        or next((c["phone"] for c in cands if c.get("reached") and c.get("phone")), None) \
+        or (phones[0] if phones else "")
+    conf = min(100, _dm_rank(dm.get("title")) + (20 if dm.get("reached") else 0) + (15 if _is_mobile_au(best) else 0))
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lisa_dm (domain,dm_name,dm_first,dm_title,dm_phone,dm_is_mobile,source,confidence,candidates,resolved_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now()) ON CONFLICT (domain) DO UPDATE SET dm_name=EXCLUDED.dm_name,"
+            "dm_first=EXCLUDED.dm_first,dm_title=EXCLUDED.dm_title,dm_phone=EXCLUDED.dm_phone,dm_is_mobile=EXCLUDED.dm_is_mobile,"
+            "source=EXCLUDED.source,confidence=EXCLUDED.confidence,candidates=EXCLUDED.candidates,resolved_at=now()",
+            (domain, dm.get("name"), _first_name(dm.get("name")), dm.get("title") or "",
+             _e164_au(best) if best else "", _is_mobile_au(best), dm.get("source"), conf, json.dumps(cands)))
+        conn.commit()
+    return {"domain": domain, "dm_first": _first_name(dm.get("name")), "dm_title": dm.get("title"),
+            "dm_phone": _e164_au(best) if best else "", "dm_is_mobile": _is_mobile_au(best), "confidence": conf}
+
+
+def get_decision_maker(pool: ConnectionPool, domain: str) -> dict:
+    if not domain:
+        return {}
+    r = _fetch(pool, "SELECT domain,dm_name,dm_first,dm_title,dm_phone,dm_is_mobile,source,confidence,"
+               "(resolved_at AT TIME ZONE 'Australia/Melbourne') resolved_local FROM lisa_dm WHERE domain=%s", (domain,))
+    return dict(r[0]) if r else {}
+
+
+def refresh_decision_makers(pool: ConnectionPool, settings: Settings, limit: int = 40) -> dict:
+    """Resolve the DM for any pooled prospect that doesn't have one yet (a batch per cycle). Automatic."""
+    ensure_tables(pool)
+    rows = _fetch(pool, "SELECT DISTINCT lp.domain FROM lisa_pool lp LEFT JOIN lisa_dm d ON d.domain=lp.domain "
+                  "WHERE NULLIF(lp.domain,'') IS NOT NULL AND d.domain IS NULL LIMIT %s", (limit,))
+    n = sum(1 for r in rows if resolve_decision_maker(pool, settings, r["domain"]))
+    return {"resolved": n, "pending": max(0, len(rows) - n)}
 
 
 def _enrichment_signals(pool: ConnectionPool, domain: str) -> dict:
@@ -628,6 +722,13 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
     # then REBUILD the brief so Lisa opens with the real audit hooks (competitor gap / keyword gap / quick
     # wins) instead of the generic running-ads line. Falls back gracefully if there's no domain/audit.
     dom = domain or _domain_for(pool, d9)
+    # Prefer the resolved decision-maker's MOBILE — reach the RIGHT person on a good number.
+    dm = get_decision_maker(pool, dom) if dom else {}
+    if dm.get("dm_phone") and dm.get("dm_is_mobile"):
+        _cand = _e164_au(dm["dm_phone"])
+        if _cand and _cand != to_number and len(re.sub(r"[^0-9]", "", _cand)) >= 11:
+            to_number = _cand
+            d9 = _d9(to_number)
     if getattr(settings, "lisa_audit_before_call", True) and dom:
         if ensure_audit(pool, settings, dom):
             try:
@@ -643,6 +744,12 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
             brief[k] = str(pb[k])
     if isinstance(pb.get("avoid"), list) and pb["avoid"]:
         brief["avoid_list"] = " · ".join(pb["avoid"])
+    # greet the resolved decision-maker by name (first name) if we have one
+    if dm.get("dm_first"):
+        brief["prospect_name"] = dm["dm_first"]
+        brief["decision_maker"] = dm["dm_first"]
+        if dm.get("dm_title"):
+            brief["dm_role"] = dm["dm_title"]
     body = {
         "from_number": frm,
         "to_number": to_number,
@@ -1043,41 +1150,50 @@ def _future_biz(dt: datetime, hour: int) -> datetime:
 # Lisa's reserved pool + calendar + auto-dialer
 # --------------------------------------------------------------------------- #
 def reserve_lisa_pool(pool: ConnectionPool, settings: Settings) -> dict:
-    """Reserve up to lisa_pool_size GAds-CONFIRMED prospects EXCLUSIVELY for Lisa (highest-advertising
-    first), skipping anyone already called in-scope, already on a calendar, or DND. Idempotent — tops the
-    pool up to size. The human fresh allocator excludes every dest9 in lisa_pool (no double-calling)."""
+    """Reserve Lisa's EXCLUSIVE pool from already-WORKED GAds prospects — ones our human BDEs have already
+    REACHED (rpc_connect), so we have a proven, dialable number + a real contact name (call intelligence).
+    SMB-only: national chains (many branches / very high revenue) are excluded. Highest-advertising first.
+    Also PURGES any fresh (never-human-called) entries so the pool becomes worked-data only. Idempotent."""
     ensure_tables(pool)
-    from .prospects import gads_dnb_gate
     size = int(getattr(settings, "lisa_pool_size", 500))
+    # switch to worked data: drop fresh (never human-reached) entries so only proven prospects remain
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM lisa_pool lp WHERE NOT EXISTS (SELECT 1 FROM calls c WHERE c.in_scope "
+                    "AND c.provider IN ('3cx','aircall') AND "
+                    "right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=lp.dest9)")
+        conn.commit()
     have = _fetch(pool, "SELECT count(*) c FROM lisa_pool")[0]["c"]
     if have >= size:
-        return {"reserved": 0, "total": have, "note": "pool already at size"}
+        return {"reserved": 0, "total": have, "note": "pool at size (worked)"}
     need = size - have
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO lisa_pool (dest9, dest_number, domain, company, phone) "
-            "SELECT z.d9, z.phone, z.domain, z.company, z.phone FROM ("
-            # DISTINCT ON (phone) collapses to ONE row per physical number (highest ad-count) BEFORE the
-            # limit, so two GAds domains that share a phone can't shrink the reserved count.
-            "  SELECT DISTINCT ON (right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9)) "
-            "         right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9) d9, "
-            "         COALESCE(co.phone,co.phone_norm) phone, co.domain, co.company_name company, "
-            "         COALESCE((ge.dataforseo->'ads'->>'count')::int,0) ads "
-            "  FROM enrichment ge JOIN companies co ON co.domain=ge.domain "
-            "  WHERE (ge.dataforseo->>'running_google_ads')='true' AND COALESCE(co.phone,co.phone_norm)<>'' "
-            + gads_dnb_gate("ge") + " "
-            "  ORDER BY right(regexp_replace(COALESCE(co.phone,co.phone_norm),'[^0-9]','','g'),9), "
-            "           COALESCE((ge.dataforseo->'ads'->>'count')::int,0) DESC) z "
-            "WHERE length(z.d9)=9 AND z.d9 NOT IN (SELECT dest9 FROM lisa_pool) "
-            "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.in_scope AND "
-            "     right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=z.d9) "
-            "  AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.status='pending' AND "
-            "     right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=z.d9) "
-            "  AND NOT EXISTS (SELECT 1 FROM prospect_pipeline pp WHERE pp.dest9=z.d9 AND COALESCE(pp.dnd,false)) "
-            "ORDER BY z.ads DESC NULLS LAST LIMIT %s ON CONFLICT (dest9) DO NOTHING", (need,))
+            "WITH worked AS ("
+            "  SELECT DISTINCT ON (d9) d9, dest_number, dom, company FROM ("
+            "    SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) d9, c.dest_number, "
+            "      split_part(regexp_replace(lower(COALESCE(cl.prospect_website,'')),'^https?://(www\\.)?',''),'/',1) dom, "
+            "      cl.prospect_company company, c.started_at, cl.rpc_connect, cl.do_not_contact, cl.meeting_booked "
+            "    FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+            "    WHERE c.in_scope AND c.provider IN ('3cx','aircall') AND c.answered "
+            "      AND COALESCE(c.dest_number,'')<>'' AND COALESCE(cl.prospect_contact_name,'')<>'' "
+            "  ) x WHERE x.rpc_connect AND NOT COALESCE(x.do_not_contact,false) "
+            "    AND NOT COALESCE(x.meeting_booked,false) AND length(x.d9)=9 AND x.dom<>'' "
+            "  ORDER BY d9, started_at DESC) "
+            "INSERT INTO lisa_pool (dest9, dest_number, domain, company, phone, priority) "
+            "SELECT w.d9, w.dest_number, w.dom, w.company, w.dest_number, "
+            "       COALESCE((e.dataforseo->'ads'->>'count')::int,0) FROM worked w "
+            "JOIN enrichment e ON e.domain=w.dom "
+            "WHERE (e.dataforseo->>'running_google_ads')='true' "
+            # SMB only: exclude national chains (many branch rows) + very large businesses
+            "  AND (SELECT count(*) FROM companies c3 WHERE c3.domain=w.dom) <= 8 "
+            "  AND NOT EXISTS (SELECT 1 FROM companies c2 WHERE c2.domain=w.dom AND COALESCE(c2.revenue_musd,0)>100) "
+            "  AND w.d9 NOT IN (SELECT dest9 FROM lisa_pool) "
+            "  AND NOT EXISTS (SELECT 1 FROM prospect_pipeline pp WHERE pp.dest9=w.d9 AND COALESCE(pp.dnd,false)) "
+            "ORDER BY COALESCE((e.dataforseo->'ads'->>'count')::int,0) DESC NULLS LAST "
+            "LIMIT %s ON CONFLICT (dest9) DO NOTHING", (need,))
         got = cur.rowcount
         conn.commit()
-    return {"reserved": got, "total": have + got}
+    return {"reserved": got, "total": have + got, "worked": True}
 
 
 def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
@@ -1323,7 +1439,7 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
     what it did (lisa_strategy) so the console shows real work. Safe + idempotent; never raises."""
     ensure_tables(pool)
     in_hours, now = _biz_now(settings)
-    actions = {"prioritized": 0, "reserved": 0, "coach": "skip", "qa_reviewed": 0, "briefs_built": 0, "scheduled": 0}
+    actions = {"prioritized": 0, "reserved": 0, "coach": "skip", "qa_reviewed": 0, "briefs_built": 0, "dms_resolved": 0, "scheduled": 0}
     alerts: list[str] = []
 
     # 1) value-rank the pool — live ad creatives = spend proxy (all pool prospects are GAds-confirmed)
@@ -1355,6 +1471,10 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
         actions["briefs_built"] = refresh_lisa_briefs(pool, settings, limit=600).get("built", 0)
     except Exception as exc:
         log.warning("hos_briefs_failed", error=str(exc)[:140])
+    try:
+        actions["dms_resolved"] = refresh_decision_makers(pool, settings, limit=60).get("resolved", 0)
+    except Exception as exc:
+        log.warning("hos_dm_failed", error=str(exc)[:140])
     try:
         actions["scheduled"] = schedule_lisa_fresh(pool, settings).get("scheduled", 0)
     except Exception as exc:
