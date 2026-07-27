@@ -320,6 +320,8 @@ function contactsCard(d){
          <div>Website</div><div><a class="lnk" href="https://${esc(m.domain)}" target="_blank">${esc(m.domain)}</a></div>
          <div>Location</div><div>${esc(m.location)||'—'}</div>
        </div>
+       <div class="subh">🎯 Verified decision-maker <span class="muted small">(Lisa AI — call-intel + BD + Apollo)</span></div>
+       <div id="dmBox"><div class="muted small">Resolving…</div></div>
        <div class="subh">Decision-makers (master DB)</div>
        ${rows||'<div class="muted small">No contacts on file.</div>'}`
     : `<div class="muted small" style="margin-bottom:4px">⚠ No website on file for this prospect — that's why there's no marketing data. Add the website below and it'll fetch SEO, ads, company &amp; revenue instantly.</div>`;
@@ -1238,6 +1240,20 @@ async function load(){
   const eb=document.getElementById('ewBtn'); if(eb) eb.onclick=enrichWebsite;
   const db=document.getElementById('dfsBtn'); if(db) db.onclick=enrichDataforseo;
   const sb=document.getElementById('seoAuditBtn'); if(sb) sb.onclick=runSeoAudit;
+  loadDM();
+}
+async function loadDM(){
+  const box=document.getElementById('dmBox'); if(!box) return;
+  try{
+    const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)+'/dm'); const dm=await r.json();
+    if(!dm || !dm.dm_first){ box.innerHTML='<div class="muted small">No decision-maker resolved yet.</div>'; return; }
+    const mob = dm.dm_is_mobile ? '<span class="pill yes">📱 mobile</span>'
+      : '<span class="pill" style="background:rgba(148,163,184,.16);color:var(--txt-dim)">landline</span>';
+    box.innerHTML=`<div class="contact"><div>
+        <div class="nm">${esc(dm.dm_name||dm.dm_first)}${dm.dm_title?' · '+esc(dm.dm_title):''}</div>
+        <div class="ti muted small">${dm.confidence!=null?dm.confidence+'% confidence · '+esc(dm.source||''):''}</div>
+      </div><div class="ph"><b>${esc(dm.dm_phone||'—')}</b> ${mob}</div></div>`;
+  }catch(e){ box.innerHTML='<div class="muted small">Could not resolve decision-maker.</div>'; }
 }
 load();
 /* LIVE: refresh on server push (SSE /api/events) + 60s poll fallback; pause when hidden. Re-fetches

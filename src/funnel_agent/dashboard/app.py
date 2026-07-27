@@ -3373,6 +3373,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await run_in_threadpool(_do)
         return JSONResponse({"ok": True, "normalized": norm})
 
+    @app.get("/api/prospect/{key}/dm")
+    def prospect_dm(request: Request, key: str) -> JSONResponse:
+        """The resolved TRUE decision-maker for this company (cross-checked from call-intel + BD + Apollo,
+        best number, mobile preferred). Resolves on demand if not cached. Any signed-in user."""
+        _master, domain, _ = _resolve_prospect(key)
+        if not domain:
+            return JSONResponse({})
+        from .. import lisa as _lisa
+
+        def _do():
+            dm = _lisa.get_decision_maker(pool, domain)
+            if not dm:
+                _lisa.resolve_decision_maker(pool, settings, domain)
+                dm = _lisa.get_decision_maker(pool, domain)
+            return dm or {}
+        return JSONResponse(jsonable_encoder(_do()))
+
     @app.post("/api/prospect/{key}/enrich-website")
     async def prospect_enrich_website(request: Request, key: str) -> JSONResponse:
         """FREE 'Enrich now' — fill every FREE prospect tab in one go: website intelligence
