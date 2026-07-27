@@ -225,6 +225,17 @@
   .fstep .fs{font-size:10.5px;color:var(--faint);margin-top:2px;line-height:1.35}
   .fstep.act .fs{color:var(--vio-2)}
 
+  /* ── targets / funnel KPIs ───────────────────────────── */
+  .tgrid{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .tstage{flex:1 1 0;min-width:96px;text-align:center;padding:4px 8px}
+  .tstage .tn{font-size:24px;font-weight:770;letter-spacing:-.02em;line-height:1}
+  .tstage .tl{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:5px}
+  .tstage .tr2{font-size:11.5px;color:var(--vio-2);font-weight:650;margin-top:5px}
+  .tstage .tr2 .muted{font-weight:500}
+  .tarrow{display:flex;align-items:center;color:var(--faint);font-size:15px;padding:0 2px}
+  .tgoal{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:650;color:var(--vio-2);
+    background:var(--accent-soft);border:1px solid rgba(124,108,255,.4);border-radius:var(--r-pill);padding:5px 12px}
+  .thead{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
   /* ── role board ──────────────────────────────────────── */
   .roles{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:18px}
   @media(max-width:900px){.roles{grid-template-columns:repeat(2,1fr)}}
@@ -486,6 +497,9 @@
 
   <div class="kpis" id="kpis"></div>
 
+  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/></svg>Targets — goal: 5 qualified bookings / day</span></div>
+  <div id="targets" class="flowcard"></div>
+
   <div id="coach" class="card" style="display:none"></div>
 
   <div class="actbar">
@@ -617,8 +631,12 @@ async function load(){
         ['audit','Researcher · Brief-builder','AI','live',(s.briefs_built||0)+'/'+(s.pool_reserved||0)+' briefs saved'+(acts.briefs_built?' · +'+acts.briefs_built+' this cycle':'')],
         ['coach','Sales Coach · Trainer','AI',s.playbook_built_at?'live':'idle',((pb0.do||[]).length)+' do · '+((pb0.avoid||[]).length)+' avoid · '+(pb0._won||0)+'w/'+(pb0._lost||0)+'l'],
         ['qa','QA · Compliance','AI','live',(qa0.n||0)+' reviewed · '+(qa0.overall?(+qa0.overall).toFixed(1):'–')+'/5'+(qfTop?' · ⚠ '+qfTop[1]+' '+qfTop[0].replace(/_/g,' '):(acts.qa_reviewed?' · +'+acts.qa_reviewed+' new':''))],
-        [s.autodial_enabled&&inHours?'phone':'pause','Sales Manager · Dialer','AI',dialState,dialTxt],
+        [s.autodial_enabled&&inHours?'phone':'pause','Sales Manager · Ops','AI',dialState,'Dials the right DM number, natural pace, right hours · '+dialTxt],
       ]],
+      ['Stage coaches · a dedicated coach per funnel stage',(s.stage_coaches||[]).map(sc=>[
+        ({opener:'mic',gatekeeper:'users',pitch:'strategy',objection:'qa',close:'book'})[sc.stage]||'coach',
+        sc.title,'AI',sc.trained?'live':'idle',
+        (sc.trained?((sc.do||[]).length+' do · '+(sc.avoid||[]).length+' avoid'):'learning from won/lost calls…')+' · target '+Math.round(sc.benchmark||0)+'%'])],
       ['AI agents · the callers',[
         ['mic','Lisa 1','Agent',(s.calls?'live':'ok'),(s.calls||0)+' calls · '+(s.booked||0)+' booked · '+(s.book_rate||0)+'% · her own 500 pool'],
         ['mic','Lisa 2','Agent','soon','In development — the next agent joining the floor'],
@@ -649,6 +667,14 @@ async function load(){
       ['good','percent','Book rate',(s.book_rate||0)+'%'],['vio','refresh','Callbacks',s.callbacks||0],['warn','missed','Missed',s.missed||0],
       ['n','sms','SMS',s.sms||0],['n','mic','Asked AI',s.asked_ai||0],['n','clock','Talk',dur(s.duration_ms)],['n','dollar','Spend',money(s.cost_cents)]];
     $('kpis').innerHTML=k.map(([c,ic,l,n])=>`<div class="kpi ${c==='n'?'':c}"><span class="ki">${svg(ic)}</span><div><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div></div>`).join('');
+    // ---- Targets: outbound funnel toward 5 qualified bookings/day ----
+    const f=s.funnel||{};
+    const fst=[['Dials',f.dials,''],['Connected',f.connected,(f.connect_rate||0)+'%'],
+      ['Reached DM',f.reached_dm,(f.rpc_rate||0)+'%'],['Booked',f.booked,(f.book_rate||0)+'%'],
+      ['Qualified',f.qualified,(f.qual_rate||0)+'%']];
+    $('targets').innerHTML='<div class="thead"><span class="eyebrow">Outbound funnel · last '+$('days').value+'d</span>'
+      +'<span class="tgoal">'+svg('book',2)+' '+(f.qualified||0)+' qualified · goal 5/day</span></div>'
+      +'<div class="tgrid">'+fst.map((x,i)=>`<div class="tstage"><div class="tn">${x[1]||0}</div><div class="tl">${esc(x[0])}</div>${x[2]?`<div class="tr2">${x[2]}</div>`:''}</div>`+(i<fst.length-1?'<div class="tarrow">→</div>':'')).join('')+'</div>';
 
     // ---- coach panel ----
     const pb=s.playbook||{}, qa=s.qa||{};
