@@ -345,6 +345,9 @@
   .qbits span{background:var(--panel-3);border:1px solid var(--line);border-radius:6px;padding:1px 7px}
   .rec{display:inline-flex;align-items:center;gap:5px;color:var(--vio-2);font-weight:600}
   .rec svg{width:13px;height:13px}
+  .plink{color:inherit;display:inline-flex;align-items:center;gap:5px}
+  .plink svg{width:12px;height:12px;color:var(--vio-2);opacity:.7}
+  .plink:hover{color:var(--vio-2)} .plink:hover svg{opacity:1}
   .recplay{height:34px;width:230px;max-width:230px;vertical-align:middle}
   :root[data-theme=dark] .recplay{filter:invert(.92) hue-rotate(180deg) saturate(.8)}
   @media (prefers-color-scheme:dark){:root:not([data-theme=light]) .recplay{filter:invert(.92) hue-rotate(180deg) saturate(.8)}}
@@ -546,7 +549,8 @@ const IC={
   strategy:'<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
   crown:'<path d="M2 18h20"/><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 9H5L3 8z"/>',
   code:'<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
-  network:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.7" x2="15.4" y2="6.3"/><line x1="8.6" y1="13.3" x2="15.4" y2="17.7"/>'
+  network:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.7" x2="15.4" y2="6.3"/><line x1="8.6" y1="13.3" x2="15.4" y2="17.7"/>',
+  extlink:'<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'
 };
 const svg=(name,sw)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw||1.8}" stroke-linecap="round" stroke-linejoin="round">${IC[name]||''}</svg>`;
 
@@ -671,6 +675,7 @@ async function load(){
     const d=await jget('/api/lisa/calls?limit=150'); const rows=d.calls||[];
     $('rows').innerHTML=rows.length?rows.map(c=>{
       const oc=(c.call_outcome||c.status||'—');
+      const key=c.domain||c.dest9||'';
       const rec=c.recording_url?`<audio class="recplay" controls preload="none" src="${esc(c.recording_url)}"></audio>`:'<span class="muted">—</span>';
       const when=(c.created_local||'').replace('T',' ').slice(0,16);
       const booked=c.meeting_agreed?`<span class="oc booked">${esc(c.agreed_day_time||'agreed')}</span>`:(c.callback_when?`<span class="muted">cb: ${esc(c.callback_when)}</span>`:'');
@@ -678,7 +683,7 @@ async function load(){
       const qbits=[q.q_current_setup&&('🛠 '+q.q_current_setup), q.q_monthly_spend&&('💰 '+q.q_monthly_spend), q.q_biggest_challenge&&('⚠ '+q.q_biggest_challenge), q.q_goals&&('🎯 '+q.q_goals), q.q_timeline&&('⏱ '+q.q_timeline), q.q_other_decision_makers&&('👥 '+q.q_other_decision_makers)].filter(Boolean);
       const qhtml=qbits.length?`<div class="qbits">${qbits.map(b=>'<span>'+esc(b)+'</span>').join('')}</div>`:'';
       return `<tr><td class="mono muted">${esc(when)}</td>
-        <td><b>${esc(c.prospect_name||'—')}</b><div class="muted">${esc(c.company_name||c.domain||c.dest9||'')}</div></td>
+        <td>${key?`<a class="plink" href="/prospect/${encodeURIComponent(key)}" target="_blank" title="Open prospect page"><b>${esc(c.prospect_name||'—')}</b> ${svg('extlink',2)}</a>`:`<b>${esc(c.prospect_name||'—')}</b>`}<div class="muted">${esc(c.company_name||c.domain||c.dest9||'')}</div></td>
         <td><span class="oc ${esc(oc)}">${esc(String(oc).replace(/_/g,' '))}</span>${c.asked_if_ai?' <span class="ai">'+svg('mic',2)+'asked AI</span>':''}</td>
         <td>${booked}</td><td class="muted">${esc(c.main_objection||'')}</td>
         <td class="mono muted">${dur(c.duration_ms)}</td><td class="rec-col">${rec}</td>
