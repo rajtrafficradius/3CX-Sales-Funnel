@@ -88,6 +88,10 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_stage_coach ("
                     "  stage text PRIMARY KEY, title text, guidance jsonb, benchmark numeric,"
                     "  built_at timestamptz DEFAULT now())")
+        # LLM (OpenAI) token usage + cost per Lisa AI-staff task — so the cost page is accurate.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_llm_usage ("
+                    "  id bigserial PRIMARY KEY, purpose text, model text, prompt_tokens integer,"
+                    "  completion_tokens integer, cost_cents numeric, created_at timestamptz DEFAULT now())")
         # Head of Sales · Strategist output — the current orchestration decision + what it actually did each
         # cycle (policy, directive, actions taken, compliance alerts). One row (id=1). Surfaced in the console
         # so the role shows real work, not a label.
@@ -1087,7 +1091,7 @@ def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: st
            "Return STRICT JSON: {\"reply\": \"...\"}.")
     usr = (f"Prospect first name: {name or 'there'}\nCompany: {brief.get('company_name') or ''}\n"
            f"What I'd flag: {brief.get('finding_1') or 'how they show up on Google next to their ads'}\n\nThread so far:\n{thread}")
-    r = _llm_json(settings, sys, usr)
+    r = _llm_json(settings, sys, usr, pool=pool, purpose="sms_reply")
     reply = ((r.get("reply") or "").strip() if isinstance(r, dict) else "") or (
         f"Hi{(' ' + name) if name else ''}! It's Lisa from DE Group — I'd tried you about how you're showing up "
         "on Google next to your ads. Worth a quick 15-min chat? What time roughly suits you?")
@@ -1378,8 +1382,14 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
 # --------------------------------------------------------------------------- #
 # AI Sales Coach / Trainer — learn from WON (do) + LOST (don't); QA each Lisa call
 # --------------------------------------------------------------------------- #
-def _llm_json(settings: Settings, system: str, user: str, model: str | None = None) -> dict:
-    """One JSON-returning LLM call (reuses the classifier's OpenAI key/model). Returns {} on failure."""
+# gpt-4o pricing (USD cents per token): $2.50 / 1M input, $10 / 1M output.
+_LLM_RATE = {"in": 250 / 1_000_000, "out": 1000 / 1_000_000}
+
+
+def _llm_json(settings: Settings, system: str, user: str, model: str | None = None,
+              pool: ConnectionPool | None = None, purpose: str = "") -> dict:
+    """One JSON-returning LLM call (reuses the classifier's OpenAI key/model). Records token cost against
+    the given `purpose` (for the cost page) when a pool is passed. Returns {} on failure."""
     try:
         from openai import OpenAI
         client = OpenAI(api_key=getattr(settings, "llm_api_key", ""))
@@ -1387,6 +1397,17 @@ def _llm_json(settings: Settings, system: str, user: str, model: str | None = No
         r = client.chat.completions.create(
             model=m, temperature=0.2, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user[:24000]}])
+        if pool is not None and getattr(r, "usage", None):
+            pt = r.usage.prompt_tokens or 0
+            ct = r.usage.completion_tokens or 0
+            cost = round(pt * _LLM_RATE["in"] + ct * _LLM_RATE["out"], 4)
+            try:
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("INSERT INTO lisa_llm_usage (purpose, model, prompt_tokens, completion_tokens, cost_cents) "
+                                "VALUES (%s,%s,%s,%s,%s)", (purpose or "lisa", m, pt, ct, cost))
+                    conn.commit()
+            except Exception as exc:
+                log.warning("lisa_llm_usage_log_failed", error=str(exc)[:120])
         return json.loads(r.choices[0].message.content or "{}")
     except Exception as exc:
         log.warning("lisa_llm_json_failed", error=str(exc)[:160])
@@ -1427,7 +1448,7 @@ def refresh_playbook(pool: ConnectionPool, settings: Settings, *, force: bool = 
            "calls. Every string ONE sentence, spoken, concrete, no fluff.")
     usr = ("=== WON CALLS (meeting booked) ===\n" + "\n---\n".join(w["t"] for w in won) +
            "\n\n=== LOST CALLS (reached DM, no booking) ===\n" + "\n---\n".join(l["t"] for l in lost))
-    pb = _llm_json(settings, sys, usr)
+    pb = _llm_json(settings, sys, usr, pool=pool, purpose="coach")
     if not pb:
         return {"skipped": "llm returned nothing"}
     pb["_won"], pb["_lost"] = len(won), len(lost)
@@ -1484,7 +1505,7 @@ def refresh_stage_coaches(pool: ConnectionPool, settings: Settings, *, force: bo
            "objection.best_line must be the best one-sentence rebuttal to 'we already have an agency'. Keep "
            "every string short, spoken, AU tone, no fluff.")
     usr = ("=== WON ===\n" + "\n---\n".join(w["t"] for w in won) + "\n\n=== LOST ===\n" + "\n---\n".join(l["t"] for l in lost))
-    out = _llm_json(settings, sys, usr)
+    out = _llm_json(settings, sys, usr, pool=pool, purpose="stage_coach")
     if not out:
         return {"skipped": "llm returned nothing"}
     n = 0
@@ -1534,6 +1555,76 @@ def funnel_kpis(pool: ConnectionPool, days: int = 30) -> dict:
             "daily_qualified_target": 5}
 
 
+def _twilio_costs(settings: Settings, days: int) -> dict:
+    """Actual Twilio spend (SMS + voice) on Lisa's numbers over the period, fetched live from Twilio."""
+    if not _twilio_ready(settings):
+        return {"sms_cents": 0.0, "voice_cents": 0.0, "sms_count": 0, "note": "Twilio not configured"}
+    from datetime import datetime, timezone, timedelta
+    from email.utils import parsedate_to_datetime
+    AC = getattr(settings, "twilio_account_sid", "")
+    user = getattr(settings, "twilio_api_key_sid", "") or AC
+    sec = getattr(settings, "twilio_api_key_secret", "") or getattr(settings, "twilio_auth_token", "")
+    auth = base64.b64encode(f"{user}:{sec}".encode()).decode()
+    nums = {_e164_au(n) for n in getattr(settings, "lisa_numbers", [])} | {_e164_au(n) for n in getattr(settings, "lisa_sms_number_list", [])}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    def fetch(kind):
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{AC}/{kind}.json?PageSize=1000"
+        try:
+            req = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}"})
+            return json.loads(urllib.request.urlopen(req, timeout=45).read().decode())
+        except Exception as exc:
+            log.warning("twilio_cost_fetch_failed", kind=kind, error=str(exc)[:120])
+            return {}
+
+    def within(x):
+        d = x.get("date_created") or x.get("date_sent") or x.get("start_time")
+        try:
+            return parsedate_to_datetime(d) >= cutoff
+        except Exception:
+            return True
+
+    def cents(x):
+        try:
+            return abs(float(x.get("price") or 0)) * 100
+        except Exception:
+            return 0.0
+    msgs = [m for m in fetch("Messages").get("messages", []) if within(m) and (m.get("from") in nums or m.get("to") in nums)]
+    calls = [c for c in fetch("Calls").get("calls", []) if within(c) and c.get("from") in nums]
+    return {"sms_cents": round(sum(cents(m) for m in msgs), 2), "voice_cents": round(sum(cents(c) for c in calls), 2),
+            "sms_count": len(msgs), "note": ""}
+
+
+def system_costs(pool: ConnectionPool, settings: Settings, days: int = 30) -> dict:
+    """The FULL Lisa running cost for the period, accurate to the sources: Retell (per-call, stored),
+    OpenAI LLM (tracked per AI-staff task), and Twilio SMS + voice (fetched live). Plus unit economics."""
+    ensure_tables(pool)
+    rc = _fetch(pool, "SELECT COALESCE(sum(cost_cents),0) c, count(*) n FROM lisa_calls "
+                "WHERE created_at >= now() - make_interval(days => %s)", (days,))[0]
+    purposes = ("coach", "stage_coach", "qa", "sms_reply")
+    lu = _fetch(pool, "SELECT COALESCE(sum(cost_cents),0) c, " +
+                ", ".join(f"COALESCE(sum(cost_cents) FILTER (WHERE purpose='{p}'),0) {p}" for p in purposes) +
+                " FROM lisa_llm_usage WHERE created_at >= now() - make_interval(days => %s)", (days,))[0]
+    bq = _fetch(pool, "SELECT count(*) FILTER (WHERE meeting_agreed) b, "
+                "count(*) FILTER (WHERE meeting_agreed AND qualification IS NOT NULL) q FROM lisa_calls "
+                "WHERE created_at >= now() - make_interval(days => %s)", (days,))[0]
+    tw = _twilio_costs(settings, days)
+    retell_c = float(rc["c"] or 0)
+    llm_c = float(lu["c"] or 0)
+    total = retell_c + llm_c + tw["sms_cents"] + tw["voice_cents"]
+    calls = rc["n"] or 0
+    return {"days": days,
+            "retell_cents": round(retell_c, 1), "llm_cents": round(llm_c, 1),
+            "twilio_sms_cents": tw["sms_cents"], "twilio_voice_cents": tw["voice_cents"], "twilio_note": tw.get("note", ""),
+            "total_cents": round(total, 1), "calls": calls, "sms_count": tw["sms_count"],
+            "llm_breakdown": {p: round(float(lu.get(p) or 0), 2) for p in purposes},
+            "per_call_cents": round(total / calls, 1) if calls else 0,
+            "per_booking_cents": round(total / bq["b"], 1) if bq["b"] else None,
+            "per_qualified_cents": round(total / bq["q"], 1) if bq["q"] else None,
+            "note": "Retell per-call (stored) + OpenAI (tracked) + Twilio SMS/voice (live). Enrichment "
+                    "(DataForSEO/Apollo) is shared + mostly one-time-cached, billed separately."}
+
+
 def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, transcript: str) -> dict:
     """AI QA reviewer: score one Lisa call for quality + brand + compliance; store for the scorecard."""
     sys = ("You are the QA reviewer + coach for an AU appointment-setting AI caller (Lisa, brand 'DE Group', "
@@ -1551,7 +1642,7 @@ def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, tra
            "talked_over_or_repeated (talked over the prospect, or asked the same question twice), "
            "over_questioned (kept asking questions after the prospect signalled they were busy). "
            "flags = array of short human-readable labels for every problem found (empty array if none).")
-    r = _llm_json(settings, sys, transcript or "")
+    r = _llm_json(settings, sys, transcript or "", pool=pool, purpose="qa")
     if r:
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO lisa_call_reviews (call_id, scores, reviewed_at) VALUES (%s,%s,now()) "

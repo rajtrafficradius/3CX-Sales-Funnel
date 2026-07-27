@@ -98,6 +98,20 @@
   .modal p{margin:0 0 20px;color:var(--txt-2);font-size:13px;line-height:1.6}
   .modal-btns{display:flex;gap:10px;justify-content:center}
   .modal-btns .btn{min-width:124px;justify-content:center}
+  /* role drill-down + cost */
+  .role{cursor:pointer}
+  .role:hover{outline:1px solid var(--line-2)}
+  .rd-h{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin:13px 0 6px}
+  .rd-h.good{color:var(--good)} .rd-h.bad{color:var(--bad)}
+  .rd-list{margin:0;padding-left:18px;line-height:1.65;font-size:12.5px;color:var(--txt-2)}
+  .rd-kv{font-size:12.5px;color:var(--txt-2);background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r1);padding:9px 12px;margin:8px 0}
+  .rd-best{margin-top:10px;font-size:12.5px;color:var(--vio-2);background:var(--accent-soft);border:1px solid rgba(124,108,255,.3);border-radius:var(--r1);padding:9px 12px}
+  #roleBody p{margin:6px 0;font-size:13px;color:var(--txt-2);line-height:1.55}
+  .costgrid{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end}
+  .costtot{font-size:30px;font-weight:780;letter-spacing:-.02em;line-height:1;color:var(--txt)}
+  .costrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .costchip{font-size:11.5px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 12px}
+  .costchip b{color:var(--txt);font-weight:650}
   select.sel{background:var(--panel);color:var(--txt);border:1px solid var(--line-2);border-radius:var(--r1);
     padding:8px 11px;font:inherit;font-weight:550;cursor:pointer}
   .back{color:var(--muted);font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:5px}
@@ -448,7 +462,7 @@
     <div class="title"><h1>Outbound Intelligence</h1><div class="sub">Autonomous AI outbound sales floor · DE Group · Traffic Radius</div></div>
     <div class="right">
       <button id="autodial" class="switch off" onclick="askAutodial()" title="Turn Lisa's auto-dial on or off"><span class="sw"><span class="sw-th"></span></span><span class="sw-t">Auto-dial off</span></button>
-      <select id="days" class="sel" onchange="load()"><option value="1">Today</option><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select>
+      <select id="days" class="sel" onchange="load();loadCosts()"><option value="1">Today</option><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select>
       <a class="back" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Dashboard</a>
     </div>
   </div>
@@ -500,6 +514,9 @@
   <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/></svg>Targets — goal: 5 qualified bookings / day</span></div>
   <div id="targets" class="flowcard"></div>
 
+  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Running cost</span></div>
+  <div id="costs" class="flowcard"><div class="muted" style="font-size:12px">Loading cost…</div></div>
+
   <div id="coach" class="card" style="display:none"></div>
 
   <div class="actbar">
@@ -522,6 +539,14 @@
     <b>DE Group</b> (never “Traffic Radius”). Agents are human-first — they admit they’re AI only if directly
     asked. Each agent’s pool is reserved; no other BDE touches it. Missed calls get a minimal curiosity SMS.
     This console is admin-only.</div>
+</div>
+
+<div id="roleModal" class="modal-bg" style="display:none" onclick="if(event.target===this)closeRole()">
+  <div class="modal" id="roleCard" style="max-width:520px;text-align:left">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="m-ic go" id="roleIc" style="width:40px;height:40px;margin:0"></span><h3 id="roleTitle" style="margin:0"></h3></div>
+    <div id="roleBody"></div>
+    <div class="modal-btns" style="justify-content:flex-end;margin-top:16px"><button class="btn ghost" onclick="closeRole()">Close</button></div>
+  </div>
 </div>
 
 <div id="adModal" class="modal-bg" style="display:none" onclick="if(event.target===this)closeAd()">
@@ -572,6 +597,7 @@ const svg=(name,sw)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 async function load(){
   try{
     const s=await jget('/api/lisa/summary?days='+$('days').value);
+    window.__s=s;   // for the role drill-downs
     // auto-dial toggle switch (reflects the live DB state)
     const on=!!s.autodial_enabled; window.__autodial=on;
     const ad=$('autodial');
@@ -650,7 +676,7 @@ async function load(){
     ];
     const card=r=>{const c=RC[r[3]]||'var(--muted)', kind=KIND[r[2]]||'Human', ai=r[2]!=='Human';
       const lead=/Head of Sales/.test(r[1]), orbAv=(r[2]==='Agent'&&r[3]!=='soon');
-      return `<div class="role${r[3]==='soon'?' soon':''}${lead?' lead':''}" style="--rc:${c}"><div class="rtop">
+      return `<div class="role${r[3]==='soon'?' soon':''}${lead?' lead':''}" style="--rc:${c}" onclick="openRole('${esc(r[1])}')" role="button" tabindex="0" title="Open details"><div class="rtop">
         <span class="rav${orbAv?' orbmini':''}">${svg(r[0])}</span>
         <div class="rmeta"><div class="rname">${esc(r[1])}</div>
           <div class="rkind"><span class="kd" style="background:${ai?'var(--cyan)':'var(--faint)'}"></span>${kind}</div></div>
@@ -721,6 +747,54 @@ async function load(){
   }catch(e){ $('rows').innerHTML=`<tr><td colspan="8" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
 }
 
+/* ---- Role drill-down (click any staff card) ---- */
+function money2(c){return '$'+((+c||0)/100).toFixed(2)}
+function listBlock(h,arr,cls){arr=arr||[];return arr.length?`<div class="rd-h ${cls||''}">${esc(h)}</div><ul class="rd-list">`+arr.map(x=>`<li>${esc(x)}</li>`).join('')+'</ul>':'';}
+function showRole(title,ic,body){$('roleTitle').textContent=title;$('roleIc').innerHTML=svg(ic||'user',1.8);$('roleBody').innerHTML=body||'<p class="muted">No detail yet.</p>';$('roleModal').style.display='flex';}
+function closeRole(){$('roleModal').style.display='none';}
+function openRole(name){
+  const s=window.__s||{}, st=s.strategy||{}, acts=st.actions||{}, pb=s.playbook||{}, qa=s.qa||{}, qf=s.qa_flags||{};
+  const sc=(s.stage_coaches||[]).find(x=>x.title===name);
+  if(sc) return showRole(sc.title,({opener:'mic',gatekeeper:'users',pitch:'strategy',objection:'qa',close:'book'})[sc.stage]||'coach',
+    `<p class="muted">Owns: ${esc(sc.owns)} · benchmark ${Math.round(sc.benchmark||0)}%</p>`
+    +listBlock('What to do',sc.do,'good')+listBlock('What to avoid',sc.avoid,'bad')
+    +(sc.best_line?`<div class="rd-best">💬 “${esc(sc.best_line)}”</div>`:'')
+    +(!sc.trained?'<p class="muted">Still learning — needs more won/lost calls.</p>':''));
+  if(/Head of Sales/.test(name)) return showRole('Head of Sales · Strategist','strategy',
+    `<p>${esc(st.directive||'Orchestrating the floor.')}</p><div class="rd-kv">Policy: ${esc(st.policy||'—')} · ${st.in_hours?'in business hours':'off-hours'}</div>`
+    +`<div class="rd-kv">Directed this cycle: ${acts.briefs_built||0} briefs · ${acts.dms_resolved||0} DMs · ${acts.qa_reviewed||0} QA · ranked ${acts.prioritized||0}</div>`
+    +listBlock('Alerts',st.alerts,'bad'));
+  if(/Researcher/.test(name)) return showRole('Researcher · Brief-builder','audit',
+    `<p>Runs the audit + builds a per-prospect brief (real hooks, what they do, DM name) before every call.</p><div class="rd-kv">${s.briefs_built||0}/${s.pool_reserved||0} briefs saved</div>`);
+  if(/Sales Coach|Trainer/.test(name)) return showRole('Sales Coach · Trainer','coach',
+    listBlock('What to do (from won calls)',pb.do,'good')+listBlock('What not to do (from lost calls)',pb.avoid,'bad')
+    +`<div class="rd-kv">Learned from ${pb._won||0} won / ${pb._lost||0} lost calls</div>`);
+  if(/QA|Compliance/.test(name)) return showRole('QA · Compliance','qa',
+    `<div class="rd-kv">${qa.n||0} reviewed · overall ${qa.overall?(+qa.overall).toFixed(1):'–'}/5 · compliance ${qa.compliance?(+qa.compliance).toFixed(1):'–'}/5</div>`
+    +(Object.keys(qf).length?listBlock('Issues caught',Object.entries(qf).map(([k,v])=>v+' × '+k.replace(/_/g,' ')),'bad'):'<p class="muted">No compliance issues flagged.</p>'));
+  if(/Sales Manager|Ops/.test(name)) return showRole('Sales Manager · Ops','phone',
+    `<p>Dials the resolved decision-maker's number, one at a time at a natural pace, within each prospect's local hours; schedules callbacks + double-tap retries; respects DNC + the daily cap.</p><div class="rd-kv">${s.dialed_today||0}/${s.daily_target||0} today · ${s.due_now||0} due now</div>`);
+  if(/Lisa 1/.test(name)) return showRole('Lisa 1 · AI agent','mic',
+    `<div class="rd-kv">${s.calls||0} calls · ${s.booked||0} booked · ${s.book_rate||0}% book rate</div><p class="muted">Her own reserved pool of ${s.pool_reserved||0} worked GAds SMB prospects.</p>`);
+  if(/Lisa 2/.test(name)) return showRole('Lisa 2 · AI agent','mic','<p class="muted">In development — the next agent joining the floor.</p>');
+  if(/BDM/.test(name)) return showRole('BDM closers · human','users',`<div class="rd-kv">${s.booked||0} meetings to close.</div><p class="muted">Human closers take the meetings Lisa books.</p>`);
+  if(/Systems Engineer/.test(name)) return showRole('AI Systems Engineer','code','<p class="muted">Continuous improvement — tunes the prompts, ships upgrades, keeps the whole floor learning.</p>');
+  showRole(name,'user','<p class="muted">No detail available.</p>');
+}
+async function loadCosts(){
+  try{
+    const c=await jget('/api/lisa/costs?days='+$('days').value);
+    const chips=[['Retell · calls',c.retell_cents],['OpenAI · AI staff',c.llm_cents],['Twilio · SMS',c.twilio_sms_cents],['Twilio · voice',c.twilio_voice_cents]];
+    $('costs').innerHTML=`<div class="costgrid"><div><div class="eyebrow">Total · last ${c.days}d</div><div class="costtot">${money2(c.total_cents)}</div></div>`
+      +`<div style="flex:1;min-width:220px"><div class="costrow">${chips.map(x=>`<span class="costchip">${esc(x[0])} <b>${money2(x[1])}</b></span>`).join('')}</div>`
+      +`<div class="costrow"><span class="costchip">per call <b>${money2(c.per_call_cents)}</b></span>`
+      +(c.per_booking_cents!=null?`<span class="costchip">per booking <b>${money2(c.per_booking_cents)}</b></span>`:'')
+      +(c.per_qualified_cents!=null?`<span class="costchip">per qualified <b>${money2(c.per_qualified_cents)}</b></span>`:'')
+      +`<span class="costchip">${c.calls||0} calls · ${c.sms_count||0} SMS</span></div></div></div>`
+      +`<div class="note" style="margin-top:11px">${esc(c.note||'')}${c.twilio_note?' · '+esc(c.twilio_note):''}</div>`;
+  }catch(e){ $('costs').innerHTML='<div class="muted" style="font-size:12px">Could not load cost ('+esc(e.message||e)+')</div>'; }
+}
+
 /* ---- Auto-dial ON/OFF toggle with a second confirmation ---- */
 function askAutodial(){
   const turnOn=!window.__autodial;
@@ -780,7 +854,7 @@ async function previewBrief(){
     alert('BRIEF Lisa would be handed:\n\n'+Object.entries(b).map(([k,v])=>k+': '+v).join('\n\n')); }
   catch(e){ alert('Could not build brief: '+(e.message||e)); }
 }
-load(); setInterval(load,20000);
+load(); loadCosts(); setInterval(load,20000); setInterval(loadCosts,300000);
 </script>
 </body>
 </html>

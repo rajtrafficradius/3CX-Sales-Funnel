@@ -4410,6 +4410,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         on = await run_in_threadpool(_lisa.set_autodial_state, pool, bool(b.get("on")), by)
         return JSONResponse({"autodial_enabled": on})
 
+    @app.get("/api/lisa/costs")
+    def lisa_costs(request: Request, days: int = 30) -> JSONResponse:
+        """Accurate full running cost of the Lisa system (Retell + OpenAI + Twilio). Admin-only."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        c = await run_in_threadpool(_lisa.system_costs, pool, settings, days)
+        return JSONResponse(jsonable_encoder(c))
+
     @app.get("/api/lisa/calls")
     def lisa_calls(request: Request, limit: int = 100) -> JSONResponse:
         if not is_admin(getattr(request.state, "user", None) or {}):
