@@ -91,8 +91,36 @@ def ensure_tables(pool: ConnectionPool) -> None:
         # value-rank of the reserved pool (live ad creatives = spend proxy) so the highest-spending
         # advertisers are called first; set by the Head of Sales each cycle, consumed by schedule_lisa_fresh.
         cur.execute("ALTER TABLE lisa_pool ADD COLUMN IF NOT EXISTS priority integer DEFAULT 0")
+        # runtime control switch (single row) — auto-dial ON/OFF flipped live from the console (no redeploy).
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_control ("
+                    "  id integer PRIMARY KEY, autodial boolean, updated_at timestamptz DEFAULT now(),"
+                    "  updated_by text)")
         conn.commit()
     ensure_lisa_agent(pool)
+
+
+def get_autodial_state(pool: ConnectionPool, settings: Settings) -> bool:
+    """Effective auto-dial state. The console toggle (DB, lisa_control) is authoritative once set so it can
+    be flipped live with no redeploy; before it's ever set it falls back to LISA_AUTODIAL_ENABLED (env)."""
+    try:
+        r = _fetch(pool, "SELECT autodial FROM lisa_control WHERE id=1")
+        if r and r[0].get("autodial") is not None:
+            return bool(r[0]["autodial"])
+    except Exception as exc:
+        log.warning("lisa_autodial_state_read_failed", error=str(exc)[:140])
+    return bool(getattr(settings, "lisa_autodial_enabled", False))
+
+
+def set_autodial_state(pool: ConnectionPool, on: bool, by: str = "") -> bool:
+    """Flip auto-dial ON/OFF from the console (persisted; takes effect on the very next 60s cycle)."""
+    ensure_tables(pool)
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO lisa_control (id, autodial, updated_at, updated_by) VALUES (1,%s,now(),%s) "
+                    "ON CONFLICT (id) DO UPDATE SET autodial=EXCLUDED.autodial, updated_at=now(), updated_by=EXCLUDED.updated_by",
+                    (bool(on), by or ""))
+        conn.commit()
+    log.info("lisa_autodial_toggled", on=bool(on), by=by)
+    return bool(on)
 
 
 def ensure_lisa_agent(pool: ConnectionPool) -> None:
@@ -1057,7 +1085,7 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     callback) within the business-hours window, up to the daily target, a few at a time. Marks each dialed
     event 'done'. No call fires unless lisa_autodial_enabled is true."""
     ensure_tables(pool)
-    if not getattr(settings, "lisa_autodial_enabled", False):
+    if not get_autodial_state(pool, settings):          # console toggle (DB) wins; env is the fallback default
         return {"skipped": "autodial disabled"}
     if not getattr(settings, "lisa_enabled", False):
         return {"skipped": "lisa disabled"}

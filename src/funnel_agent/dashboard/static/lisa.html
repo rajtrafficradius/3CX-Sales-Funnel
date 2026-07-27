@@ -73,6 +73,31 @@
   .chip.on{color:var(--good);border-color:rgba(52,211,153,.42);background:var(--good-d)} .chip.on .dot{background:var(--good);box-shadow:0 0 9px var(--good)}
   .chip.off{color:var(--warn);border-color:rgba(251,191,36,.4);background:var(--warn-d)} .chip.off .dot{background:var(--warn)}
   .chip svg{width:13px;height:13px}
+  /* auto-dial toggle switch */
+  .switch{display:inline-flex;align-items:center;gap:9px;padding:5px 13px 5px 6px;border-radius:var(--r-pill);
+    border:1px solid var(--line-2);background:var(--panel);color:var(--muted);font:inherit;font-size:11.5px;
+    font-weight:650;cursor:pointer;transition:.15s;white-space:nowrap}
+  .switch:hover{border-color:var(--muted)}
+  .switch .sw{width:34px;height:20px;border-radius:var(--r-pill);background:var(--panel-3);border:1px solid var(--line-2);
+    position:relative;flex:none;transition:.18s}
+  .switch .sw-th{position:absolute;top:1.5px;left:2px;width:15px;height:15px;border-radius:50%;background:var(--muted);
+    transition:left .18s cubic-bezier(.4,0,.2,1),background .18s}
+  .switch.on{color:var(--good);border-color:rgba(52,211,153,.42);background:var(--good-d)}
+  .switch.on .sw{background:rgba(52,211,153,.28);border-color:rgba(52,211,153,.5)}
+  .switch.on .sw-th{left:16px;background:var(--good);box-shadow:0 0 8px var(--good)}
+  /* confirmation modal */
+  .modal-bg{position:fixed;inset:0;z-index:200;background:rgba(4,6,12,.66);backdrop-filter:blur(3px);
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal{background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r3);max-width:440px;width:100%;
+    padding:26px;box-shadow:0 40px 90px -30px rgba(0,0,0,.8);text-align:center}
+  .modal .m-ic{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;margin:0 auto 15px}
+  .modal .m-ic svg{width:26px;height:26px}
+  .modal.go .m-ic{background:var(--accent-soft);color:var(--vio-2)}
+  .modal.stop .m-ic{background:var(--warn-d);color:var(--warn)}
+  .modal h3{margin:0 0 9px;font-size:17px;font-weight:740;letter-spacing:-.01em}
+  .modal p{margin:0 0 20px;color:var(--txt-2);font-size:13px;line-height:1.6}
+  .modal-btns{display:flex;gap:10px;justify-content:center}
+  .modal-btns .btn{min-width:124px;justify-content:center}
   select.sel{background:var(--panel);color:var(--txt);border:1px solid var(--line-2);border-radius:var(--r1);
     padding:8px 11px;font:inherit;font-weight:550;cursor:pointer}
   .back{color:var(--muted);font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:5px}
@@ -403,7 +428,7 @@
     <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.7" x2="15.4" y2="6.3"/><line x1="8.6" y1="13.3" x2="15.4" y2="17.7"/></svg></div>
     <div class="title"><h1>Outbound Intelligence</h1><div class="sub">Autonomous AI outbound sales floor · Digital Expo · Traffic Radius</div></div>
     <div class="right">
-      <span id="autodial" class="chip off"><span class="dot"></span>Auto-dial off</span>
+      <button id="autodial" class="switch off" onclick="askAutodial()" title="Turn Lisa's auto-dial on or off"><span class="sw"><span class="sw-th"></span></span><span class="sw-t">Auto-dial off</span></button>
       <select id="days" class="sel" onchange="load()"><option value="1">Today</option><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select>
       <a class="back" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>Dashboard</a>
     </div>
@@ -476,6 +501,15 @@
     asked. Each agent’s pool is reserved; no other BDE touches it. Missed calls get a minimal curiosity SMS.
     This console is admin-only.</div>
 </div>
+
+<div id="adModal" class="modal-bg" style="display:none" onclick="if(event.target===this)closeAd()">
+  <div class="modal" id="adCard">
+    <div class="m-ic" id="adIc"></div>
+    <h3 id="adTitle"></h3>
+    <p id="adBody"></p>
+    <div class="modal-btns"><button class="btn ghost" onclick="closeAd()">Cancel</button><button class="btn" id="adConfirm"></button></div>
+  </div>
+</div>
 <script>
 const $=s=>document.getElementById(s);
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -515,10 +549,11 @@ const svg=(name,sw)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 async function load(){
   try{
     const s=await jget('/api/lisa/summary?days='+$('days').value);
-    // auto-dial chip
+    // auto-dial toggle switch (reflects the live DB state)
+    const on=!!s.autodial_enabled; window.__autodial=on;
     const ad=$('autodial');
-    ad.className='chip '+(s.autodial_enabled?'on':'off');
-    ad.innerHTML='<span class="dot"></span>'+(s.autodial_enabled?'Auto-dial live':'Auto-dial off');
+    ad.className='switch '+(on?'on':'off');
+    ad.querySelector('.sw-t').textContent=on?'Auto-dial live':'Auto-dial off';
     // campaign
     $('cReserved').textContent=s.pool_reserved||0;
     $('cScheduled').textContent=s.pool_scheduled||0;
@@ -644,6 +679,28 @@ async function load(){
     }).join(''):`<tr><td colspan="8" class="empty">No calls yet — tap the orb to talk to Lisa, or launch a one-off call.</td></tr>`;
   }catch(e){ $('rows').innerHTML=`<tr><td colspan="8" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
 }
+
+/* ---- Auto-dial ON/OFF toggle with a second confirmation ---- */
+function askAutodial(){
+  const turnOn=!window.__autodial;
+  $('adCard').className='modal '+(turnOn?'go':'stop');
+  $('adIc').innerHTML=svg(turnOn?'phone':'pause',2);
+  $('adTitle').textContent=turnOn?'Turn auto-dial ON?':'Turn auto-dial OFF?';
+  $('adBody').innerHTML=turnOn
+    ? 'Lisa will start <b>calling her reserved prospects automatically</b> — one at a time, about every 10 minutes, only within business hours. Real Australian businesses will be dialed. You can switch it off again anytime.'
+    : 'Lisa will <b>stop placing new automatic calls</b>. Any call already in progress finishes; her scheduled calls stay queued until you switch it back on.';
+  const b=$('adConfirm'); b.disabled=false; b.textContent=turnOn?'Yes, go live':'Turn off';
+  b.className='btn '+(turnOn?'primary':'stop'); b.onclick=()=>applyAutodial(turnOn);
+  $('adModal').style.display='flex';
+}
+function closeAd(){ $('adModal').style.display='none'; }
+async function applyAutodial(on){
+  const b=$('adConfirm'); b.disabled=true; b.textContent='Saving…';
+  try{ const r=await jpost('/api/lisa/autodial',{on:on}); window.__autodial=!!r.autodial_enabled; }
+  catch(e){ alert('Could not change auto-dial: '+(e.message||e)); }
+  closeAd(); load();
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeAd(); });
 
 /* ---- Voice Orb: talk to Lisa live in the browser (Retell web SDK) ---- */
 let rc=null, inCall=false;

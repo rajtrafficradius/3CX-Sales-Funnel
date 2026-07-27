@@ -4374,10 +4374,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(403, "admin only")
         from .. import lisa as _lisa
         s = _lisa.summary(pool, days=days)
-        s.update({"autodial_enabled": settings.lisa_autodial_enabled, "lisa_enabled": settings.lisa_enabled,
+        s.update({"autodial_enabled": _lisa.get_autodial_state(pool, settings), "lisa_enabled": settings.lisa_enabled,
                   "daily_target": settings.lisa_daily_target, "pool_size": settings.lisa_pool_size,
                   "sms_enabled": settings.lisa_sms_enabled})
         return JSONResponse(jsonable_encoder(s))
+
+    @app.post("/api/lisa/autodial")
+    async def lisa_autodial_toggle(request: Request) -> JSONResponse:
+        """Flip Lisa's auto-dial ON/OFF live from the console (admin-only). Body: {on: bool}.
+        Takes effect on the next 60s cycle — no redeploy."""
+        user = request.state.user if hasattr(request.state, "user") else None
+        if not is_admin(user or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa as _lisa
+        b = await request.json()
+        by = (user or {}).get("email") or (user or {}).get("name") or "admin"
+        on = await run_in_threadpool(_lisa.set_autodial_state, pool, bool(b.get("on")), by)
+        return JSONResponse({"autodial_enabled": on})
 
     @app.get("/api/lisa/calls")
     def lisa_calls(request: Request, limit: int = 100) -> JSONResponse:
