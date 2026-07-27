@@ -492,6 +492,9 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         b["decision_maker"] = facts["dm_name"]
     if facts.get("what_they_do") and not niche:
         b["prospect_niche"] = facts["what_they_do"]
+    # never leave niche blank (a blank field is what makes the model echo a placeholder)
+    if not (b.get("prospect_niche") or "").strip():
+        b["prospect_niche"] = "your industry"
     # Retell wants strings; drop Nones
     return {k: ("" if v is None else str(v)) for k, v in b.items()}
 
