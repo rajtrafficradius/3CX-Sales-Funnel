@@ -83,6 +83,11 @@ def ensure_tables(pool: ConnectionPool) -> None:
         # per-call QA / coaching scores (the Head-of-Sales scorecard).
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_call_reviews ("
                     "  call_id text PRIMARY KEY, scores jsonb, reviewed_at timestamptz DEFAULT now())")
+        # per-FUNNEL-STAGE dedicated coach (opener/gatekeeper/pitch/objection/close) — each learns + trains
+        # for its own stage. One row per stage.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_stage_coach ("
+                    "  stage text PRIMARY KEY, title text, guidance jsonb, benchmark numeric,"
+                    "  built_at timestamptz DEFAULT now())")
         # Head of Sales · Strategist output — the current orchestration decision + what it actually did each
         # cycle (policy, directive, actions taken, compliance alerts). One row (id=1). Surfaced in the console
         # so the role shows real work, not a label.
@@ -1182,9 +1187,18 @@ def schedule_lisa_followup(pool: ConnectionPool, settings: Settings, *, dest9: s
         if attempts >= int(getattr(settings, "lisa_retry_max_attempts", 4)):
             return
         cad_days = int(getattr(settings, "lisa_retry_cadence_days", 3))
-        when = _future_biz(datetime.now(ZoneInfo(tz)) + timedelta(days=cad_days),
-                           int(getattr(settings, "lisa_call_window_start", 9)))
-        create_event(pool, bde_name="Lisa", type="retry", title=f"🔄 Lisa retry ({attempts+1}): {who}",
+        now_l = datetime.now(ZoneInfo(tz))
+        wstart = int(getattr(settings, "lisa_call_window_start", 9))
+        wend = int(getattr(settings, "lisa_call_window_end", 17))
+        dt_h = int(getattr(settings, "lisa_double_tap_hours", 2))
+        # DOUBLE-TAP: a no-answer gets ONE quick same-day retry (+dt_h) if still within business hours,
+        # before falling back to the multi-day cadence — mirrors how a human re-tries a missed call.
+        cand = now_l + timedelta(hours=dt_h)
+        if outcome == "no_answer" and attempts <= 1 and dt_h > 0 and cand.weekday() < 5 and wstart <= cand.hour < wend:
+            when, label = cand, "double-tap"
+        else:
+            when, label = _future_biz(now_l + timedelta(days=cad_days), wstart), "retry"
+        create_event(pool, bde_name="Lisa", type="retry", title=f"🔄 Lisa {label} ({attempts+1}): {who}",
                      start_at=when, end_at=when + timedelta(minutes=15),
                      notes="No pickup yet — Lisa retries at a different time.", dest_number=dest_number,
                      created_by="lisa")
@@ -1431,6 +1445,95 @@ def get_playbook(pool: ConnectionPool) -> dict:
     return (r[0].get("playbook") if r else None) or {}
 
 
+# --------------------------------------------------------------------------- #
+# Per-stage dedicated coaches (opener / gatekeeper / pitch / objection / close)
+# --------------------------------------------------------------------------- #
+# (stage key, coach title, what it owns, stage-conversion benchmark % toward 5 qualified/day)
+LISA_STAGES = [
+    ("opener", "Opener Coach", "the first 20 seconds — a short human curiosity open, permission, not sounding scripted", 50),
+    ("gatekeeper", "Gatekeeper Coach", "getting past reception to the decision-maker without sounding like a marketing pitch", 55),
+    ("pitch", "Pitch Coach", "delivering the insight/hook so the decision-maker leans in", 45),
+    ("objection", "Objection Handler", "handling 'we have an agency / not interested / no time / just email me'", 40),
+    ("close", "Closing Coach", "agreeing a concrete time and qualifying (authority, need, timeline)", 25),
+]
+
+
+def refresh_stage_coaches(pool: ConnectionPool, settings: Settings, *, force: bool = False) -> dict:
+    """Give EACH funnel stage a dedicated coach. One LLM pass over WON/LOST calls distils stage-specific
+    do/avoid + a best line for opener, gatekeeper, pitch, objection and close. Throttled ~20h."""
+    ensure_tables(pool)
+    if not force:
+        last = _fetch(pool, "SELECT max(built_at) b FROM lisa_stage_coach")
+        if last and last[0].get("b"):
+            from datetime import datetime, timezone
+            if (datetime.now(timezone.utc) - last[0]["b"]).total_seconds() / 3600 < 20:
+                return {"skipped": "stage coaches fresh"}
+    won = _fetch(pool, "SELECT left(tr.text,2400) t FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+        "JOIN transcripts tr ON tr.call_id=c.call_id WHERE c.in_scope AND cl.rpc_connect AND cl.meeting_booked "
+        "AND length(COALESCE(tr.text,''))>500 ORDER BY c.started_at DESC LIMIT 6")
+    lost = _fetch(pool, "SELECT left(tr.text,2400) t FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
+        "JOIN transcripts tr ON tr.call_id=c.call_id WHERE c.in_scope AND cl.rpc_connect AND NOT cl.meeting_booked "
+        "AND COALESCE(cl.call_outcome,'')='conversation' AND length(COALESCE(tr.text,''))>500 ORDER BY c.started_at DESC LIMIT 6")
+    if not won and not lost:
+        return {"skipped": "no calls to learn from"}
+    sys = ("You are the head coaching team for an Australian appointment-setting AI cold-caller (Lisa, brand "
+           "'DE Group', books a free strategy session). From WON transcripts (meeting booked) and LOST ones "
+           "(reached the decision-maker, no booking), produce DEDICATED coaching for each funnel stage. Return "
+           "STRICT JSON with EXACTLY these keys: opener, gatekeeper, pitch, objection, close. Each value = "
+           "{\"do\":[up to 4 short concrete rules], \"avoid\":[up to 4], \"best_line\":\"one spoken line\"}. "
+           "objection.best_line must be the best one-sentence rebuttal to 'we already have an agency'. Keep "
+           "every string short, spoken, AU tone, no fluff.")
+    usr = ("=== WON ===\n" + "\n---\n".join(w["t"] for w in won) + "\n\n=== LOST ===\n" + "\n---\n".join(l["t"] for l in lost))
+    out = _llm_json(settings, sys, usr)
+    if not out:
+        return {"skipped": "llm returned nothing"}
+    n = 0
+    with pool.connection() as conn, conn.cursor() as cur:
+        for stage, title, _desc, bm in LISA_STAGES:
+            g = out.get(stage) or {}
+            if not (g.get("do") or g.get("avoid") or g.get("best_line")):
+                continue
+            cur.execute("INSERT INTO lisa_stage_coach (stage,title,guidance,benchmark,built_at) VALUES (%s,%s,%s,%s,now()) "
+                        "ON CONFLICT (stage) DO UPDATE SET title=EXCLUDED.title, guidance=EXCLUDED.guidance, "
+                        "benchmark=EXCLUDED.benchmark, built_at=now()", (stage, title, json.dumps(g), bm))
+            n += 1
+        conn.commit()
+    return {"stages_coached": n, "won": len(won), "lost": len(lost)}
+
+
+def get_stage_coaches(pool: ConnectionPool) -> list[dict]:
+    rows = {r["stage"]: r for r in _fetch(pool, "SELECT stage,title,guidance,benchmark FROM lisa_stage_coach")}
+    out = []
+    for stage, title, desc, bm in LISA_STAGES:
+        r = rows.get(stage) or {}
+        g = r.get("guidance") or {}
+        out.append({"stage": stage, "title": title, "owns": desc, "benchmark": r.get("benchmark") or bm,
+                    "do": g.get("do") or [], "avoid": g.get("avoid") or [], "best_line": g.get("best_line") or "",
+                    "trained": bool(g)})
+    return out
+
+
+def funnel_kpis(pool: ConnectionPool, days: int = 30) -> dict:
+    """Lisa's outbound funnel by stage (dials → connected → reached DM → booked → qualified) with the daily
+    qualified target, so every stage can be measured against its benchmark toward 5 qualified/day."""
+    r = _fetch(pool,
+        "SELECT count(*) dials, "
+        "  count(*) FILTER (WHERE call_outcome NOT IN ('no_answer','voicemail','wrong_number') OR meeting_agreed) connected, "
+        "  count(*) FILTER (WHERE call_outcome IN ('callback_requested','not_interested','do_not_call') OR meeting_agreed) reached_dm, "
+        "  count(*) FILTER (WHERE meeting_agreed) booked, "
+        "  count(*) FILTER (WHERE meeting_agreed AND qualification IS NOT NULL) qualified "
+        "FROM lisa_calls WHERE created_at >= now() - make_interval(days => %s)", (days,))
+    s = dict(r[0]) if r else {}
+    def pct(a, b):
+        return round(100 * (a or 0) / b, 1) if b else 0.0
+    d = s.get("dials") or 0
+    return {"dials": d, "connected": s.get("connected") or 0, "reached_dm": s.get("reached_dm") or 0,
+            "booked": s.get("booked") or 0, "qualified": s.get("qualified") or 0,
+            "connect_rate": pct(s.get("connected"), d), "rpc_rate": pct(s.get("reached_dm"), s.get("connected")),
+            "book_rate": pct(s.get("booked"), s.get("reached_dm")), "qual_rate": pct(s.get("qualified"), s.get("booked")),
+            "daily_qualified_target": 5}
+
+
 def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, transcript: str) -> dict:
     """AI QA reviewer: score one Lisa call for quality + brand + compliance; store for the scorecard."""
     sys = ("You are the QA reviewer + coach for an AU appointment-setting AI caller (Lisa, brand 'DE Group', "
@@ -1518,6 +1621,10 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
             actions["qa_reviewed"] = review_pending_lisa_calls(pool, settings).get("reviewed", 0)
         except Exception as exc:
             log.warning("hos_qa_failed", error=str(exc)[:140])
+        try:
+            refresh_stage_coaches(pool, settings)      # dedicated coach per funnel stage (throttled ~20h)
+        except Exception as exc:
+            log.warning("hos_stagecoach_failed", error=str(exc)[:140])
     try:
         actions["briefs_built"] = refresh_lisa_briefs(pool, settings, limit=600).get("built", 0)
     except Exception as exc:
@@ -1663,6 +1770,9 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
     s["strategy"] = get_strategy(pool)
     now_mel = datetime.now(ZoneInfo(tz))
     s["in_hours"] = bool(now_mel.weekday() < 5 and 9 <= now_mel.hour < 17)
+    # --- per-stage dedicated coaches + the outbound funnel KPIs (goal = 5 qualified bookings/day) ---
+    s["stage_coaches"] = get_stage_coaches(pool)
+    s["funnel"] = funnel_kpis(pool, days)
     return s
 
 

@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     lisa_daily_target: int = 50                  # calls Lisa places per working day
     lisa_retry_cadence_days: int = 3             # days between retry attempts on a no-answer
     lisa_retry_max_attempts: int = 4             # stop retrying after this many attempts
+    lisa_double_tap_hours: int = 2               # a no-answer gets one quick same-day retry after this many hours
     lisa_call_window_start: int = 9              # only auto-dial between these local hours (business hours)
     lisa_call_window_end: int = 17
     lisa_max_concurrent: int = 1                 # natural dialing: ONE call at a time (no concurrency)
