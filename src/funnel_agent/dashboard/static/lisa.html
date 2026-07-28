@@ -384,7 +384,17 @@
   .oc.not_interested,.oc.do_not_call,.oc.wrong_number{background:var(--bad-d);color:var(--bad);border-color:rgba(251,113,133,.34)}
   .oc.voicemail,.oc.no_answer{background:var(--panel-3);color:var(--muted)}
   .muted{color:var(--muted)} .mono{font-variant-numeric:tabular-nums}
-  .sumtxt{max-width:340px;color:var(--txt-2)}
+  .sumtxt{max-width:300px;color:var(--txt-2)}
+  /* Recent-calls: break out of the 1200px page width so all columns fit without side-scrolling */
+  .card.wide{width:min(1640px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+  @media(max-width:760px){.card.wide{width:auto;margin-left:0;transform:none}}
+  .callfilters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}
+  .callfilters .seg{display:inline-flex;background:var(--panel-2,rgba(148,163,184,.10));border:1px solid var(--line,rgba(148,163,184,.18));border-radius:999px;padding:2px}
+  .callfilters .seg button{border:0;background:transparent;color:var(--txt-2);font:inherit;font-size:12px;padding:4px 11px;border-radius:999px;cursor:pointer}
+  .callfilters .seg button.on{background:var(--vio);color:#fff;font-weight:650}
+  .callfilters select,.callfilters input{background:var(--panel-2,rgba(148,163,184,.10));border:1px solid var(--line,rgba(148,163,184,.18));color:var(--txt);border-radius:8px;padding:5px 9px;font:inherit;font-size:12px}
+  .callfilters input{width:150px}
+  .callcount{font-size:11.5px;color:var(--faint);margin-left:2px}
   .ai{display:inline-flex;align-items:center;gap:4px;color:var(--warn);font-weight:650;font-size:10.5px;margin-left:6px}
   .qbits{margin-top:6px;font-size:11px;color:var(--muted);line-height:1.55;display:flex;flex-wrap:wrap;gap:5px 4px}
   .qbits span{background:var(--panel-3);border:1px solid var(--line);border-radius:6px;padding:1px 7px}
@@ -549,8 +559,29 @@
     <span id="launchMsg" class="msg"></span>
   </div>
 
-  <div class="card">
-    <div class="chead"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Recent calls</span></div>
+  <div class="card wide">
+    <div class="chead"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Recent calls</span>
+      <div class="callfilters">
+        <span class="seg" id="segDate">
+          <button data-d="today" onclick="setCallDate('today')">Today</button>
+          <button data-d="7d" onclick="setCallDate('7d')">7 days</button>
+          <button data-d="all" class="on" onclick="setCallDate('all')">All</button>
+        </span>
+        <select id="fOutcome" onchange="renderCalls()" title="Filter by outcome">
+          <option value="">All outcomes</option>
+          <option value="booked">Booked</option>
+          <option value="callback_requested">Callback</option>
+          <option value="not_interested">Not interested</option>
+          <option value="gatekeeper_only">Gatekeeper</option>
+          <option value="voicemail">Voicemail</option>
+          <option value="no_answer">No answer</option>
+          <option value="connected">Connected (any)</option>
+          <option value="sms">Sent SMS/audit</option>
+        </select>
+        <input id="fSearch" type="search" placeholder="Search name / company…" oninput="renderCalls()">
+        <span class="callcount" id="callCount"></span>
+      </div>
+    </div>
     <div class="scroll"><table><thead><tr>
       <th>When</th><th>Prospect</th><th>Outcome</th><th>Booked for</th><th>Objection</th><th>Dur</th><th class="rec-col">Recording</th><th class="rs-col">Report / SMS</th><th>Summary</th>
     </tr></thead><tbody id="rows"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody></table></div>
@@ -754,15 +785,39 @@ async function load(){
     // Never rebuild the calls table while a recording is playing — re-rendering would destroy the <audio>
     // element and stop playback partway. Skip this cycle's table refresh until it's paused/ended.
     if([...document.querySelectorAll('.recplay')].some(a=>!a.paused && !a.ended)) return;
-    const d=await jget('/api/lisa/calls?limit=150'); const rows=d.calls||[];
-    $('rows').innerHTML=rows.length?rows.map(c=>{
+    const d=await jget('/api/lisa/calls?limit=300'); window.__calls=d.calls||[];
+    renderCalls();
+  }catch(e){ $('rows').innerHTML=`<tr><td colspan="9" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
+}
+
+/* ---- Recent-calls filtering (client-side over the fetched set) ---- */
+window.__callFilter={date:'all'};
+function setCallDate(d){window.__callFilter.date=d;[...document.querySelectorAll('#segDate button')].forEach(b=>b.classList.toggle('on',b.dataset.d===d));renderCalls();}
+function renderCalls(){
+  const all=window.__calls||[]; const f=window.__callFilter||{date:'all'};
+  const outcome=($('fOutcome')||{}).value||''; const q=(($('fSearch')||{}).value||'').trim().toLowerCase();
+  const today=new Date().toLocaleDateString('en-CA',{timeZone:'Australia/Melbourne'});
+  const d7=new Date(Date.now()-6*864e5).toLocaleDateString('en-CA',{timeZone:'Australia/Melbourne'});
+  const rows=all.filter(c=>{
+    const day=(c.created_local||'').slice(0,10), oc=(c.call_outcome||c.status||'');
+    if(f.date==='today'&&day!==today)return false;
+    if(f.date==='7d'&&day<d7)return false;
+    if(outcome==='booked'){ if(!c.meeting_agreed)return false; }
+    else if(outcome==='connected'){ if(!['conversation','callback_requested','not_interested','gatekeeper_only'].includes(oc))return false; }
+    else if(outcome==='sms'){ if(!(c.audit_token||(c.sms&&c.sms.length)))return false; }
+    else if(outcome&&oc!==outcome)return false;
+    if(q){const hay=((c.prospect_name||'')+' '+(c.company_name||'')+' '+(c.domain||'')+' '+(c.dest9||'')).toLowerCase(); if(!hay.includes(q))return false;}
+    return true;
+  });
+  const cc=$('callCount'); if(cc)cc.textContent=rows.length+' of '+all.length;
+  $('rows').innerHTML=rows.length?rows.map(c=>{
       const oc=(c.call_outcome||c.status||'—');
       const key=c.domain||c.dest9||'';
       const rec=c.recording_url?`<audio class="recplay" controls preload="none" src="${esc(c.recording_url)}"></audio>`:'<span class="muted">—</span>';
       const when=(c.created_local||'').replace('T',' ').slice(0,16);
       const booked=c.meeting_agreed?`<span class="oc booked">${esc(c.agreed_day_time||'agreed')}</span>`:(c.callback_when?`<span class="muted">cb: ${esc(c.callback_when)}</span>`:'');
-      const q=c.qualification||{};
-      const qbits=[q.q_current_setup&&('🛠 '+q.q_current_setup), q.q_monthly_spend&&('💰 '+q.q_monthly_spend), q.q_biggest_challenge&&('⚠ '+q.q_biggest_challenge), q.q_goals&&('🎯 '+q.q_goals), q.q_timeline&&('⏱ '+q.q_timeline), q.q_other_decision_makers&&('👥 '+q.q_other_decision_makers)].filter(Boolean);
+      const qq=c.qualification||{};
+      const qbits=[qq.q_current_setup&&('🛠 '+qq.q_current_setup), qq.q_monthly_spend&&('💰 '+qq.q_monthly_spend), qq.q_biggest_challenge&&('⚠ '+qq.q_biggest_challenge), qq.q_goals&&('🎯 '+qq.q_goals), qq.q_timeline&&('⏱ '+qq.q_timeline), qq.q_other_decision_makers&&('👥 '+qq.q_other_decision_makers)].filter(Boolean);
       const qhtml=qbits.length?`<div class="qbits">${qbits.map(b=>'<span>'+esc(b)+'</span>').join('')}</div>`:'';
       const audit=c.audit_token?`<a class="auditlink" href="${location.origin}/r/${esc(c.audit_token)}" target="_blank" title="View the audit report we sent this prospect">${svg('audit',2)} Audit ${svg('extlink',2)}</a>`:'';
       const sms=c.sms||[];
@@ -775,8 +830,7 @@ async function load(){
         <td class="mono muted">${dur(c.duration_ms)}</td><td class="rec-col">${rec}</td>
         <td class="rs-col">${rscell}</td>
         <td class="sumtxt">${esc(c.call_summary||'')}${qhtml}</td></tr>`;
-    }).join(''):`<tr><td colspan="9" class="empty">No calls yet — tap the orb to talk to Lisa, or launch a one-off call.</td></tr>`;
-  }catch(e){ $('rows').innerHTML=`<tr><td colspan="9" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
+    }).join(''):`<tr><td colspan="9" class="empty">${all.length?'No calls match this filter.':'No calls yet — tap the orb to talk to Lisa, or launch a one-off call.'}</td></tr>`;
 }
 
 /* ---- Role drill-down (click any staff card) ---- */
