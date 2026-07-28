@@ -3639,7 +3639,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             m = assemble_audit(pool, domain, avg_ticket=tk)
             if not m:
                 return None
-            return render_audit_html(embed_ad_images(m), standalone=True)
+            # public=True → white-labelled (DE Group): no Traffic Radius logo/wording/links for the prospect
+            return render_audit_html(embed_ad_images(m), standalone=True, public=True)
         try:
             out = await run_in_threadpool(_do)
         except Exception as exc:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from datetime import date, datetime
 
 _LOGO_CACHE: dict = {}
@@ -588,8 +589,11 @@ h1,h2,h3{margin:0;letter-spacing:-.02em;color:var(--ink)}
 """
 
 
-def render_audit_html(m: dict, *, standalone: bool = True) -> str:
-    """Premium, self-contained HTML report for the audit model."""
+def render_audit_html(m: dict, *, standalone: bool = True, public: bool = False) -> str:
+    """Premium, self-contained HTML report for the audit model.
+    public=True → white-labelled for a PROSPECT (the outreach brand is 'DE Group'): no Traffic Radius logo,
+    no Traffic Radius wording, no Traffic Radius links."""
+    BRAND = "DE Group" if public else "Traffic Radius"
     b = m["business"]; op = m["opportunity"]; ads = m["ads"]; seo = m["seo"]
     upside = m["recommendation"].get("total_upside") or 0
     gen = (m.get("generated") or "")[:10] or date.today().isoformat()
@@ -968,8 +972,9 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
         f'<p>This audit maps roughly <b>{rev_num("mo", r_mo)}/month</b> in new revenue {_esc(m["name"])} is currently '
         'handing to competitors and to gaps in its own site. Closing it means coordinated SEO, content, technical fixes and '
         'smarter paid — the kind of sustained, specialist work that’s hard to do in-house while running a business.</p>'
-        '<a class="ctabtn" href="https://trafficradius.com.au/contact-us/" target="_blank" rel="noopener">Book a 30-minute strategy call →</a>'
-        '<div class="rr">Australian team · transparent monthly reporting · we start with the fast wins so you see movement early.</div></div>'), num=False)
+        + ('<div class="ctabtn" style="cursor:default">Book a 30-minute strategy call →</div>' if public
+           else '<a class="ctabtn" href="https://trafficradius.com.au/contact-us/" target="_blank" rel="noopener">Book a 30-minute strategy call →</a>')
+        + '<div class="rr">Australian team · transparent monthly reporting · we start with the fast wins so you see movement early.</div></div>'), num=False)
 
     # Methodology
     asmp = "".join(f'<li>{_esc(a)}</li>' for a in (m.get("assumptions") or []) if a)
@@ -978,10 +983,10 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
             f'<ul class="assump" style="margin:8px 0 0;padding-left:16px">{asmp}</ul>', num=False)
 
     # cover — the hero is the ticket-driven revenue opportunity (updates live everywhere)
-    logo = m.get("_logo") or _logo_datauri()
-    logo_chip = (f'<span class="logo"><img src="{logo}" alt="Traffic Radius"/></span>' if logo
-                 else '<span class="logo">TR</span>')
-    cover = (f'<div class="cover"><div class="brand">{logo_chip}<span>Traffic Radius</span></div>'
+    logo = "" if public else (m.get("_logo") or _logo_datauri())   # no Traffic Radius logo on prospect reports
+    logo_chip = (f'<span class="logo"><img src="{logo}" alt="{BRAND}"/></span>' if logo
+                 else ('' if public else '<span class="logo">TR</span>'))
+    cover = (f'<div class="cover"><div class="brand">{logo_chip}<span>{BRAND}</span></div>'
              f'<div class="kick">Digital Marketing Audit</div><h1>{_esc(m["name"])}</h1>'
              f'<div class="dom">{_esc(m["domain"])}</div>'
              f'<div class="meta">{meta_html}</div>'
@@ -989,8 +994,8 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
              f'<div class="cap">in new revenue they’re currently missing — quantified inside, at their own average sale value</div></div>'
              f'<div class="kick" style="margin-top:22px;color:#7ea6ff">Prepared {gen} · confidential</div></div>')
 
-    footer = (f'<div class="footer"><b>Traffic Radius</b> — Digital Marketing Audit for {_esc(m["name"])} ({_esc(m["domain"])}). '
-              f'Generated {gen}. SEO &amp; keyword analysis by Traffic Radius; ad activity independently verified via '
+    footer = (f'<div class="footer"><b>{BRAND}</b> — Digital Marketing Audit for {_esc(m["name"])} ({_esc(m["domain"])}). '
+              f'Generated {gen}. SEO &amp; keyword analysis by {BRAND}; ad activity independently verified via '
               f'Google’s public Ads Transparency Center; traffic &amp; value figures '
               f'are estimates (see methodology). Prepared for a discovery conversation, not a guarantee of results.</div>')
 
@@ -1024,6 +1029,11 @@ def render_audit_html(m: dict, *, standalone: bool = True) -> str:
           'document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll(".tkt-input").forEach(function(i){recalcRev(i);});});</script>')
     pd = f'data-traf="{r_traf}" data-v2l="{r_v2l}" data-l2s="{r_l2s}"'
     body_html = cover + "".join(secs) + footer + js
+    if public:
+        # Belt-and-suspenders: strip ANY Traffic Radius wording/links baked into the model text (e.g. the
+        # recommendation copy) so the prospect-facing report never reveals it.
+        body_html = re.sub(r"https?://(www\.)?trafficradius\.com\.au[^\s\"'<>]*", "#", body_html)
+        body_html = re.sub(r"[Tt]raffic\s*[Rr]adius", "DE Group", body_html)
     if not standalone:
         return f'<style>{_AUDIT_CSS}</style><div class="page" {pd}>{body_html}</div>'
     return (f'<!doctype html><html><head><meta charset="utf-8"><title>Audit — {_esc(m["name"])}</title>'
