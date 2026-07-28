@@ -529,9 +529,12 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     #     POSITIVE (booked before / callback requested / warm-hot interest). If it was negative or cold, open
     #     fresh and keep the history PRIVATE — never remind a negative prospect that we called. ---
     lt = ((row or {}).get("lead_temp") or "").lower()
+    # POSITIVE = a genuine warm signal, not just any prior chat. A callback TIME or "we have an agency"
+    # is NOT positive. Requires: booked before, OR warm/hot interest, OR a callback request that wasn't cold.
     positive = bool(row and not row.get("ever_dnc") and (
-        row.get("ever_booked") or row.get("ever_callback") or row.get("cb_when")
-        or lt in ("warm", "hot", "interested", "positive", "keen")))
+        row.get("ever_booked")
+        or lt in ("warm", "hot", "interested", "positive", "keen")
+        or (row.get("ever_callback") and lt not in ("none", "cold", ""))))
     prior = ""
     if positive:
         prior = ("You had a genuinely positive chat with our team recently"
