@@ -97,6 +97,11 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_auto_adjustments ("
                     "  id bigserial PRIMARY KEY, adjustments jsonb, from_flags jsonb, applied boolean DEFAULT true,"
                     "  created_at timestamptz DEFAULT now())")
+        # Public, tokenised SHARE of a prospect's audit report — the unguessable token maps to a domain so a
+        # prospect can open their audit from an SMS link WITHOUT a login. Reuses the existing audit engine.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_audit_shares ("
+                    "  token text PRIMARY KEY, domain text NOT NULL, name text, ticket integer DEFAULT 2000,"
+                    "  dest9 text, views integer DEFAULT 0, created_at timestamptz DEFAULT now())")
         # Head of Sales · Strategist output — the current orchestration decision + what it actually did each
         # cycle (policy, directive, actions taken, compliance alerts). One row (id=1). Surfaced in the console
         # so the role shows real work, not a label.
@@ -1111,6 +1116,70 @@ def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: st
     except Exception as exc:
         log.warning("lisa_sms_reply_failed", error=str(exc)[:150])
     return {"ok": True, "reply": reply}
+
+
+# --------------------------------------------------------------------------- #
+# Audit share links — a prospect who asks for a report/proposal gets the EXISTING
+# audit (prospect-page Digital Marketing tab engine) at a public, tokenised URL by SMS.
+# --------------------------------------------------------------------------- #
+def create_audit_share(pool: ConnectionPool, domain: str, name: str | None = None,
+                       ticket: int = 2000, dest9: str | None = None) -> str:
+    """Mint (or reuse today's) unguessable token that maps to a domain, so the audit can be viewed without a
+    login. Returns the token. Idempotent-ish: reuses an existing token for the same domain if one exists."""
+    import secrets as _secrets
+    ensure_tables(pool)
+    dom = (domain or "").strip().lower()
+    if not dom:
+        raise ValueError("no domain")
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT token FROM lisa_audit_shares WHERE domain=%s ORDER BY created_at DESC LIMIT 1", (dom,))
+        r = cur.fetchone()
+        if r and r.get("token"):
+            return r["token"]
+        tok = _secrets.token_urlsafe(9)
+        cur.execute("INSERT INTO lisa_audit_shares (token, domain, name, ticket, dest9) VALUES (%s,%s,%s,%s,%s)",
+                    (tok, dom, name, int(ticket or 2000), dest9))
+        conn.commit()
+    return tok
+
+
+def resolve_audit_share(pool: ConnectionPool, token: str) -> dict | None:
+    """Public lookup: token -> {domain, name, ticket}. Bumps the view counter. None if unknown."""
+    if not token:
+        return None
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT token, domain, name, ticket FROM lisa_audit_shares WHERE token=%s", (token,))
+        r = cur.fetchone()
+        if not r:
+            return None
+        cur.execute("UPDATE lisa_audit_shares SET views=views+1 WHERE token=%s", (token,))
+        conn.commit()
+        return dict(r)
+
+
+def send_audit_link(pool: ConnectionPool, settings: Settings, *, domain: str, to_number: str,
+                    name: str | None = None, ticket: int = 2000) -> dict:
+    """A prospect asked for a report/proposal → text them a link to their audit (the existing engine's report),
+    hosted at a public tokenised URL. Backend Twilio SMS. Returns {ok, url} or {ok:false, error}."""
+    if not _twilio_ready(settings):
+        return {"ok": False, "error": "twilio not configured"}
+    dom = (domain or "").strip().lower()
+    if not dom:
+        return {"ok": False, "error": "no domain on file"}
+    first = _first_name(name or "")
+    tok = create_audit_share(pool, dom, name=name, ticket=ticket, dest9=_d9(to_number))
+    base = (getattr(settings, "public_base_url", "") or "").rstrip("/")
+    url = f"{base}/r/{tok}"
+    body = (f"Hi{(' ' + first) if first else ''}, it's Lisa from DE Group — as promised, here's the quick audit of "
+            f"how {dom.split('.')[0].title()} is showing up on Google: {url}\nHappy to walk you through it. — Lisa")
+    sms_from = _pick_sms_from(settings, to_number)
+    try:
+        sent = _send_sms_twilio(settings, to_number, body, sms_from)
+    except Exception as exc:
+        return {"ok": False, "error": f"sms failed: {str(exc)[:120]}", "url": url}
+    if sent:
+        _log_sms(pool, "outbound", sms_from, to_number, body, _d9(to_number))
+    return {"ok": bool(sent), "url": url, "token": tok}
 
 
 # --------------------------------------------------------------------------- #

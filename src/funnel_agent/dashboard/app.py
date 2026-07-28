@@ -502,6 +502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # must bypass the login gate; it is guarded instead by its own LISA_WEBHOOK_TOKEN query token.
     _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall",
                "/api/lisa/inbound", "/api/lisa/sms-inbound"}
+    _PUBLIC_PREFIXES = ("/r/",)   # tokenised audit share links a prospect opens from an SMS (no login)
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
@@ -532,7 +533,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
         request.state.user = user
 
-        if path not in _PUBLIC and user is None:
+        if path not in _PUBLIC and not path.startswith(_PUBLIC_PREFIXES) and user is None:
             if path.startswith("/api"):
                 return JSONResponse({"error": "auth required"}, status_code=401)
             return RedirectResponse("/login", status_code=302)
@@ -3621,6 +3622,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         return Response(out, media_type=media,
                         headers={"Content-Disposition": f'attachment; filename="audit-{safe}.{fmt}"'})
+
+    @app.get("/r/{token}")
+    async def public_audit_share(token: str, ticket: int = 0) -> Response:
+        """PUBLIC (no login): render a prospect's audit from the SAME engine as the Digital Marketing tab,
+        for an unguessable share token texted to them. Nothing else is exposed — token maps to one domain."""
+        from .. import lisa as _lisa
+        share = await run_in_threadpool(_lisa.resolve_audit_share, pool, token)
+        if not share:
+            raise HTTPException(404, "This link is no longer available.")
+        domain = share["domain"]
+        tk = max(0, min(int(ticket or share.get("ticket") or 2000), 10_000_000))
+
+        def _do():
+            from ..audit import assemble_audit, embed_ad_images, render_audit_html
+            m = assemble_audit(pool, domain, avg_ticket=tk)
+            if not m:
+                return None
+            return render_audit_html(embed_ad_images(m), standalone=True)
+        try:
+            out = await run_in_threadpool(_do)
+        except Exception as exc:
+            raise HTTPException(502, f"Could not render this report ({str(exc)[:120]}).")
+        if out is None:
+            raise HTTPException(404, "This report isn’t ready yet.")
+        return HTMLResponse(out)
 
     # ---- Smart next-call priority queue (A) ------------------------------ #
     @app.get("/api/next-calls")
