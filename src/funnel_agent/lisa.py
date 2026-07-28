@@ -523,24 +523,18 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     if not findings or not findings.get("finding_1"):
         findings = _spoken_findings({}, niche)
 
-    # --- prior-contact hook (warm) — reference the last chat so a repeat call feels like a follow-up ---
-    prior = ""
-    if row and row.get("ever_rpc"):
-        topic = row.get("problem")
-        prior = ("I think one of our team had a quick chat with someone there recently"
-                 + (f" about {topic}" if topic else "") + " — I'm really just following that up")
-
-    # --- known context so Lisa never re-asks + tailors a warm call (prior problem / agency / interest / callback) ---
+    # --- PRIVATE background (never spoken): Lisa must NOT reveal we've called/spoken before. She uses this
+    #     only to sound relevant + pre-empt objections, as if she'd done her homework — not "we called you". ---
+    prior = ""   # never say "our team called before / following up" (owner rule)
     kb = []
     if row:
-        if row.get("problem"):
-            kb.append(f"Last time they mentioned: {row['problem']}")
         if row.get("ever_agency"):
-            kb.append("They already have a marketing agency (so position the session as an independent second opinion)")
-        if row.get("lead_temp"):
-            kb.append(f"Prior interest level: {row['lead_temp']}")
-        if row.get("cb_when"):
-            kb.append(f"They'd asked us to call back around: {row['cb_when']}")
+            kb.append("They likely already use a marketing agency — frame the session as an independent second "
+                      "opinion, and don't rubbish their agency (do NOT say we know this or that anyone told us)")
+        if row.get("problem"):
+            kb.append(f"Likely pain point to weave in naturally (never say 'you mentioned'): {row['problem']}")
+        if row.get("lead_temp") and row["lead_temp"] not in ("none", "None"):
+            kb.append(f"Prior signal (private): {row['lead_temp']}")
     known = " · ".join(kb)
 
     # --- objection lines + avoid-list from the LEARNED PLAYBOOK (AI Sales Coach mines won/lost calls);
