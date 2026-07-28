@@ -220,31 +220,23 @@ def _spoken_findings(audit: dict, niche: str) -> dict:
 
     f1 = f2 = proof = ""
     channel = "your online presence"
+    # findings kept SHORT (~15 words) so Lisa's turn is punchy, not a scripted monologue
     if running_ads and (gap or comps):
-        f1 = ("from what I'm seeing you're already paying for Google Ads — but there's a fair bit of the "
-              "free search demand, people actively looking for what you do, that seems to be landing on "
-              "competitors instead of you")
-        channel = "the free/organic side alongside your ads"
+        f1 = ("I noticed you're paying for Google Ads — but a chunk of the free search traffic next to them "
+              "seems to be going to competitors")
+        channel = "the free side alongside your ads"
         if top.get("domain"):
-            proof = (f"for instance {top.get('domain')} looks like it's pulling a good chunk of those "
-                     "searches in your space that you're not showing up for")
-        elif gap:
-            proof = f"there's roughly {_money(gap)} a month of that search demand within reach"
+            proof = f"{top.get('domain')} looks like one of the ones pulling it"
     elif comps and (gap or top):
-        f1 = (f"a couple of your competitors seem to be showing up for searches your customers are "
-              f"actually typing in — and from what I can see, you're not on that page for a lot of them")
+        f1 = "a couple of competitors are showing up for searches your customers type in, and you're not"
         channel = "search / SEO"
         if top.get("domain"):
-            proof = (f"{top.get('domain')} is one of the main ones capturing that demand")
+            proof = f"{top.get('domain')} is a main one"
     elif quickwin:
-        f1 = ("you've actually got pages sitting just off the first page of Google for terms people search "
-              "a lot — really close to the top, which is usually the fastest win")
+        f1 = "you've got pages sitting just off page one of Google — usually the fastest win"
         channel = "SEO quick-wins"
-        proof = f"there's around {_money(quickwin)} a month of traffic value sitting right there"
     else:
-        # generic but niche-shaped fallback (used only if the audit has no strong signal)
-        f1 = (f"in {niche}, a lot of ready-to-buy demand comes through search — and often some of it slips "
-              "to competitors when the path from search to enquiry isn't clean")
+        f1 = "a lot of ready-to-buy demand comes through Google search, and some of it slips to competitors"
         channel = "search / SEO"
 
     # a second, supporting insight only if it strengthens the same story
@@ -444,14 +436,12 @@ def _enrichment_signals(pool: ConnectionPool, domain: str) -> dict:
 def _ads_finding(sig: dict, niche: str) -> dict:
     """A REAL, specific hook for a confirmed Google-Ads advertiser (true for the whole pilot pool): they're
     paying for clicks, and the free/organic demand next to those ads is the gap worth a look."""
-    n = sig.get("ads_count")
-    f1 = ("from what I can see you're actively running Google Ads — so you're clearly investing in getting "
-          "found, which is great; the thing I noticed is there's usually a good slice of free, organic "
-          "search demand sitting right next to those ads that tends to leak across to competitors")
-    proof = (f"you've actually got around {n} ad creatives live right now, so you're definitely serious "
-             "about it" if n else "")
+    # keep findings SHORT (~15 words) — a long finding = a scripted-sounding monologue = "are you an AI?"
+    f1 = ("I noticed you're running Google Ads — but a fair bit of the free Google traffic right next to "
+          "them looks like it's slipping to competitors")
+    proof = ""
     return {"finding_1": f1, "finding_2": "", "finding_proof": proof,
-            "primary_channel": "the free/organic side next to your ads", "competitor_hook": ""}
+            "primary_channel": "the free side next to your ads", "competitor_hook": ""}
 
 
 def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None = None,
