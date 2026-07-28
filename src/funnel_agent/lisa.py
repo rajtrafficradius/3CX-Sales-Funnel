@@ -485,9 +485,12 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     if row and not domain:
         domain = _clean_domain(row.get("website"))
     if not domain and dest9 and not skip_history:
-        pr = _fetch(pool, "SELECT domain, business_name FROM prospect_pipeline WHERE dest9=%s AND NULLIF(domain,'') IS NOT NULL LIMIT 1", (dest9,))
-        if pr:
-            domain = pr[0].get("domain")
+        try:   # prospect_pipeline schema varies; recover a domain if the column exists, else skip safely
+            pr = _fetch(pool, "SELECT website FROM prospect_pipeline WHERE dest9=%s AND NULLIF(website,'') IS NOT NULL LIMIT 1", (dest9,))
+            if pr:
+                domain = _clean_domain(pr[0].get("website"))
+        except Exception as exc:
+            log.warning("lisa_brief_pipeline_lookup_skipped", error=str(exc)[:100])
 
     company = (row or {}).get("company") or ""
     niche = (row or {}).get("industry") or ""
@@ -1641,7 +1644,15 @@ def review_lisa_call(pool: ConnectionPool, settings: Settings, call_id: str, tra
            "said they're not the right person), brand_slip (said any brand other than 'DE Group'), "
            "robotic_name (greeted using a full name or an obviously wrong/mismatched name), "
            "talked_over_or_repeated (talked over the prospect, or asked the same question twice), "
-           "over_questioned (kept asking questions after the prospect signalled they were busy). "
+           "over_questioned (kept asking questions after the prospect signalled they were busy), "
+           "generic_no_data (opened generic/scripted instead of using a SPECIFIC real detail about THIS "
+           "business — their service, their situation, a real hook), "
+           "monologued (delivered a long scripted-sounding turn instead of short, human lines — a big AI tell), "
+           "answered_ai_late (was asked if she's an AI/robot/real person and did NOT answer honestly straight "
+           "away — kept talking first), "
+           "folded_on_reflex_no (accepted a quick 'not interested'/'we have an agency' as final WITHOUT one "
+           "smart, specific re-engage first), "
+           "sounded_polished_not_human (stiff corporate phrasing that reads as a bot rather than a real person). "
            "flags = array of short human-readable labels for every problem found (empty array if none).")
     r = _llm_json(settings, sys, transcript or "", pool=pool, purpose="qa")
     if r:
@@ -1754,7 +1765,10 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
     # QA failure-modes: surface any that recurred so a real problem becomes visible + actionable
     _FLBL = {"gatekeeper_leak": "outed as marketing to gatekeepers", "pushed_wrong_person": "kept pitching wrong people",
              "brand_slip": "said the wrong brand", "robotic_name": "robotic/wrong names",
-             "talked_over_or_repeated": "talked over / repeated", "over_questioned": "over-questioned busy prospects"}
+             "talked_over_or_repeated": "talked over / repeated", "over_questioned": "over-questioned busy prospects",
+             "generic_no_data": "opened generic — didn't use the prospect data", "monologued": "monologued (long turns)",
+             "answered_ai_late": "answered 'are you AI?' late", "folded_on_reflex_no": "folded on a reflex 'no'",
+             "sounded_polished_not_human": "sounded polished/robotic, not human"}
     try:
         _F = list(_FLBL)
         flr = _fetch(pool, "SELECT " + ", ".join(f"count(*) FILTER (WHERE scores->>'{f}'='true') {f}" for f in _F) +
@@ -1853,7 +1867,9 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
         "FROM lisa_call_reviews")
     s["qa"] = dict(qa[0]) if qa else {}
     # --- QA failure-mode flags the reviewer caught across recent calls (the AI staff doing its duty) ---
-    _F = ["gatekeeper_leak", "pushed_wrong_person", "brand_slip", "robotic_name", "talked_over_or_repeated", "over_questioned"]
+    _F = ["gatekeeper_leak", "pushed_wrong_person", "brand_slip", "robotic_name", "talked_over_or_repeated",
+          "over_questioned", "generic_no_data", "monologued", "answered_ai_late", "folded_on_reflex_no",
+          "sounded_polished_not_human"]
     fl = _fetch(pool, "SELECT " + ", ".join(
         f"count(*) FILTER (WHERE scores->>'{f}' = 'true') {f}" for f in _F) +
         " FROM lisa_call_reviews WHERE reviewed_at >= now() - interval '21 days'")
