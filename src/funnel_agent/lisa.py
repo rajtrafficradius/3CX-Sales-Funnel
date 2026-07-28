@@ -191,7 +191,12 @@ _REPORT_WORDS = ("send me an email", "send an email", "email me", "email it", "e
                  "send details", "send info", "send me info", "send over", "in writing", "proposal",
                  "send a report", "send me a report", "send the report", "put it in an email",
                  "shoot me an email", "flick me an email", "flick it through", "send me your details",
-                 "asked to email", "requested ... email", "email the details", "email your details")
+                 "asked to email", "requested ... email", "email the details", "email your details",
+                 # softer / brush-off phrasings that still mean "give it to me in writing"
+                 "by email", "contact by email", "prefer email", "prefers email", "prefer to be emailed",
+                 "email instead", "email is best", "email is fine", "reach me by email", "just email",
+                 "over email", "via email", "through email", "emailed", "contact via email",
+                 "prefer contact by email", "get my attention")
 
 
 def _wants_report(cad: dict) -> bool:
@@ -2175,9 +2180,12 @@ def recent_calls(pool: ConnectionPool, limit: int = 100) -> list[dict]:
         "  (lc.created_at AT TIME ZONE 'Australia/Melbourne') AS created_local, "
         # audit report we generated + texted for this prospect (token -> public /r/ link, built client-side)
         "  (SELECT s.token FROM lisa_audit_shares s WHERE s.domain=lc.domain ORDER BY s.created_at DESC LIMIT 1) AS audit_token, "
-        # every SMS to/from this prospect's number, so the console shows the actual thread the system sent
+        # SMS attributed to THIS call only: messages in the window [this call, next call to same number),
+        # so a missed-call/audit SMS shows on the call that sent it — not on every row for that number.
         "  (SELECT json_agg(json_build_object("
         "        'dir', x.direction, 'body', x.body, "
         "        'at', to_char(x.created_at AT TIME ZONE 'Australia/Melbourne','DD Mon HH24:MI')) ORDER BY x.created_at) "
-        "     FROM lisa_sms x WHERE x.dest9=lc.dest9) AS sms "
+        "     FROM lisa_sms x WHERE x.dest9=lc.dest9 AND x.created_at >= lc.created_at "
+        "       AND x.created_at < COALESCE((SELECT min(lc2.created_at) FROM lisa_calls lc2 "
+        "                                    WHERE lc2.dest9=lc.dest9 AND lc2.created_at > lc.created_at), 'infinity')) AS sms "
         "FROM lisa_calls lc ORDER BY lc.created_at DESC LIMIT %s", (limit,))
