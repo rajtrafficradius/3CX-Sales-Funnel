@@ -38,13 +38,21 @@ def slug_company(name: str | None) -> str:
     return "".join(toks)
 
 
+# Our OWN company / obviously-generic identities must NEVER become a shared company_key — otherwise every
+# prospect with a blank/defaulted website collapses into one "company" and their bookings falsely dedup each
+# other. When the domain/slug is one of these, fall through to the phone number (per-prospect isolation).
+_OWN_DOMAINS = {"trafficradius.com.au", "www.trafficradius.com.au", "trafficradius.com", "degroup.com.au"}
+_BLOCKED_SLUGS = {"trafficradius", "traffic radius", "degroup"}
+
+
 def company_key(domain: str | None, company: str | None, number: str | None) -> str | None:
-    """Stable company identity: dom:<domain> | co:<name-slug> | tel:<dest9>. None if nothing."""
+    """Stable company identity: dom:<domain> | co:<name-slug> | tel:<dest9>. None if nothing.
+    Never keys on our own company / a generic value (that would merge unrelated prospects)."""
     dom = normalize_domain(domain)
-    if dom:
+    if dom and dom not in _OWN_DOMAINS:
         return f"dom:{dom}"
     slug = slug_company(company)
-    if len(slug) >= 6:                 # avoid junk/colliding keys from short generic names
+    if len(slug) >= 6 and slug not in _BLOCKED_SLUGS:   # avoid junk/colliding keys from short/own names
         return f"co:{slug}"
     d9 = dest9(number)
     return f"tel:{d9}" if d9 else None

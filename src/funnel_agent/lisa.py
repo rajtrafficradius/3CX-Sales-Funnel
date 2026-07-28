@@ -177,6 +177,35 @@ def _d9(s: str | None) -> str:
     return re.sub(r"[^0-9]", "", s or "")[-9:]
 
 
+def _norm_domain(s: str | None) -> str:
+    """A website/URL → bare registrable-ish domain ('https://www.Feathers.com.au/x' → 'feathers.com.au')."""
+    d = re.sub(r"^https?://", "", (s or "").strip().lower())
+    d = re.sub(r"^www\.", "", d)
+    return d.split("/")[0].strip()
+
+
+# Phrases that mean the prospect asked for something IN WRITING (report / proposal / "just email me").
+# We don't email — so this is what triggers the audit view-link SMS instead.
+_REPORT_WORDS = ("send me an email", "send an email", "email me", "email it", "email that", "email through",
+                 "send it through", "send that through", "send me the", "send me some", "send me details",
+                 "send details", "send info", "send me info", "send over", "in writing", "proposal",
+                 "send a report", "send me a report", "send the report", "put it in an email",
+                 "shoot me an email", "flick me an email", "flick it through", "send me your details",
+                 "asked to email", "requested ... email", "email the details", "email your details")
+
+
+def _wants_report(cad: dict) -> bool:
+    """True if the prospect asked for a report / proposal / details in writing. Primary signal is the Retell
+    analysis flag `requested_report`; falls back to scanning the objection + summary text."""
+    if not isinstance(cad, dict):
+        return False
+    flag = cad.get("requested_report")
+    if flag in (True, "true", "yes", "1"):
+        return True
+    blob = " ".join(str(cad.get(k) or "") for k in ("main_objection", "callback_when", "call_summary")).lower()
+    return any(w in blob for w in _REPORT_WORDS)
+
+
 def _e164_au(num: str | None) -> str:
     """Normalise a phone number to E.164 (Retell requires it — it 400s on '0433…' or spaced numbers).
     Handles the AU formats people actually type: '0433 136 022' → '+61433136022', '61…' → '+61…',
@@ -910,6 +939,25 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
                 result["sms_sent"] = True
         except Exception as exc:
             log.warning("lisa_sms_failed", call_id=cid, error=str(exc)[:160])
+
+    # 2b) prospect ASKED FOR A REPORT / PROPOSAL / "just email me the details" → fully generate + verify the
+    #     audit and text them the public view link (we don't email; this is how they get it in writing). Fires
+    #     only on a real conversation, once per prospect, when we have a mobile + a domain.
+    try:
+        dom = _norm_domain(dyn.get("prospect_website") or "")
+        if (_wants_report(cad) and dom and _is_mobile_au(call.get("to_number") or "")
+                and outcome in ("callback_requested", "not_interested", "conversation", "gatekeeper_only")):
+            already = _fetch(pool, "SELECT 1 FROM lisa_audit_shares WHERE domain=%s LIMIT 1", (dom,))
+            if not already:
+                r = send_audit_link(pool, settings, domain=dom, to_number=call.get("to_number"),
+                                    name=dyn.get("prospect_name"))
+                if r.get("ok"):
+                    result["audit_link_sent"] = r.get("url")
+                    log.info("lisa_audit_autosent", call_id=cid, domain=dom, url=r.get("url"))
+                else:
+                    log.info("lisa_audit_autosend_skipped", call_id=cid, domain=dom, why=r.get("error"))
+    except Exception as exc:
+        log.warning("lisa_audit_autosend_failed", call_id=cid, error=str(exc)[:160])
     return result
 
 
@@ -1157,15 +1205,67 @@ def resolve_audit_share(pool: ConnectionPool, token: str) -> dict | None:
         return dict(r)
 
 
+def ensure_full_audit(pool: ConnectionPool, settings: Settings, domain: str) -> dict:
+    """FULLY generate a prospect's audit so nothing is blank before we send it: if the paid DataForSEO SEO
+    audit hasn't been run for this domain yet, run it now and cache it (same path as the prospect page's
+    'Generate audit'). Then assemble + VERIFY the model is real. Returns {ok, ran_seo, model?, error?}."""
+    dom = (domain or "").strip().lower()
+    if not dom:
+        return {"ok": False, "error": "no domain"}
+    ran_seo = False
+    # 1) run the paid SEO audit if we don't already have it cached
+    try:
+        have = _fetch(pool, "SELECT (dataforseo->'audit') IS NOT NULL a FROM enrichment WHERE domain=%s", (dom,))
+        has_audit = bool(have and have[0].get("a"))
+    except Exception:
+        has_audit = False
+    if not has_audit and getattr(settings, "dataforseo_enabled", False):
+        try:
+            from .enrichment.dataforseo import DataForSEOClient, build_seo_audit, brand_tokens
+            from psycopg.types.json import Json as _Json
+            co = _fetch(pool, "SELECT company_name FROM companies WHERE domain=%s LIMIT 1", (dom,))
+            company = (co[0].get("company_name") if co else "") or ""
+            c = DataForSEOClient(settings)
+            try:
+                rk = c.ranked_keywords(dom, limit=100)
+            finally:
+                c.close()
+            kws = (rk.get("keywords") or [])[:100]
+            audit = build_seo_audit(kws, brands=brand_tokens(dom, company))
+            audit["keyword_count_total"] = rk.get("count")
+            patch = {"audit": audit, "ranked_kw": kws}
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                            "ON CONFLICT (domain) DO UPDATE SET dataforseo = "
+                            "COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
+                            (dom, _Json(patch), _Json(patch)))
+                conn.commit()
+            ran_seo = True
+        except Exception as exc:
+            log.warning("ensure_full_audit_seo_failed", domain=dom, error=str(exc)[:150])
+    # 2) assemble + verify the report is real (has a business identity at minimum)
+    try:
+        from .audit import assemble_audit
+        m = assemble_audit(pool, dom)
+    except Exception as exc:
+        return {"ok": False, "ran_seo": ran_seo, "error": f"assemble failed: {str(exc)[:120]}"}
+    if not m or not (m.get("name") or m.get("business")):
+        return {"ok": False, "ran_seo": ran_seo, "error": "no audit data for this domain"}
+    return {"ok": True, "ran_seo": ran_seo, "model": m}
+
+
 def send_audit_link(pool: ConnectionPool, settings: Settings, *, domain: str, to_number: str,
                     name: str | None = None, ticket: int = 2000) -> dict:
-    """A prospect asked for a report/proposal → text them a link to their audit (the existing engine's report),
-    hosted at a public tokenised URL. Backend Twilio SMS. Returns {ok, url} or {ok:false, error}."""
+    """A prospect asked for a report/proposal → FULLY generate + verify their audit, then text them a link to
+    it (the existing engine's report) at a public tokenised URL. Backend Twilio SMS. Returns {ok, url}."""
     if not _twilio_ready(settings):
         return {"ok": False, "error": "twilio not configured"}
     dom = (domain or "").strip().lower()
     if not dom:
         return {"ok": False, "error": "no domain on file"}
+    full = ensure_full_audit(pool, settings, dom)   # fully run + verify before we send anything
+    if not full.get("ok"):
+        return {"ok": False, "error": full.get("error") or "audit not ready"}
     first = _first_name(name or "")
     tok = create_audit_share(pool, dom, name=name, ticket=ticket, dest9=_d9(to_number))
     base = (getattr(settings, "public_base_url", "") or "").rstrip("/")
@@ -2069,8 +2169,15 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
 def recent_calls(pool: ConnectionPool, limit: int = 100) -> list[dict]:
     ensure_tables(pool)
     return _fetch(pool,
-        "SELECT call_id, dest9, prospect_name, company_name, domain, status, call_outcome, "
-        "  meeting_agreed, agreed_day_time, callback_when, main_objection, asked_if_ai, call_summary, "
-        "  recording_url, duration_ms, cost_cents, booked_event_id, sms_sent, qualification, "
-        "  (created_at AT TIME ZONE 'Australia/Melbourne') AS created_local "
-        "FROM lisa_calls ORDER BY created_at DESC LIMIT %s", (limit,))
+        "SELECT lc.call_id, lc.dest9, lc.prospect_name, lc.company_name, lc.domain, lc.status, lc.call_outcome, "
+        "  lc.meeting_agreed, lc.agreed_day_time, lc.callback_when, lc.main_objection, lc.asked_if_ai, lc.call_summary, "
+        "  lc.recording_url, lc.duration_ms, lc.cost_cents, lc.booked_event_id, lc.sms_sent, lc.qualification, "
+        "  (lc.created_at AT TIME ZONE 'Australia/Melbourne') AS created_local, "
+        # audit report we generated + texted for this prospect (token -> public /r/ link, built client-side)
+        "  (SELECT s.token FROM lisa_audit_shares s WHERE s.domain=lc.domain ORDER BY s.created_at DESC LIMIT 1) AS audit_token, "
+        # every SMS to/from this prospect's number, so the console shows the actual thread the system sent
+        "  (SELECT json_agg(json_build_object("
+        "        'dir', x.direction, 'body', x.body, "
+        "        'at', to_char(x.created_at AT TIME ZONE 'Australia/Melbourne','DD Mon HH24:MI')) ORDER BY x.created_at) "
+        "     FROM lisa_sms x WHERE x.dest9=lc.dest9) AS sms "
+        "FROM lisa_calls lc ORDER BY lc.created_at DESC LIMIT %s", (limit,))
