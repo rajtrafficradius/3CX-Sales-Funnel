@@ -4419,6 +4419,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         c = await run_in_threadpool(_lisa.system_costs, pool, settings, days)
         return JSONResponse(jsonable_encoder(c))
 
+    @app.post("/api/lisa/recommendation/{adj_id}/approve")
+    async def lisa_reco_approve(request: Request, adj_id: int) -> JSONResponse:
+        """Approve a pending AI-Coach recommendation → apply it to the live agent + republish. Admin-only."""
+        _require_admin(request)
+        from .. import lisa as _lisa
+        r = await run_in_threadpool(_lisa.apply_adjustment, pool, settings, adj_id)
+        return JSONResponse(jsonable_encoder(r))
+
+    @app.post("/api/lisa/recommendation/{adj_id}/dismiss")
+    async def lisa_reco_dismiss(request: Request, adj_id: int) -> JSONResponse:
+        _require_admin(request)
+        from .. import lisa as _lisa
+        r = await run_in_threadpool(_lisa.dismiss_adjustment, pool, adj_id)
+        return JSONResponse(jsonable_encoder(r))
+
     @app.get("/api/lisa/calls")
     def lisa_calls(request: Request, limit: int = 100) -> JSONResponse:
         if not is_admin(getattr(request.state, "user", None) or {}):

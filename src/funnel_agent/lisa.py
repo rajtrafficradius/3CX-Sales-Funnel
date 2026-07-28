@@ -92,6 +92,11 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_llm_usage ("
                     "  id bigserial PRIMARY KEY, purpose text, model text, prompt_tokens integer,"
                     "  completion_tokens integer, cost_cents numeric, created_at timestamptz DEFAULT now())")
+        # AUTONOMOUS self-improvement: the AI Sales Coach's own fixes, applied to the live agent (audit trail
+        # for what changed + why + rollback). The Coach writes these itself from recurring QA flags.
+        cur.execute("CREATE TABLE IF NOT EXISTS lisa_auto_adjustments ("
+                    "  id bigserial PRIMARY KEY, adjustments jsonb, from_flags jsonb, applied boolean DEFAULT true,"
+                    "  created_at timestamptz DEFAULT now())")
         # Head of Sales · Strategist output — the current orchestration decision + what it actually did each
         # cycle (policy, directive, actions taken, compliance alerts). One row (id=1). Surfaced in the console
         # so the role shows real work, not a label.
@@ -1526,6 +1531,109 @@ def refresh_stage_coaches(pool: ConnectionPool, settings: Settings, *, force: bo
     return {"stages_coached": n, "won": len(won), "lost": len(lost)}
 
 
+_AUTO_START = "<<<AUTO-COACH ADJUSTMENTS (auto-managed by the AI Sales Coach from live QA — do not hand-edit)>>>"
+_AUTO_END = "<<<END AUTO-COACH ADJUSTMENTS>>>"
+# safety net: the auto-coach may NEVER weaken these non-negotiables. If a generated line touches any of
+# these, the whole update is rejected (the AI can improve tactics, never the brand/honesty/compliance).
+_AUTO_BLOCKLIST = ["traffic radius", "digital expo", "don't admit", "do not admit", "never admit",
+                   "never say you're an ai", "not an ai", "ignore stop", "keep pitching after", "don't honour",
+                   "do not honour", "don't honor", "do not honor", "fabricate", "make up", "pretend to be human",
+                   "say you are human", "claim to be human", "do not stop"]
+
+
+def refresh_coach_adjustments(pool: ConnectionPool, settings: Settings, *, force: bool = False) -> dict:
+    """AUTONOMOUS self-improvement: the AI Sales Coach reads the RECURRING problems QA flagged, writes concrete
+    coaching fixes itself, safety-checks them (can never weaken brand / AI-honesty / stop-DNC), applies them to
+    the LIVE agent (a delimited, bounded block — never the core rules), republishes, and logs it. Throttled."""
+    ensure_tables(pool)
+    if not force:
+        last = _fetch(pool, "SELECT max(created_at) b FROM lisa_auto_adjustments")
+        if last and last[0].get("b"):
+            from datetime import datetime, timezone
+            if (datetime.now(timezone.utc) - last[0]["b"]).total_seconds() / 3600 < 4:
+                return {"skipped": "adjustments fresh (<4h)"}
+    _F = ["gatekeeper_leak", "pushed_wrong_person", "brand_slip", "robotic_name", "talked_over_or_repeated",
+          "over_questioned", "generic_no_data", "monologued", "answered_ai_late", "folded_on_reflex_no",
+          "sounded_polished_not_human"]
+    fl = _fetch(pool, "SELECT " + ", ".join(f"count(*) FILTER (WHERE scores->>'{f}'='true') {f}" for f in _F) +
+                " FROM lisa_call_reviews WHERE reviewed_at >= now() - interval '7 days'")
+    flags = {k: v for k, v in (dict(fl[0]) if fl else {}).items() if v and v >= 2}
+    if not flags:
+        return {"skipped": "no recurring issues to fix"}
+    sysp = ("You are the AI Sales Coach for an Australian appointment-setting phone agent (Lisa, brand "
+            "'DE Group'). Based on the RECURRING problems QA flagged on recent calls, write concise, concrete "
+            "coaching adjustments that will fix them on the next calls. Additive TACTICAL guidance only, short "
+            "spoken bullets, warm AU tone. You MUST NOT change or weaken any non-negotiable: the brand is "
+            "always 'DE Group' (never 'Traffic Radius'/'Digital Expo'); she admits she's an AI if asked; she "
+            "always honours 'stop'/DNC; she never fabricates. Return STRICT JSON {\"adjustments\": [up to 8 short strings]}.")
+    usr = ("Recurring QA flags (count, last 7d): " + json.dumps(flags) + "\nExamples of the labels: "
+           "generic_no_data=she opened generic instead of using the prospect's real data; monologued=too-long "
+           "scripted turns; folded_on_reflex_no=gave up on a quick 'no' without a smart re-engage.")
+    out = _llm_json(settings, sysp, usr, pool=pool, purpose="auto_coach")
+    adj = [a.strip() for a in (out.get("adjustments") or []) if isinstance(a, str) and a.strip()][:8]
+    if not adj:
+        return {"skipped": "coach produced nothing"}
+    block = "\n".join(f"- {a}" for a in adj)
+    if any(b in block.lower() for b in _AUTO_BLOCKLIST):
+        log.warning("auto_coach_blocked_unsafe", preview=block[:160])
+        return {"skipped": "unsafe content blocked (touched a non-negotiable)"}
+    # PROPOSE it (don't auto-apply): store as a pending recommendation for one-click approval on the console.
+    # Skip if an identical recommendation is already pending.
+    pend = _fetch(pool, "SELECT adjustments FROM lisa_auto_adjustments WHERE applied=false")
+    if any((p.get("adjustments") or []) == adj for p in pend):
+        return {"skipped": "same recommendation already pending"}
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO lisa_auto_adjustments (adjustments, from_flags, applied) VALUES (%s,%s,false)",
+                    (json.dumps(adj), json.dumps(flags)))
+        conn.commit()
+    log.info("auto_coach_proposed", n=len(adj), flags=list(flags))
+    return {"proposed": len(adj), "from_flags": list(flags)}
+
+
+def get_recommendations(pool: ConnectionPool) -> list[dict]:
+    """Pending Coach recommendations awaiting approval (newest first)."""
+    return [dict(r) for r in _fetch(pool,
+        "SELECT id, adjustments, from_flags, (created_at AT TIME ZONE 'Australia/Melbourne') u "
+        "FROM lisa_auto_adjustments WHERE applied=false ORDER BY created_at DESC LIMIT 10")]
+
+
+def apply_adjustment(pool: ConnectionPool, settings: Settings, adj_id: int) -> dict:
+    """APPROVE a pending Coach recommendation: apply it to the live agent's delimited AUTO block (never the
+    core rules) + republish + mark applied. Safety-checked again before it goes live."""
+    r = _fetch(pool, "SELECT adjustments FROM lisa_auto_adjustments WHERE id=%s AND applied=false", (adj_id,))
+    if not r:
+        return {"error": "recommendation not found or already applied"}
+    adj = r[0].get("adjustments") or []
+    block = "\n".join(f"- {a}" for a in adj)
+    if any(b in block.lower() for b in _AUTO_BLOCKLIST):
+        return {"error": "unsafe content — not applied"}
+    try:
+        agent = _retell(settings, "GET", f"get-agent/{getattr(settings, 'lisa_agent_id', '')}")
+        llm_id = (agent.get("response_engine") or {}).get("llm_id")
+        gp = _retell(settings, "GET", f"get-retell-llm/{llm_id}").get("general_prompt", "")
+        newblock = _AUTO_START + "\n(Approved coaching adjustments — follow them.)\n" + block + "\n" + _AUTO_END
+        if _AUTO_START in gp and _AUTO_END in gp:
+            gp2 = re.sub(re.escape(_AUTO_START) + ".*?" + re.escape(_AUTO_END), lambda _m: newblock, gp, flags=re.S)
+        else:
+            gp2 = gp + "\n\n" + newblock
+        _retell(settings, "PATCH", f"update-retell-llm/{llm_id}", {"general_prompt": gp2})
+        _retell(settings, "POST", f"publish-agent/{getattr(settings, 'lisa_agent_id', '')}", {})
+    except Exception as exc:
+        return {"error": f"apply failed: {str(exc)[:100]}"}
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE lisa_auto_adjustments SET applied=true WHERE id=%s", (adj_id,))
+        conn.commit()
+    log.info("auto_coach_approved_applied", id=adj_id, n=len(adj))
+    return {"applied": True, "n": len(adj)}
+
+
+def dismiss_adjustment(pool: ConnectionPool, adj_id: int) -> dict:
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM lisa_auto_adjustments WHERE id=%s AND applied=false", (adj_id,))
+        conn.commit()
+    return {"dismissed": True}
+
+
 def get_stage_coaches(pool: ConnectionPool) -> list[dict]:
     rows = {r["stage"]: r for r in _fetch(pool, "SELECT stage,title,guidance,benchmark FROM lisa_stage_coach")}
     out = []
@@ -1728,6 +1836,10 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
             refresh_stage_coaches(pool, settings)      # dedicated coach per funnel stage (throttled ~20h)
         except Exception as exc:
             log.warning("hos_stagecoach_failed", error=str(exc)[:140])
+        try:
+            refresh_coach_adjustments(pool, settings)  # propose fixes from recurring QA flags (throttled ~4h)
+        except Exception as exc:
+            log.warning("hos_autocoach_failed", error=str(exc)[:140])
     try:
         actions["briefs_built"] = refresh_lisa_briefs(pool, settings, limit=600).get("built", 0)
     except Exception as exc:
@@ -1881,6 +1993,7 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
     # --- per-stage dedicated coaches + the outbound funnel KPIs (goal = 5 qualified bookings/day) ---
     s["stage_coaches"] = get_stage_coaches(pool)
     s["funnel"] = funnel_kpis(pool, days)
+    s["recommendations"] = get_recommendations(pool)   # pending Coach fixes awaiting your approval
     return s
 
 

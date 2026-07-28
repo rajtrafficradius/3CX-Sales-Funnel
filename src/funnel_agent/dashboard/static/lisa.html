@@ -112,6 +112,14 @@
   .costrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .costchip{font-size:11.5px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 12px}
   .costchip b{color:var(--txt);font-weight:650}
+  /* AI-coach recommended fixes */
+  .reco{background:var(--panel);border:1px solid rgba(124,108,255,.4);border-left:3px solid var(--vio);
+    border-radius:var(--r2);padding:15px 18px;margin-bottom:14px;box-shadow:var(--elev)}
+  .reco .rh{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .reco .rh .eyebrow{color:var(--vio-2)} .reco .rh svg{width:14px;height:14px;color:var(--vio-2)}
+  .reco .rh .from{margin-left:auto;font-size:11px;color:var(--faint)}
+  .reco ul{margin:0 0 12px;padding-left:18px;font-size:12.5px;color:var(--txt-2);line-height:1.65}
+  .reco .racts{display:flex;gap:9px}
   select.sel{background:var(--panel);color:var(--txt);border:1px solid var(--line-2);border-radius:var(--r1);
     padding:8px 11px;font:inherit;font-weight:550;cursor:pointer}
   .back{color:var(--muted);font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;gap:5px}
@@ -503,6 +511,8 @@
     </div>
   </div>
 
+  <div id="recos"></div>
+
   <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How the calling system runs</span></div>
   <div class="flowcard"><div id="flow" class="flow"></div></div>
 
@@ -615,6 +625,12 @@ async function load(){
     $('progTxt').innerHTML='<b>'+done+'</b> of '+size+' worked';
     $('dueTxt').innerHTML='<b>'+(s.due_now||0)+'</b> due now · '+(s.daily_target||0)+'/day';
     $('campNote').textContent=s.autodial_enabled?'Lisa is dialing her calendar automatically, within each prospect’s local business hours.':'Calendar is loaded and ready. Auto-dial is OFF — set LISA_AUTODIAL_ENABLED=true to go live.';
+
+    // ---- AI-Coach recommended fixes (approve to apply to the live agent) ----
+    const recos=s.recommendations||[];
+    $('recos').innerHTML=recos.length?recos.map(r=>`<div class="reco"><div class="rh">${svg('coach',1.9)}<span class="eyebrow">AI Sales Coach — recommended fix</span><span class="from">from ${Object.entries(r.from_flags||{}).map(([k,v])=>v+'× '+k.replace(/_/g,' ')).join(', ')||'QA'}</span></div>
+      <ul>${(r.adjustments||[]).map(a=>`<li>${esc(a)}</li>`).join('')}</ul>
+      <div class="racts"><button class="btn primary" onclick="approveReco(${r.id})">✓ Approve &amp; apply</button><button class="btn ghost" onclick="dismissReco(${r.id})">Dismiss</button></div></div>`).join(''):'';
 
     // ---- system pipeline (real sequence) ----
     const pb0=s.playbook||{}, qa0=s.qa||{};
@@ -816,6 +832,22 @@ async function applyAutodial(on){
   closeAd(); load();
 }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeAd(); });
+
+/* ---- AI-Coach recommended fixes: approve (apply to live agent) / dismiss ---- */
+async function approveReco(id){
+  if(!confirm('Approve this fix? The Sales Coach will update Lisa’s live prompt and republish the agent.')) return;
+  try{ const r=await jpost('/api/lisa/recommendation/'+id+'/approve',{});
+       if(r&&r.error) alert('Could not apply: '+r.error);
+       else alert('Applied ✓ — Lisa’s prompt was updated'+(r&&r.version?' (v'+r.version+')':'')+' and republished.'); }
+  catch(e){ alert('Could not apply: '+(e.message||e)); }
+  load();
+}
+async function dismissReco(id){
+  if(!confirm('Dismiss this recommendation? It won’t be applied.')) return;
+  try{ await jpost('/api/lisa/recommendation/'+id+'/dismiss',{}); }
+  catch(e){ alert('Could not dismiss: '+(e.message||e)); }
+  load();
+}
 
 /* ---- Voice Orb: talk to Lisa live in the browser (Retell web SDK) ---- */
 let rc=null, inCall=false;
