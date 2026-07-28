@@ -470,6 +470,8 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
             "       (array_agg(cl.prospect_email ORDER BY c.started_at DESC) "
             "          FILTER (WHERE NULLIF(cl.prospect_email,'') IS NOT NULL))[1] email, "
             "       bool_or(cl.rpc_connect) ever_rpc, bool_or(cl.has_marketing_agency) ever_agency, "
+            "       bool_or(cl.meeting_booked) ever_booked, bool_or(cl.callback_requested) ever_callback, "
+            "       bool_or(cl.do_not_contact) ever_dnc, "
             "       (array_agg(cl.lead_temperature ORDER BY c.started_at DESC) "
             "          FILTER (WHERE NULLIF(cl.lead_temperature,'') IS NOT NULL))[1] lead_temp, "
             "       (array_agg(cl.callback_when ORDER BY c.started_at DESC) "
@@ -523,19 +525,30 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     if not findings or not findings.get("finding_1"):
         findings = _spoken_findings({}, niche)
 
-    # --- PRIVATE background (never spoken): Lisa must NOT reveal we've called/spoken before. She uses this
-    #     only to sound relevant + pre-empt objections, as if she'd done her homework — not "we called you". ---
-    prior = ""   # never say "our team called before / following up" (owner rule)
+    # --- INTELLIGENT prior-contact decision (owner rule): only WARMLY reference a prior chat if it went
+    #     POSITIVE (booked before / callback requested / warm-hot interest). If it was negative or cold, open
+    #     fresh and keep the history PRIVATE — never remind a negative prospect that we called. ---
+    lt = ((row or {}).get("lead_temp") or "").lower()
+    positive = bool(row and not row.get("ever_dnc") and (
+        row.get("ever_booked") or row.get("ever_callback") or row.get("cb_when")
+        or lt in ("warm", "hot", "interested", "positive", "keen")))
+    prior = ""
+    if positive:
+        prior = ("You had a genuinely positive chat with our team recently"
+                 + (f" about {row.get('problem')}" if row.get("problem") else "")
+                 + " — it sounded worth picking up, so this is a warm, friendly follow-up.")
     kb = []
     if row:
         if row.get("ever_agency"):
-            kb.append("They likely already use a marketing agency — frame the session as an independent second "
-                      "opinion, and don't rubbish their agency (do NOT say we know this or that anyone told us)")
+            kb.append("They likely already use a marketing agency — frame as an independent second opinion; "
+                      "don't rubbish their agency")
         if row.get("problem"):
-            kb.append(f"Likely pain point to weave in naturally (never say 'you mentioned'): {row['problem']}")
-        if row.get("lead_temp") and row["lead_temp"] not in ("none", "None"):
-            kb.append(f"Prior signal (private): {row['lead_temp']}")
+            kb.append((f"Likely pain point: {row['problem']}") if positive
+                      else f"Likely pain point (PRIVATE — never say we discussed it): {row['problem']}")
+        if lt and lt not in ("none", ""):
+            kb.append(f"Prior signal{'' if positive else ' (private)'}: {lt}")
     known = " · ".join(kb)
+    b_prior_positive = positive
 
     # --- objection lines + avoid-list from the LEARNED PLAYBOOK (AI Sales Coach mines won/lost calls);
     #     fall back to sensible defaults until the coach has run. ---
@@ -565,6 +578,7 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         "competitor_hook": findings["competitor_hook"],
         "known_context": known,
         "prior_contact_line": prior,
+        "prior_positive": "true" if b_prior_positive else "false",
         "objection_agency": obj_agency,
         "objection_price": obj_price,
         "objection_email": obj_email,
