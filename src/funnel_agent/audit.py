@@ -618,8 +618,7 @@ def render_audit_html(m: dict, *, standalone: bool = True, public: bool = False)
         meta.append(("Industry", b["industry"]))
     if b.get("location"):
         meta.append(("Location", b["location"]))
-    if b.get("revenue_musd"):
-        meta.append(("Revenue", f"${_n(b['revenue_musd'])}M"))
+    # NOTE: prospect's estimated revenue (D&B) is INTERNAL only — never shown on the prospect-facing report.
     if op.get("org_keywords"):
         meta.append(("Organic keywords", _n(op["org_keywords"])))
     meta_html = "".join(f'<div>{_esc(l)}<b>{_esc(v)}</b></div>' for l, v in meta)
@@ -1403,7 +1402,7 @@ def render_audit_docx(model: dict) -> bytes:
     meta = []
     if b.get("industry"): meta.append(f"Industry: {b['industry']}")
     if b.get("location"): meta.append(f"Location: {b['location']}")
-    if b.get("revenue_musd"): meta.append(f"Revenue: ${_n(b['revenue_musd'])}M")
+    # prospect revenue (D&B) is INTERNAL only — never on the prospect-facing report
     if op.get("org_keywords"): meta.append(f"Organic keywords: {_n(op['org_keywords'])}")
     if meta:
         para(" · ".join(meta), size=9.5, color=MUTED, space_after=10)
