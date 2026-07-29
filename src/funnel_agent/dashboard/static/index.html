@@ -146,6 +146,9 @@
      visible on any TV, no overlap, no cut-off. */
   html.tv,html.tv body{height:100%;overflow:hidden;margin:0;background:var(--bg)}
   html.tv #clsBar{display:none}
+  /* TV wall: freeze the live-badge pulse/twinkle/breathe/ellipsis so the header doesn't appear to "blink" */
+  html.tv .livebadge,html.tv .livebadge .lb-dot,html.tv .livebadge .lb-dot::after,html.tv .livebadge .lb-spark,
+  html.tv .livebadge.flash,html.tv .lb-ell::after{animation:none!important}
   html.tv header{position:fixed;top:0;left:0;right:0;z-index:30;padding:8px 22px}
   html.tv header label,html.tv #bde,html.tv #period,html.tv #startDate,html.tv #endDate,html.tv #reviewBadge,html.tv #tvBtn,html.tv #calBtn,html.tv #p2Btn,html.tv #dbBtn,html.tv #adminBtn,html.tv #coachBtn,html.tv #whoami,html.tv #logoutBtn{display:none}
   .who{font-size:12px;color:var(--muted);white-space:nowrap}
