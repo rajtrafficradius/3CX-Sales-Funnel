@@ -1577,12 +1577,12 @@ async function pollProgress(){
 
 // Live auto-refresh: re-fetch data every 60s so the page stays current without a
 // manual reload. Preserves the user's selected date/BDE; picks up new dates.
-// Coalesce rapid refreshes (SSE can fire every ~3s while data changes) so we don't rebuild the
-// cards that often — that constant innerHTML rebuild is what makes the TV view "blink". Runs at most
-// once per MIN; a burst schedules ONE trailing run.
+// Coalesce ONLY on the TV wall (the constant innerHTML rebuild is what makes TV "blink").
+// Normal BDE dashboards stay near-instant (tiny 1s debounce just to absorb sub-second SSE bursts),
+// so live daily-call numbers update the moment new data lands.
 let _arLast=0, _arPending=null;
 async function autoRefresh(){
-  const now=Date.now(), MIN=TV?20000:8000;
+  const now=Date.now(), MIN=TV?20000:1000;
   if(now-_arLast < MIN){
     if(!_arPending) _arPending=setTimeout(()=>{_arPending=null; autoRefresh();}, MIN-(now-_arLast)+50);
     return;
