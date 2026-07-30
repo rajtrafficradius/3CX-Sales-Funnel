@@ -3211,9 +3211,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ev = q("SELECT id, type, start_at, bde_name, status, title, notes FROM calendar_events "
                        "WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) = ANY(%(d9)s) "
                        "  AND status='pending' AND (NOT %(sr)s OR type <> 'rpc_retry') "
+                       # a private/isolated BDE's event (e.g. Lisa's "🎙️ Lisa call: …") must never surface
+                       # as the next-action for a non-admin — skip it so the HUMAN's assignment shows instead.
+                       "  AND (%(hb)s::text[] IS NULL OR NOT (COALESCE(bde_name,'') = ANY(%(hb)s::text[]))) "
                        "ORDER BY (start_at >= %(now)s) DESC, "
                        "         CASE WHEN start_at >= %(now)s THEN start_at END ASC, start_at DESC "
-                       "LIMIT 1", {"d9": d9list, "sr": skip_retry, "now": _now})
+                       "LIMIT 1", {"d9": d9list, "sr": skip_retry, "now": _now, "hb": (_hb or None)})
                 cal = ev[0] if ev else None
             # A far-future agency next-action = 'parked' (e.g. locked into a renewed contract):
             # show 'Re-engage ~<date> · <why>', not a normal 'call this week'.
@@ -3305,6 +3308,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pipeline5 = {"pipeline": pl, "p4_sub": sub}
         except Exception:
             pipeline5 = None
+
+        # PRIVACY: a private/isolated BDE (e.g. Lisa) must NEVER surface to a non-admin on the prospect
+        # page. Their calls are already excluded above and their calendar events are filtered out of
+        # next_action; scrub any remaining ASSIGNMENT/owner name too, so a human BDE (or BDM) who shares a
+        # prospect with Lisa sees only the HUMAN assignment (or 'unassigned') — never "Assigned: Lisa".
+        if _hb:
+            _hbset = set(_hb)
+            for _obj, _fld in ((master, "assigned_bde"), (priority, "assigned_bde"),
+                               (priority, "override_by"), (next_action, "bde")):
+                if isinstance(_obj, dict) and _obj.get(_fld) in _hbset:
+                    _obj[_fld] = None
 
         return JSONResponse(jsonable_encoder({
             "found": True,
