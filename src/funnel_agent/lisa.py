@@ -607,8 +607,8 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         "Good — makes sense. The session's completely independent, so it either confirms your agency's "
         "nailing it, or gives you sharper questions to ask them. Either way you come out ahead.")
     obj_price = pb.get("objection_price") or (
-        "The session and the audit are free — pricing only comes up later and it's tailored, which is "
-        "exactly what the fifteen minutes is for.")
+        "Fair question — the session and the audit are free, and pricing only comes up later because it's "
+        "tailored to what we find, which is exactly what the session is for. Morning or afternoon tomorrow?")
     obj_email = pb.get("objection_email") or (
         "Happy to send something — so it's actually useful and not just another email you ignore, what's "
         "the one thing about your online enquiries you'd most want answered?")
@@ -645,6 +645,14 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         "dm_name": facts.get("dm_name", ""),             # ask the gatekeeper for them BY NAME (bypass)
         "ideal_customer": facts.get("icp", ""),          # who their buyers are
     })
+    # Honesty guard: only let Lisa claim they run Google Ads when the data actually confirms it.
+    # If unconfirmed, the prompt falls back to a neutral "how you're showing up on Google" opener.
+    try:
+        _ads = _fetch(pool, "SELECT (dataforseo->>'running_google_ads')='true' r FROM enrichment WHERE domain=%s",
+                      (domain,)) if domain else []
+        b["runs_google_ads"] = "true" if (_ads and _ads[0].get("r")) else "false"
+    except Exception:
+        b["runs_google_ads"] = "false"
     if facts.get("dm_name") and not contact:
         b["decision_maker"] = facts["dm_name"]
     if facts.get("what_they_do") and not niche:
@@ -1151,7 +1159,7 @@ def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: st
     thread = "\n".join(f"{'Them' if h['direction']=='inbound' else 'Lisa'}: {h['body']}" for h in reversed(hist))
     sys = ("You are Lisa from DE Group, an Australian digital-marketing team, replying by SMS to a prospect who "
            "texted back after you tried to call them. Reply SHORT (1-2 sentences), warm, human and casual — like "
-           "a real person texting. Your goal: get them to agree to a quick 15-minute chat with our strategist "
+           "a real person texting. Your goal: get them to agree to a chat with our strategist "
            "about how they're showing up on Google (they run Google Ads). If they ask who you are or how they "
            "know you, be honest and friendly (you'd tried to reach them about their online presence). If they "
            "ask whether you're an AI, admit it briefly and warmly. Never pushy, never long, never a placeholder. "
@@ -1161,7 +1169,7 @@ def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: st
     r = _llm_json(settings, sys, usr, pool=pool, purpose="sms_reply")
     reply = ((r.get("reply") or "").strip() if isinstance(r, dict) else "") or (
         f"Hi{(' ' + name) if name else ''}! It's Lisa from DE Group — I'd tried you about how you're showing up "
-        "on Google next to your ads. Worth a quick 15-min chat? What time roughly suits you?")
+        "on Google next to your ads. Worth a quick chat with our strategist? What time roughly suits you?")
     sms_from = _pick_sms_from(settings)
     try:
         if _twilio_ready(settings) and _send_sms_twilio(settings, from_number, reply, sms_from):
@@ -1317,15 +1325,19 @@ def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, cal
     talk = int((dur_ms or 0) / 1000)
     stage = "p5" if booked else ("p1" if callback else None)
     dest = call.get("to_number")
+    # Only AUSTRALIAN calls belong in the funnel. A Lisa call to a non-AU number is a TEST call
+    # (e.g. dialling our own +91 mobile) — mark it out-of-scope so it never counts anywhere on the
+    # dashboard (calls / connected / booking). AU numbers normalise to +61… via _e164_au.
+    in_scope = _e164_au(dest).startswith("+61")
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO calls (call_id, bde_extension, bde_name, direction, dest_number, started_at, "
             "  talk_seconds, answered, is_voicemail, has_transcript, recording_present, in_scope, provider, "
-            "  fresh_or_followup) VALUES (%s,'LISA','Lisa','outbound',%s,now(),%s,%s,%s,%s,%s,true,'retell','fresh') "
+            "  fresh_or_followup) VALUES (%s,'LISA','Lisa','outbound',%s,now(),%s,%s,%s,%s,%s,%s,'retell','fresh') "
             "ON CONFLICT (call_id) DO UPDATE SET talk_seconds=EXCLUDED.talk_seconds, answered=EXCLUDED.answered, "
             "  is_voicemail=EXCLUDED.is_voicemail, has_transcript=EXCLUDED.has_transcript, "
-            "  recording_present=EXCLUDED.recording_present",
-            (cid, dest, talk, answered, is_vm, bool(call.get("transcript")), bool(call.get("recording_url"))))
+            "  recording_present=EXCLUDED.recording_present, in_scope=EXCLUDED.in_scope",
+            (cid, dest, talk, answered, is_vm, bool(call.get("transcript")), bool(call.get("recording_url")), in_scope))
         cur.execute(
             "INSERT INTO classifications (call_id, rpc_connect, full_pitch, is_lead, qualified, meeting_booked, "
             "  call_outcome, booking_status, meeting_datetime, callback_requested, callback_when, pipeline_stage, "
