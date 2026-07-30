@@ -1075,6 +1075,10 @@ def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number:
     agent, so it can't touch Lisa's call latency). Auth prefers an API Key (SK…:secret) and falls back to
     Account SID:Auth Token; the URL always uses the AC… account. Uses a Messaging Service if configured,
     else the given from-number. Returns True on 2xx. Raises on HTTP error (caller logs)."""
+    # Landlines / non-mobiles CANNOT receive SMS — never attempt one (audit links, follow-ups, any SMS).
+    if not _is_mobile_au(to_number):
+        log.info("sms_skipped_not_mobile", to=to_number)
+        return False
     acct = getattr(settings, "twilio_account_sid", "") or ""          # AC… — the account in the URL
     key_sid = getattr(settings, "twilio_api_key_sid", "") or ""       # SK… — API key (preferred auth user)
     secret = getattr(settings, "twilio_api_key_secret", "") or getattr(settings, "twilio_auth_token", "") or ""
@@ -1276,6 +1280,8 @@ def send_audit_link(pool: ConnectionPool, settings: Settings, *, domain: str, to
     dom = (domain or "").strip().lower()
     if not dom:
         return {"ok": False, "error": "no domain on file"}
+    if not _is_mobile_au(to_number):                 # landlines can't receive SMS — don't even generate one
+        return {"ok": False, "error": "not a mobile number — audit link only sends to mobiles"}
     full = ensure_full_audit(pool, settings, dom)   # fully run + verify before we send anything
     if not full.get("ok"):
         return {"ok": False, "error": full.get("error") or "audit not ready"}
