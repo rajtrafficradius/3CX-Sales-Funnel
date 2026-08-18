@@ -105,13 +105,56 @@ def crm_rows(q, closers: list[str]) -> list[dict]:
 
 
 # ---------- read: one full record + timeline ----------
+def _first(rows) -> dict:
+    return rows[0] if rows else {}
+
+
 def crm_record(q, dest9: str, closers: list[str]) -> dict:
     d9 = re.sub(r"[^0-9]", "", dest9 or "")[-9:]
     base = q(LIST_SQL + "\n", {"closers": closers or ["__none__"]})
     rec = next((r for r in base if r["dest9"] == d9), None)
     if not rec:
         return {}
-    rec["transcript"] = (q("SELECT transcript FROM lisa_calls WHERE call_id=%s", (rec["call_id"],)) or [{}])[0].get("transcript")
+    cid = rec.get("call_id")
+    dom = rec.get("domain")
+
+    # ---- booking-call extras (transcript, objection, the AI-tell flag) ----
+    bc = _first(q("SELECT transcript, main_objection, asked_if_ai, duration_ms FROM lisa_calls WHERE call_id=%s", (cid,)))
+    rec["transcript"] = bc.get("transcript")
+    rec["main_objection"] = bc.get("main_objection")
+    rec["asked_if_ai"] = bc.get("asked_if_ai")
+
+    # ---- qualification intelligence (BANT+): prefer the booking call, else the latest for this prospect ----
+    cl = _first(q(
+        """SELECT cl.* FROM classifications cl JOIN lisa_calls lc ON lc.call_id = cl.call_id
+           WHERE lc.dest9 = %s ORDER BY (cl.call_id = %s) DESC, cl.classified_at DESC NULLS LAST LIMIT 1""",
+        (d9, cid)))
+    if cl:
+        rec["qual"] = {k: cl.get(k) for k in (
+            "qualified", "qual_confidence", "authority", "problem", "budget", "urgency", "aspiration",
+            "open_to_listening", "lead_temperature", "booking_status", "runs_paid_ads", "has_marketing_agency",
+            "problem_summary", "evidence", "rpc_connect", "full_pitch", "prospect_industry", "prospect_mobile",
+            "callback_requested", "callback_when", "pipeline_stage", "recommended_cadence_days", "call_outcome")}
+    else:
+        rec["qual"] = {}
+
+    # ---- firmographics / company intel (D&B + gmaps rating/reviews + Apollo contacts) ----
+    rec["company_intel"] = _first(q(
+        """SELECT company_name, company_profile, year_started, employees, revenue_musd, industry, sub_industry,
+                  address, suburb, state, postal_code, country, source, gmaps_rating, gmaps_reviews,
+                  phone_is_mobile, contacts, source_url
+           FROM companies WHERE domain = %s OR phone_norm = %s ORDER BY (domain = %s) DESC NULLS LAST LIMIT 1""",
+        (dom, "61" + d9, dom)))
+
+    # ---- meeting / reveal events + follow-up cadence ----
+    rec["events"] = q(
+        """SELECT type, status, start_at, end_at, title, notes, bde_name
+           FROM calendar_events WHERE dest_number LIKE %s ORDER BY start_at DESC LIMIT 12""", ("%" + d9,))
+
+    # ---- SMS conversation (oldest first, so it reads like a chat) ----
+    rec["sms_thread"] = q(
+        "SELECT created_at, direction, body FROM lisa_sms WHERE dest9 = %s ORDER BY created_at ASC LIMIT 60", (d9,))
+
     # timeline: booking call + all Lisa calls + Alfred/closer calls + SMS + manual notes
     tl: list[dict] = []
     for c in q("""SELECT started_at, call_outcome, meeting_agreed, round(COALESCE(duration_ms,0)/1000.0) dur, recording_url
