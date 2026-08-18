@@ -11,10 +11,9 @@
     --line:#222b39; --line-soft:#1a212c; --line2:#2c3645;
     --txt:#e8edf5; --txt-dim:#b8c2d0; --muted:#8b96a6; --faint:#697384;
     --accent:#5b8cff; --accent2:#3b82f6; --accent-soft:rgba(91,140,255,.14); --ring:0 0 0 3px rgba(91,140,255,.30);
-    --good:#4ade80; --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
+    --good:#4ade80; --good-soft:rgba(74,222,128,.13); --warn:#fbbf24; --bad:#f87171; --chip:#1a2433;
     --r1:8px; --r2:10px; --r3:12px;
     --elev1:0 1px 2px rgba(0,0,0,.40);
-    --elev2:0 1px 0 rgba(255,255,255,.025) inset, 0 10px 28px -16px rgba(0,0,0,.80);
     --mat-elev:inset 0 1px 0 rgba(255,255,255,.035),0 1px 2px rgba(0,0,0,.34),0 6px 16px -12px rgba(0,0,0,.60);
     --t-eyebrow:10.5px; --t-cap:12px; --t-body:13px; --t-base:14px; --t-strong:16px;
   }
@@ -22,9 +21,8 @@
     --bg:#f7f9fc; --panel:#ffffff; --panel2:#f3f6fb; --panel3:#eaf0f7;
     --line:#e2e8f1; --line-soft:#eef2f8; --line2:#d3dbe6; --chip:#f0f4fa;
     --txt:#17202e; --txt-dim:#3a4658; --muted:#616d80; --faint:#93a0b2;
-    --good:#15a34a; --warn:#c07806; --bad:#dc2626;
+    --good:#15a34a; --good-soft:rgba(21,163,74,.10); --warn:#c07806; --bad:#dc2626;
     --elev1:0 1px 2px rgba(20,30,50,.10);
-    --elev2:0 1px 0 rgba(0,0,0,.02) inset,0 10px 26px -18px rgba(20,30,50,.35);
     --mat-elev:inset 0 1px 0 rgba(255,255,255,.9),0 1px 2px rgba(20,30,50,.06),0 6px 16px -12px rgba(20,30,50,.16);
   }
   *{box-sizing:border-box}
@@ -49,7 +47,7 @@
   .backlink:hover{border-color:var(--line2);color:var(--txt)}
   .backlink:focus-visible{outline:none;box-shadow:var(--ring)}
   /* ---- shell ---- */
-  .wrap{max-width:1560px;margin:0 auto;padding:18px 22px 28px}
+  .wrap{max-width:1680px;margin:0 auto;padding:18px 22px 28px}
   .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
   .search{position:relative;flex:1 1 240px;max-width:340px;min-width:180px}
   .search input{width:100%;padding:9px 12px 9px 34px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r2);color:var(--txt)}
@@ -64,43 +62,14 @@
   .chip:focus-visible{outline:none;box-shadow:var(--ring)}
   .chip .n{opacity:.7;font-weight:600;font-size:11px}
   .chip .dot{width:8px;height:8px;border-radius:50%;flex:none}
-  .seg{display:inline-flex;background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:3px;flex:none}
-  .seg button{border:0;background:none;color:var(--muted);font-weight:700;font-size:var(--t-cap);padding:6px 12px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .12s,color .12s}
-  .seg button:hover{color:var(--txt)}
-  .seg button.active{background:var(--accent-soft);color:var(--accent)}
-  .seg button:focus-visible{outline:none;box-shadow:var(--ring)}
-  .upd{font-size:11px;color:var(--faint);white-space:nowrap;min-width:76px}
-  /* ---- pills ---- */
+  .upd{font-size:11px;color:var(--faint);white-space:nowrap;min-width:76px;text-align:right}
+  .count{font-size:var(--t-cap);color:var(--muted);font-weight:700;white-space:nowrap}
+  .count b{color:var(--txt);font-weight:800}
+  /* ---- pills / bits ---- */
   .lpill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap}
-  .udot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 3px rgba(248,113,113,.18);flex:none}
+  .udot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 3px rgba(248,113,113,.18);flex:none;vertical-align:middle}
   .dim{color:var(--faint)}
-  .mono{font-variant-numeric:tabular-nums;color:var(--txt-dim)}
-  /* ---- kanban ---- */
-  .board{display:flex;gap:12px;overflow-x:auto;padding-bottom:10px;align-items:flex-start}
-  .col{flex:0 0 262px;width:262px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--elev1);display:flex;flex-direction:column;max-height:calc(100vh - 230px)}
-  .col.focus{border-color:var(--accent);box-shadow:var(--ring)}
-  .col-h{display:flex;align-items:center;gap:8px;padding:11px 12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);border-radius:var(--r3) var(--r3) 0 0;z-index:1}
-  .col-h .dot{width:9px;height:9px;border-radius:50%;flex:none}
-  .col-h .t{font-weight:800;font-size:var(--t-cap);letter-spacing:.2px}
-  .col-h .c{margin-left:auto;font-size:11px;font-weight:800;color:var(--muted);background:var(--chip);border:1px solid var(--line);border-radius:20px;padding:1px 9px;min-width:26px;text-align:center}
-  .col-b{padding:10px;display:flex;flex-direction:column;gap:9px;overflow-y:auto}
-  .colempty{color:var(--faint);text-align:center;font-size:11.5px;padding:14px 0}
-  .kc{background:var(--panel2);border:1px solid var(--line);border-radius:var(--r2);padding:11px;cursor:pointer;position:relative;transition:border-color .12s,transform .12s,box-shadow .12s}
-  .kc:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:var(--elev1)}
-  .kc:focus-visible{outline:none;box-shadow:var(--ring)}
-  .kc-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-  .kc-top .udot{margin-left:auto}
-  .kc .co{font-weight:800;font-size:13.5px;color:var(--txt);line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .kc .ct{font-size:11.5px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .kc .find{font-size:11.5px;color:var(--txt-dim);margin-top:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .facts{margin-top:9px;display:flex;flex-direction:column;gap:4px}
-  .facts .f{display:flex;gap:8px;font-size:11.5px;line-height:1.35}
-  .facts .fk{flex:none;width:46px;color:var(--faint);font-weight:700;font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;padding-top:1px}
-  .facts .fv{color:var(--txt-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .kc-foot{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line)}
-  .att{font-size:10.5px;font-weight:700;color:var(--muted);white-space:nowrap}
-  .kc-stage{margin-left:auto;max-width:118px;background:var(--panel3);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:11px;cursor:pointer}
-  .kc-stage:focus-visible{outline:none;box-shadow:var(--ring)}
+  .mono{font-variant-numeric:tabular-nums}
   /* ---- table ---- */
   .tblcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);box-shadow:var(--mat-elev);overflow:hidden}
   .tblscroll{overflow-x:auto}
@@ -109,6 +78,7 @@
   .tbl thead th.sortable{cursor:pointer;user-select:none}
   .tbl thead th.sortable:hover{color:var(--txt-dim)}
   .tbl thead th.sorted{color:var(--accent)}
+  .tbl thead th.num{text-align:right}
   .tbl thead th .arr{margin-left:3px;font-size:10px}
   .tbl td{padding:10px 12px;border-bottom:1px solid var(--line-soft);vertical-align:middle;white-space:nowrap;color:var(--txt-dim)}
   .tbl tbody tr:last-child td{border-bottom:none}
@@ -116,9 +86,16 @@
   .tbl tbody tr.trow:hover{background:var(--panel2)}
   .tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
   .tco{font-weight:700;color:var(--txt)}
-  .tdom{font-size:10.5px;color:var(--faint);margin-top:2px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
-  .tbl-stage{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:11px;cursor:pointer;max-width:130px}
+  .tdom{font-size:10.5px;color:var(--faint);margin-top:2px;max-width:230px;overflow:hidden;text-overflow:ellipsis}
+  .tcontact{color:var(--txt-dim)}
+  .tphone{display:inline-block;font-size:11.5px;margin-top:2px;color:var(--accent)}
+  .tphone:hover{text-decoration:underline}
+  .tnext{max-width:220px;overflow:hidden;text-overflow:ellipsis;display:block}
+  .tnext .when{color:var(--faint);font-size:11px}
+  .tbl-stage{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:11px;cursor:pointer;max-width:132px}
   .tbl-stage:focus-visible{outline:none;box-shadow:var(--ring)}
+  .asset{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;border:1px solid var(--good);color:var(--good);background:var(--good-soft);white-space:nowrap}
+  .asset:hover{filter:brightness(1.08)}
   .openlink{font-weight:700;font-size:12px;white-space:nowrap}
   .openlink:focus-visible{outline:none;box-shadow:var(--ring);border-radius:4px}
   /* ---- states ---- */
@@ -127,9 +104,9 @@
   .retry{margin-top:2px;background:var(--panel2);color:var(--accent);border:1px solid var(--line);border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer}
   .retry:hover{border-color:var(--accent)}
   .skel{display:flex;flex-direction:column;gap:9px;padding:12px}
-  .skrow{height:64px;border-radius:var(--r2);background:linear-gradient(100deg,var(--panel2) 30%,var(--panel3) 50%,var(--panel2) 70%);background-size:220% 100%;animation:sh 1.4s ease-in-out infinite}
+  .skrow{height:52px;border-radius:var(--r2);background:linear-gradient(100deg,var(--panel2) 30%,var(--panel3) 50%,var(--panel2) 70%);background-size:220% 100%;animation:sh 1.4s ease-in-out infinite}
   @keyframes sh{0%{background-position:140% 0}100%{background-position:-40% 0}}
-  @media (prefers-reduced-motion:reduce){.skrow{animation:none}.kc,.chip,.seg button,.tbl tbody tr.trow{transition:none}}
+  @media (prefers-reduced-motion:reduce){.skrow{animation:none}.chip,.tbl tbody tr.trow{transition:none}}
   @media(max-width:640px){.wrap{padding:14px 14px 24px}.search{max-width:none}}
   /* ---- theme button ---- */
   .tr-theme-btn{position:fixed;right:16px;bottom:16px;z-index:90;width:40px;height:40px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-size:17px;cursor:pointer;box-shadow:var(--elev1);display:flex;align-items:center;justify-content:center}
@@ -179,14 +156,11 @@
     </label>
     <div class="chips" id="lineChips" role="group" aria-label="Filter by line"></div>
     <span class="spacer"></span>
-    <div class="seg" id="viewSeg" role="group" aria-label="View">
-      <button data-v="pipeline" type="button" aria-label="Pipeline view">&#9638; Pipeline</button>
-      <button data-v="table" type="button" aria-label="Table view">&#9776; Table</button>
-    </div>
+    <span class="count" id="count"></span>
     <span class="upd" id="upd"></span>
   </div>
   <div class="chips stagechips" id="stageChips" role="group" aria-label="Filter by stage"></div>
-  <div id="content"><div class="card"><div class="skel"><div class="skrow"></div><div class="skrow"></div><div class="skrow"></div></div></div></div>
+  <div id="content"><div class="card"><div class="skel"><div class="skrow"></div><div class="skrow"></div><div class="skrow"></div><div class="skrow"></div></div></div></div>
 </div>
 
 <script>
@@ -202,11 +176,11 @@ const STAGES=[
 const LINE={lisa4:{label:'Website',c:'#5b8cff'},lisa5:{label:'Growth',c:'#4ade80'},lisa1:{label:'Marketing',c:'#a78bfa'}};
 const TZ='Australia/Melbourne';
 let DATA=[], loaded=false, lastAt=0;
-let view='pipeline', lineF='all', stageF='all', searchText='';
+let lineF='all', stageF='all', searchText='';
 let sortKey='booked', sortDir=-1;
 
 const $=s=>document.querySelector(s);
-const content=$('#content'), q=$('#q'), who=$('#who'), upd=$('#upd');
+const content=$('#content'), q=$('#q'), who=$('#who'), upd=$('#upd'), countEl=$('#count');
 const lineChips=$('#lineChips'), stageChips=$('#stageChips');
 
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
@@ -248,76 +222,52 @@ function renderChips(){
   const sc={};STAGES.forEach(s=>sc[s.id]=0);bf.forEach(r=>{sc[r.stage]=(sc[r.stage]||0)+1;});
   const all=`<button class="chip${stageF==='all'?' active':''}" data-v="all" type="button">All<span class="n">${bf.length}</span></button>`;
   stageChips.innerHTML=all+STAGES.map(s=>`<button class="chip${stageF===s.id?' active':''}" data-v="${s.id}" type="button"><span class="dot" style="background:${s.c}"></span>${s.label}<span class="n">${sc[s.id]||0}</span></button>`).join('');
-  document.querySelectorAll('#viewSeg button').forEach(b=>b.classList.toggle('active',b.dataset.v===view));
-}
-
-function card(r){
-  const line=LINE[r.agent]||LINE.lisa1;
-  const reveal=r.meeting_at?frel(r.meeting_at):(r.agreed_day_time?esc(r.agreed_day_time):'');
-  const att=r.bde_attempts||0;
-  return `<div class="kc" role="link" tabindex="0" data-d9="${esc(r.dest9)}" aria-label="Open ${esc(r.company||'record')}">
-    <div class="kc-top"><span class="lpill" style="color:${line.c};background:${line.c}22;border-color:${line.c}55">${line.label}</span>${r.unread?'<span class="udot" title="Unread reply"></span>':''}</div>
-    <div class="co">${esc(r.company||'(unknown)')}</div>
-    <div class="ct">${r.contact_name?esc(r.contact_name)+' · ':''}<span class="mono">${esc(phone(r.dest9))}</span></div>
-    ${r.finding?`<div class="find">${esc(r.finding)}</div>`:''}
-    <div class="facts">
-      <div class="f"><span class="fk">Reveal</span><span class="fv">${reveal||'<span class="dim">—</span>'}</span></div>
-      <div class="f"><span class="fk">Owner</span><span class="fv">${r.owner?esc(r.owner):'<span class="dim">Unassigned</span>'}</span></div>
-      ${r.next_action?`<div class="f"><span class="fk">Next</span><span class="fv">${esc(r.next_action)}${r.next_action_at?' · '+frel(r.next_action_at):''}</span></div>`:''}
-    </div>
-    <div class="kc-foot">
-      <span class="att">${att} attempt${att===1?'':'s'}</span>
-      <select class="kc-stage" data-d9="${esc(r.dest9)}" aria-label="Change stage">${stageOptions(r.stage)}</select>
-    </div>
-  </div>`;
-}
-
-function renderPipeline(){
-  const bf=baseFiltered();
-  const byStage={};STAGES.forEach(s=>byStage[s.id]=[]);
-  bf.forEach(r=>{(byStage[r.stage]||(byStage[r.stage]=[])).push(r);});
-  content.innerHTML='<div class="board">'+STAGES.map(s=>{
-    const list=byStage[s.id]||[];
-    return `<section class="col${stageF===s.id?' focus':''}" data-stage="${s.id}">
-      <div class="col-h"><span class="dot" style="background:${s.c}"></span><span class="t">${s.label}</span><span class="c">${list.length}</span></div>
-      <div class="col-b">${list.map(card).join('')||'<div class="colempty">Nothing here</div>'}</div>
-    </section>`;
-  }).join('')+'</div>';
-  if(stageF!=='all'){const el=content.querySelector('.col[data-stage="'+stageF+'"]');if(el)el.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'});}
 }
 
 const COLS=[
   {k:'company',t:'Company',g:r=>(r.company||'').toLowerCase()},
   {k:'contact',t:'Contact',g:r=>(r.contact_name||'').toLowerCase()},
-  {k:'phone',t:'Phone',g:r=>r.dest9||''},
   {k:'line',t:'Line',g:r=>r.agent||''},
   {k:'stage',t:'Stage',g:r=>STAGES.findIndex(s=>s.id===r.stage)},
   {k:'reveal',t:'Reveal',g:r=>tval(r.meeting_at)},
-  {k:'owner',t:'Owner',g:r=>(r.owner||'').toLowerCase()},
   {k:'next',t:'Next action',g:r=>(r.next_action||'').toLowerCase()},
-  {k:'att',t:'Attempts',g:r=>r.bde_attempts||0,num:true},
+  {k:'att',t:'Att',g:r=>r.bde_attempts||0,num:true},
+  {k:'last',t:'Last contact',g:r=>tval(r.last_contacted)},
+  {k:'asset',t:'Reveal asset',g:r=>r.share_token?1:0},
   {k:'booked',t:'Booked',g:r=>tval(r.booked_at)}
 ];
+
+function assetCell(r){
+  if(!r.share_token)return '<span class="dim">—</span>';
+  const label=r.agent==='lisa5'?'Audit':'Site';
+  return `<a class="asset" href="/api/lisa4/site/public/${esc(r.share_token)}" target="_blank" rel="noopener" title="Open the built reveal ${label.toLowerCase()}">${label} ✓</a>`;
+}
+
 function renderTable(){
   let rows=baseFiltered();
   if(stageF!=='all')rows=rows.filter(r=>r.stage===stageF);
+  const total=rows.length;
   const col=COLS.find(c=>c.k===sortKey)||COLS[COLS.length-1];
   rows=rows.slice().sort((a,b)=>{const x=col.g(a),y=col.g(b);return (x<y?-1:x>y?1:0)*sortDir;});
+  countEl.textContent='';
   if(!rows.length){content.innerHTML='<div class="card"><div class="empty">No bookings match your filters.</div></div>';return;}
+  countEl.innerHTML=`<b>${total}</b> booking${total===1?'':'s'}`;
   const head=COLS.map(c=>`<th class="sortable${c.num?' num':''}${c.k===sortKey?' sorted':''}" data-k="${c.k}">${c.t}${c.k===sortKey?`<span class="arr">${sortDir<0?'▾':'▴'}</span>`:''}</th>`).join('')+'<th></th>';
   const body=rows.map(r=>{
     const line=LINE[r.agent]||LINE.lisa1;
     const reveal=r.meeting_at?frel(r.meeting_at):(r.agreed_day_time?esc(r.agreed_day_time):'<span class="dim">—</span>');
+    const next=r.next_action?`<span class="tnext">${esc(r.next_action)}${r.next_action_at?` <span class="when">· ${frel(r.next_action_at)}</span>`:''}</span>`:'<span class="dim">—</span>';
+    const last=r.last_contacted?frel(r.last_contacted):'<span class="dim">—</span>';
     return `<tr class="trow" data-d9="${esc(r.dest9)}">
-      <td><span class="tco">${esc(r.company||'(unknown)')}</span>${r.unread?' <span class="udot"></span>':''}${r.domain?`<div class="tdom">${esc(r.domain)}</div>`:''}</td>
-      <td>${r.contact_name?esc(r.contact_name):'<span class="dim">—</span>'}</td>
-      <td class="mono">${esc(phone(r.dest9))}</td>
+      <td><span class="tco">${esc(r.company||'(unknown)')}</span>${r.unread?' <span class="udot" title="Unread SMS reply"></span>':''}${r.domain?`<div class="tdom">${esc(r.domain)}</div>`:''}</td>
+      <td><div class="tcontact">${r.contact_name?esc(r.contact_name):'<span class="dim">—</span>'}</div><a class="tphone mono" href="tel:${esc(phone(r.dest9))}">${esc(phone(r.dest9))}</a></td>
       <td><span class="lpill" style="color:${line.c};background:${line.c}22;border-color:${line.c}55">${line.label}</span></td>
-      <td><select class="tbl-stage" data-d9="${esc(r.dest9)}" aria-label="Change stage">${stageOptions(r.stage)}</select></td>
+      <td><select class="tbl-stage" data-d9="${esc(r.dest9)}" aria-label="Change stage for ${esc(r.company||'record')}">${stageOptions(r.stage)}</select></td>
       <td>${reveal}</td>
-      <td>${r.owner?esc(r.owner):'<span class="dim">—</span>'}</td>
-      <td>${r.next_action?esc(r.next_action):'<span class="dim">—</span>'}</td>
+      <td>${next}</td>
       <td class="num">${r.bde_attempts||0}</td>
+      <td>${last}</td>
+      <td>${assetCell(r)}</td>
       <td>${r.booked_at?esc(fdate(r.booked_at)):'<span class="dim">—</span>'}</td>
       <td><a class="openlink" href="/lisa-crm/${esc(r.dest9)}">Open ↗</a></td>
     </tr>`;
@@ -325,7 +275,7 @@ function renderTable(){
   content.innerHTML=`<div class="card tblcard"><div class="tblscroll"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>`;
 }
 
-function render(){renderChips();if(view==='pipeline')renderPipeline();else renderTable();}
+function render(){renderChips();renderTable();}
 
 async function setStage(d9,v){
   try{await post('/api/lisa/crm/update',{dest9:d9,fields:{stage:v}});await load();}
@@ -342,13 +292,10 @@ function tickUpd(){if(!lastAt){upd.textContent='';return;}const s=Math.max(0,Mat
 content.addEventListener('click',e=>{
   const th=e.target.closest('th.sortable');
   if(th){const k=th.dataset.k;if(sortKey===k)sortDir=-sortDir;else{sortKey=k;sortDir=(k==='company'||k==='contact'||k==='owner'||k==='next'||k==='line')?1:-1;}renderTable();return;}
-  if(e.target.closest('.kc-stage')||e.target.closest('.tbl-stage')||e.target.closest('.openlink'))return;
-  const kc=e.target.closest('.kc');if(kc){go(kc.dataset.d9);return;}
+  if(e.target.closest('.tbl-stage')||e.target.closest('.openlink')||e.target.closest('.asset')||e.target.closest('a[href^="tel:"]'))return;
   const tr=e.target.closest('tr.trow');if(tr){go(tr.dataset.d9);return;}
 });
-content.addEventListener('change',e=>{const s=e.target.closest('.kc-stage,.tbl-stage');if(s)setStage(s.dataset.d9,s.value);});
-content.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const kc=e.target.closest('.kc');if(kc){e.preventDefault();go(kc.dataset.d9);}}});
-$('#viewSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(b){view=b.dataset.v;render();}});
+content.addEventListener('change',e=>{const s=e.target.closest('.tbl-stage');if(s)setStage(s.dataset.d9,s.value);});
 lineChips.addEventListener('click',e=>{const c=e.target.closest('.chip');if(c){lineF=c.dataset.v;render();}});
 stageChips.addEventListener('click',e=>{const c=e.target.closest('.chip');if(c){const v=c.dataset.v;stageF=(v===stageF&&v!=='all')?'all':v;render();}});
 q.addEventListener('input',()=>{searchText=q.value;render();});
