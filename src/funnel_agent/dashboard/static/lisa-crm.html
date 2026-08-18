@@ -4,7 +4,7 @@
 <script>(function(){try{var t=localStorage.getItem("tr-theme-v2");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}catch(e){}})();</script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Agency & RPC · 3CX Funnel</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤝</text></svg>">
+<title>Booked CRM · 3CX Funnel</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📇</text></svg>">
 <style>
   :root{
     --bg:#0a0d13; --panel:#10151e; --panel2:#161c27; --panel3:#1b2230;
@@ -107,92 +107,128 @@
   :root[data-theme=light] .tr-rail-brand .fulllogo{filter:none}
   .tr-rail:hover .tr-rail-brand .barsic,.tr-rail:focus-within .tr-rail-brand .barsic{opacity:0}
   .tr-rail:hover .tr-rail-brand .fulllogo,.tr-rail:focus-within .tr-rail-brand .fulllogo{opacity:1}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+
+  /* alignment + typography polish */
+  main{max-width:1400px}
+  table{table-layout:fixed}
+  thead th{padding:12px 14px;font-size:10px;letter-spacing:.7px}
+  tbody td{padding:13px 14px;vertical-align:top;line-height:1.45}
+  th:nth-child(1){width:21%} th:nth-child(2){width:9%} th:nth-child(3){width:12%}
+  th:nth-child(4){width:11%} th:nth-child(5){width:10%} th:nth-child(6){width:15%}
+  th:nth-child(7){width:8%} th:nth-child(8){width:14%}
+  td.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .biz{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;font-size:13.5px}
+  .dom{margin-top:3px;line-height:1.5}
+  .dom a{color:var(--muted)} .dom a:hover{color:var(--accent)}
+  td .pill{margin-top:4px}
+  td select{width:100%;max-width:150px;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 7px}
+  .touch{display:grid;gap:2px;font-size:11.5px}
+  .touch .lbl2{color:var(--faint);font-weight:700;font-size:9.5px;letter-spacing:.6px;text-transform:uppercase}
+  .tabs{align-items:center}
+  #agentTabs .tab{font-weight:800}
+  @media(max-width:900px){table{table-layout:auto}thead{display:none}tbody td{display:block;width:100%!important;border-bottom:0;padding:6px 14px}tbody tr{display:block;border-bottom:1px solid var(--line);padding:8px 0}}
+
 </style>
 </head>
 <body>
 <header>
   <a class="brand" href="/"><img src="/logo.png" alt="Traffic Radius" /></a>
-  <div><div class="over">BDE-sourced · reference list</div><h1>Agency &amp; RPC Connected</h1></div>
+  <div><div class="over">Outbound · meetings pipeline</div><h1>Booked Prospects CRM</h1></div>
   <span class="spacer"></span>
-  <select id="bdeFilter" style="display:none"></select>
+  <a href="/lisa" class="pill" style="padding:7px 14px">&larr; Outbound Intelligence</a>
   <span class="who" id="who"></span>
 </header>
 <main>
-  <p class="hblurb">Prospects where a BDE <b>reached the decision-maker</b> (RPC connected) — flagged by whether they also <b>work with another agency</b>. These are relationships already in motion, kept here for reference. This list is deliberately <b>off the calling calendar</b>: it is not part of the fresh Google-Ads dialling rotation.</p>
+  <p class="hblurb">Every prospect who has <b>agreed to a meeting</b> on a Lisa line &mdash; when they booked, the meeting time, whether the reveal site is built, last touches both ways, autopilot state, and a manual status. Company opens the booked call.</p>
+  <div class="tabs" id="agentTabs" style="margin-bottom:8px"></div>
   <div class="tabs" id="tabs"></div>
-  <div class="card"><div id="board"><div class="empty">Loading…</div></div></div>
+  <div class="card"><div id="board"><div class="empty">Loading&hellip;</div></div></div>
+  <p class="sub" style="margin-top:10px">Status saves instantly. Autopilot = pending automated follow-ups (self-cancel the moment the prospect replies or calls).</p>
 </main>
 
 <script>
 const $=s=>document.querySelector(s);
-let bde='ALL', filter='all', DATA=[];
-async function api(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
+let filter='all', agentF='all', DATA=[];
+const REPLYPILL='<span class="pill t-hot" style="animation:pulse 1.6s infinite">NEW REPLY</span>';
+const STATUSES=['','Meeting upcoming','No-show - following up','Revealed','Won','Lost','On hold'];
+async function api(u,opts){const r=await fetch(u,opts);if(!r.ok)throw new Error(r.status);return r.json();}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-function fmtDate(s){if(!s)return '';try{const d=new Date(s.replace(' ','T'));if(isNaN(d))return s.slice(0,10);return d.toLocaleDateString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',year:'numeric'});}catch(e){return s.slice(0,10);}}
-function tierClass(t){t=(t||'').toLowerCase();if(t.includes('super')||t==='hot')return 't-hot';if(t==='warm')return 't-warm';return 't-cool';}
-
-function renderTabs(counts){
-  const T=[['all','All',counts.all],['agency','\u{1F3E2} Working with an agency',counts.agency],['rpc','\u{1F4DE} RPC connected only',counts.rpc]];
-  $('#tabs').innerHTML=T.map(t=>`<button class="tab${t[0]===filter?' active':''}" onclick="setFilter('${t[0]}')">${t[1]}<span class="n">${t[2]}</span></button>`).join('');
+function fdt(s){if(!s)return '';try{const d=new Date(s);if(isNaN(d))return '';return d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false});}catch(e){return '';}}
+function derived(r){
+  if(r.crm_status) return r.crm_status;
+  if(r.meeting_status==='pending') return (new Date(r.meeting_at)>new Date())?'Meeting upcoming':'No-show - following up';
+  if(r.meeting_status==='done') return 'Revealed';
+  return 'New';
 }
-window.setFilter=function(f){filter=f;render();};
-
+function stClass(s){s=(s||'').toLowerCase();
+  if(s.includes('won'))return 't-hot';
+  if(s.includes('upcoming'))return 'tag-rpc';
+  if(s.includes('no-show')||s.includes('hold'))return 'tag-agency';
+  if(s.includes('lost'))return 't-none';
+  return 't-cool';}
 function row(r){
-  // Name column: company name, else classified company, else domain. NEVER the phone (own column).
-  const biz=esc(r.business_name||r.prospect_company||r.domain||'—');
-  const key=(r.dest_number||'').replace(/[^0-9]/g,'');
-  const bizCell=`<td><a href="/prospect/${encodeURIComponent(key||r.domain||'')}"><span class="biz">${biz}</span></a>${r.domain?`<div class="dom">${esc(r.domain)}</div>`:''}</td>`;
-  const statusCell=r.is_agency
-    ? '<span class="pill tag-agency">\u{1F3E2} Agency + RPC</span>'
-    : '<span class="pill tag-rpc">\u{1F4DE} RPC connected</span>';
-  const tier=r.lead_temperature;
-  const tierCell=tier?`<span class="pill ${tierClass(tier)}">${esc(tier)}</span>`:'';
-  return `<tr>${bizCell}
-    <td class="num">${esc(r.dest_number||'')}</td>
-    <td>${statusCell}</td>
-    <td>${tierCell}</td>
-    <td class="r num">${r.ncalls!=null?r.ncalls:''}</td>
-    <td class="num">${esc(fmtDate(r.started_at))}</td>
-    <td>${esc(r.bde||'')}</td>
+  const st=derived(r);
+  const site = r.site_status==='built'
+    ? (r.share_token?`<a href="/api/lisa4/site/public/${esc(r.share_token)}" target="_blank" class="pill tag-rpc">&#10003; NEW website &#8599;</a>`:'<span class="pill tag-rpc">&#10003; built (no share link yet)</span>')
+    : (r.site_status?`<span class="pill t-warm">${esc(r.site_status)}</span>`:'<span class="pill t-none">&mdash;</span>');
+  const opts=STATUSES.map(s=>`<option value="${esc(s)}"${(r.crm_status||'')===s?' selected':''}>${s||'(auto: '+esc(st)+')'}</option>`).join('');
+  return `<tr>
+    <td><a href="/prospect/${esc(r.dest9)}"><span class="biz">${esc(r.company)}</span></a> ${r.agent==='lisa4'?'<span class="pill" style="color:#5b8cff;background:rgba(91,140,255,.12);border-color:rgba(91,140,255,.35)">&#127760; Website</span>':'<span class="pill tag-rpc">&#128200; Marketing</span>'}
+        <div class="dom">${r.domain?`<a href="https://${esc(r.domain)}" target="_blank" rel="noopener">${esc(r.domain)} &#8599;</a> · `:''}<a href="/call/${encodeURIComponent(r.call_id)}">booked call &#8599;</a></div></td>
+    <td class="num">0${esc(r.dest9)}</td>
+    <td class="num">${esc(fdt(r.booked_at))} ${r.inbound?'<span class="pill tag-rpc" title="they called us">in</span>':''}</td>
+    <td class="num">${esc(fdt(r.meeting_at))||'<span class="muted">&mdash;</span>'}</td>
+    <td>${site}</td>
+    <td><div class="touch"><span><span class="lbl2">out</span> ${esc(fdt(r.last_out))||'&mdash;'}</span><span><span class="lbl2">in</span> ${esc(fdt(r.last_in))||'<span class="muted">none</span>'}</span></div>${r.unread?`<br>${REPLYPILL}<div style="max-width:220px;color:var(--txt);font-size:11.5px;margin-top:4px">&ldquo;${esc(r.last_in_body||'')}&rdquo;</div><button onclick="markSeen('${esc(r.dest9)}')" style="margin-top:5px;background:none;border:1px solid var(--line);border-radius:8px;color:var(--accent);font-size:10.5px;font-weight:700;padding:3px 8px;cursor:pointer">mark read</button>`:''}</td>
+    <td class="r num">${r.autopilot_pending>0?`<span class="pill t-warm">${r.autopilot_pending} queued</span>`:'&mdash;'}</td>
+    <td style="max-width:300px;font-size:11.5px;line-height:1.45;vertical-align:top"><div style="max-height:104px;overflow-y:auto;padding-right:5px">${
+      ((r.reveal_by?`<div style="margin-bottom:6px"><b style="color:var(--accent)">Reveal</b> &middot; ${esc(r.reveal_by)} ${esc(fdt(r.reveal_at))}${r.reveal_mins?` (${r.reveal_mins}m)`:''}${r.reveal_outcome?` &middot; <b>${esc(r.reveal_outcome)}</b>`:''}${r.reveal_summary?`<div style="color:var(--muted);margin-top:2px">${esc(r.reveal_summary)}</div>`:''}</div>`:'')
+      + (r.crm_note?`<div style="margin-bottom:6px;color:var(--txt)">${esc(r.crm_note)}</div>`:'')
+      + (r.booking_summary?`<div><span class="lbl2">booked</span> <span style="color:var(--muted)">${esc(r.booking_summary)}</span></div>`:''))
+      || '<span class="muted">&mdash;</span>'}</div></td>
+    <td><span class="pill ${stClass(st)}">${esc(st)}</span><br><select style="margin-top:6px;font-size:11px" onchange="setStatus('${esc(r.dest9)}',this.value)">${opts}</select></td>
   </tr>`;
 }
-
+window.markSeen=async function(d9){try{await api('/api/lisa/crm/seen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest9:d9})});load();}catch(e){alert(e.message)}};
+window.setStatus=async function(d9,v){
+  try{await api('/api/lisa/crm/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dest9:d9,status:v})});load();}
+  catch(e){alert('save failed: '+e.message);}
+};
+function bucket(r){if(r.unread)return 'replied';const s=derived(r).toLowerCase();
+  if(s.includes('upcoming'))return 'upcoming';
+  if(s.includes('won')||s.includes('revealed'))return 'done';
+  if(s.includes('lost'))return 'lost';
+  return 'chase';}
+function renderAgentTabs(){
+  const c={all:DATA.length,lisa4:DATA.filter(r=>r.agent==='lisa4').length,lisa1:DATA.filter(r=>r.agent==='lisa1').length};
+  const T=[['all','All lines',c.all],['lisa4','&#127760; Lisa 4 &mdash; Websites',c.lisa4],['lisa1','&#128200; Lisa 1 &mdash; Organic &amp; Paid Marketing',c.lisa1]];
+  document.getElementById('agentTabs').innerHTML=T.map(t=>`<button class="tab${t[0]===agentF?' active':''}" onclick="setAgent('${t[0]}')" style="${t[0]==='lisa4'?'border-color:rgba(91,140,255,.5)':t[0]==='lisa1'?'border-color:rgba(74,222,128,.5)':''}">${t[1]}<span class="n">${t[2]}</span></button>`).join('');
+}
+window.setAgent=a=>{agentF=a;render();};
 function render(){
-  const rows=DATA.filter(r=> filter==='all' ? true : filter==='agency' ? r.is_agency : !r.is_agency);
-  renderTabs({all:DATA.length,agency:DATA.filter(r=>r.is_agency).length,rpc:DATA.filter(r=>!r.is_agency).length});
-  if(!rows.length){$('#board').innerHTML='<div class="empty">No matching prospects'+(bde!=='ALL'?' for '+esc(bde):'')+'.</div>';return;}
-  const head='<th>Prospect</th><th>Phone</th><th>Status</th><th>Temp</th><th class="r">Calls</th><th>Last contact</th><th>BDE</th>';
+  renderAgentTabs();
+  const D=DATA.filter(r=>agentF==='all'||r.agent===agentF);
+  const counts={all:D.length,replied:0,upcoming:0,chase:0,done:0,lost:0};
+  D.forEach(r=>counts[bucket(r)]++);
+  const T=[['all','All booked',counts.all],['replied','&#128233; Replied',counts.replied],['upcoming','&#128197; Upcoming',counts.upcoming],['chase','&#128242; Chasing',counts.chase],['done','&#9989; Revealed / Won',counts.done],['lost','&#10005; Lost',counts.lost]];
+  $('#tabs').innerHTML=T.map(t=>`<button class="tab${t[0]===filter?' active':''}" onclick="setFilter('${t[0]}')">${t[1]}<span class="n">${t[2]}</span></button>`).join('');
+  const rows=D.filter(r=>filter==='all'||bucket(r)===filter);
+  if(!rows.length){$('#board').innerHTML='<div class="empty">Nothing here yet.</div>';return;}
+  const head='<th>Prospect</th><th>Phone</th><th>Booked</th><th>Meeting</th><th>Site</th><th>Last touch</th><th class="r">Autopilot</th><th>Call analysis</th><th>Status</th>';
   $('#board').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`;
 }
-
+window.setFilter=f=>{filter=f;render();};
 async function load(){
-  $('#board').innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const d=await api(`/api/agency-rpc?bde=${encodeURIComponent(bde)}`);
-    DATA=d.rows||[]; render();
-  }catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
+  try{const d=await api('/api/lisa/crm');DATA=d.rows||[];render();}
+  catch(e){$('#board').innerHTML='<div class="empty">Could not load ('+esc(e.message)+').</div>';}
 }
-
-async function boot(){
-  try{
-    const me=await api('/api/me'); $('#who').textContent=(me.name||me.email||'')+' · '+(me.role||'');
-    if(me.role==='manager'||me.role==='admin'||me.role==='kiosk'){
-      const s=await api('/api/summary');
-      $('#bdeFilter').innerHTML=['<option value="ALL">All BDEs</option>'].concat((s.bdes||[]).filter(b=>b!=='ALL').map(b=>`<option>${esc(b)}</option>`)).join('');
-      $('#bdeFilter').style.display=''; $('#bdeFilter').onchange=()=>{bde=$('#bdeFilter').value;load();};
-    }
-  }catch(e){}
-  load();
-}
-boot();
-/* LIVE: refresh on server push (SSE /api/events) + 60s poll fallback; pause when hidden. */
-(function(){var es,rt;function go(){ if(!document.hidden){ try{ load(); }catch(e){} } }
-  setInterval(go,60000);
-  document.addEventListener('visibilitychange',function(){ if(!document.hidden) go(); });
-  (function s(){ try{ es=new EventSource('/api/events'); es.addEventListener('refresh',go);
-    es.onerror=function(){ if(es&&es.readyState===2&&!rt) rt=setTimeout(function(){rt=null;s();},5000); }; }catch(e){} })();
-})();
+(async function(){try{const me=await api('/api/me');$('#who').textContent=(me.name||me.email||'');}catch(e){}load();
+  // REAL-TIME: refresh every 15s; skip while the tab is hidden or the user is mid-edit (dropdown/input focused).
+  setInterval(function(){if(document.hidden)return;var a=document.activeElement;if(a&&(a.tagName==='SELECT'||a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;load();},15000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)load();});})();
 </script>
+
 <button class="tr-theme-btn" title="Toggle light / dark" aria-label="Toggle theme" onclick="var e=document.documentElement,n=e.getAttribute('data-theme')==='light'?'dark':'light';e.setAttribute('data-theme',n);try{localStorage.setItem('tr-theme-v2',n)}catch(x){};this.textContent=n==='light'?'\u{1F319}':'☀️'">🌙</button>
 
 <nav class="tr-rail" id="trRail" aria-label="Primary navigation"></nav>

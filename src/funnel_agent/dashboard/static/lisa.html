@@ -130,6 +130,7 @@
   .sms{font-size:11px;line-height:1.4;padding:5px 8px;border-radius:8px;color:var(--txt-2);
     background:var(--panel-2,rgba(148,163,184,.10));border:1px solid var(--line,rgba(148,163,184,.18))}
   .sms.inbound{background:rgba(52,211,153,.10);border-color:rgba(52,211,153,.30)}
+  .inb{display:inline-block;font-size:9.5px;font-weight:750;color:#059669;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.35);border-radius:5px;padding:1px 5px;letter-spacing:.03em;vertical-align:middle}
   .sms .smsdir{opacity:.6;margin-right:2px} .sms .smsat{display:block;font-size:9.5px;color:var(--faint);margin-top:2px}
   select.sel{background:var(--panel);color:var(--txt);border:1px solid var(--line-2);border-radius:var(--r1);
     padding:8px 11px;font:inherit;font-weight:550;cursor:pointer}
@@ -449,6 +450,95 @@
   :root[data-theme=light] .tr-rail-brand .fulllogo{filter:none}
   .tr-rail:hover .tr-rail-brand .barsic,.tr-rail:focus-within .tr-rail-brand .barsic{opacity:0}
   .tr-rail:hover .tr-rail-brand .fulllogo,.tr-rail:focus-within .tr-rail-brand .fulllogo{opacity:1}
+  /* ═══ Outbound Intelligence 2.0 — floor strip · rep rail · coach cards · Lisa-4 ═══ */
+  :root{--teal:#2dd4bf;--teal-d:rgba(45,212,191,.14)}
+  .floorstrip{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--card,#151126);
+    border:1px solid rgba(164,147,255,.14);border-radius:14px;padding:10px 16px;margin:0 0 14px;font-size:12.5px}
+  .floorstrip .fs-t{font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--muted,#8b84ad)}
+  .floorstrip b{font-size:15px;font-weight:800}
+  .floorstrip .sep{width:1px;height:18px;background:rgba(164,147,255,.18)}
+  .floorstrip .win{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--muted,#8b84ad);font-size:11.5px}
+  .floorstrip .win .dot{width:7px;height:7px;border-radius:50%;background:var(--warn,#f4b942)}
+  .floorstrip .win.open .dot{background:var(--good,#34d399);box-shadow:0 0 8px rgba(52,211,153,.7)}
+  .replane{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:12px;margin:0 0 18px;align-items:stretch}
+  @media(max-width:1080px){.replane{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:520px){.replane{grid-template-columns:1fr}}
+  .rep{position:relative;display:flex;flex-direction:column;background:var(--card,#151126);border:1.5px solid rgba(164,147,255,.14);border-radius:16px;
+    padding:13px 15px;cursor:pointer;transition:border-color .15s, transform .1s}
+  .rep .rp-pace{margin-top:auto}
+  .rep.all .rp-foot{margin-top:auto;font-size:10px;color:var(--muted,#8b84ad);padding-top:9px}
+  .rep:hover{transform:translateY(-1px)}
+  .rep.sel{border-color:var(--rp,#8b7bf7);box-shadow:0 8px 26px -18px var(--rp,#8b7bf7)}
+  .rep .rp-top{display:flex;align-items:center;gap:8px}
+  .rep .rp-dot{width:9px;height:9px;border-radius:50%;background:var(--faint,#57506e);flex:none}
+  .rep.live .rp-dot{background:var(--good,#34d399);box-shadow:0 0 9px rgba(52,211,153,.8);animation:pulse 1.4s infinite}
+  .rep.paused .rp-dot{background:var(--warn,#f4b942)}
+  @keyframes pulse{50%{opacity:.45}}
+  .rep .rp-name{font-weight:800;font-size:14px}
+  .rep .rp-role{color:var(--muted,#8b84ad);font-size:11px}
+  .rep .rp-camp{display:inline-block;margin-top:7px;font-size:10px;font-weight:700;letter-spacing:.04em;
+    color:var(--rp,#8b7bf7);background:color-mix(in srgb,var(--rp,#8b7bf7) 12%, transparent);
+    border:1px solid color-mix(in srgb,var(--rp,#8b7bf7) 30%, transparent);border-radius:6px;padding:2px 7px}
+  .rep .rp-nums{display:flex;gap:12px;margin-top:9px;font-size:11px;color:var(--muted,#8b84ad)}
+  .rep .rp-nums b{display:block;font-size:16px;color:var(--txt,#efeaff);font-weight:800}
+  .rep .rp-live{margin-top:8px;font-size:11.5px;color:var(--good,#34d399);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rep .rp-nums{margin-top:9px}
+  .rep .rp-pace{margin-top:auto;height:5px;border-radius:3px;background:rgba(164,147,255,.12);overflow:hidden;position:relative}
+  .rep .rp-pace i{position:absolute;inset:0;width:var(--w,0%);background:var(--rp,#8b7bf7);border-radius:3px}
+  .rep .rp-pace u{position:absolute;top:-2px;bottom:-2px;left:var(--m,0%);width:2px;background:rgba(255,255,255,.55);border-radius:1px}
+  .rep .rp-pacet{margin-top:4px;font-size:10px;color:var(--muted,#8b84ad)}
+  .rep .rp-sw{position:absolute;top:11px;right:12px;font-size:10px;font-weight:800;letter-spacing:.05em;border-radius:7px;
+    padding:3px 8px;border:1px solid;cursor:pointer;background:transparent}
+  .rep .rp-sw.on{color:var(--good,#34d399);border-color:rgba(52,211,153,.4)}
+  .rep .rp-sw.off{color:var(--warn,#f4b942);border-color:rgba(244,185,66,.4)}
+  .rep.all .rp-name{font-size:13px}
+  .rep[data-k="lisa1"]{--rp:#8b7bf7}.rep[data-k="lisa4"]{--rp:var(--teal)}.rep[data-k="all"]{--rp:#c9c2ea}
+  /* coach mini-cards + drawer */
+  .recmini{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:10px;margin:0 0 16px}
+  .rc-card{background:var(--card,#151126);border:1px solid rgba(164,147,255,.16);border-left:3px solid var(--warn,#f4b942);
+    border-radius:12px;padding:11px 13px;cursor:pointer;transition:transform .1s}
+  .rc-card:hover{transform:translateY(-1px)}
+  .rc-card .rc-sev{font-size:9.5px;font-weight:800;letter-spacing:.07em;color:var(--warn,#f4b942)}
+  .rc-card .rc-t{font-size:12.5px;font-weight:700;margin:5px 0 3px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .rc-card .rc-m{font-size:10.5px;color:var(--muted,#8b84ad)}
+  .drawer-bg{position:fixed;inset:0;background:rgba(8,5,20,.55);backdrop-filter:blur(2px);z-index:60;display:none}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,94vw);background:#171230;border-left:1px solid rgba(164,147,255,.25);
+    z-index:61;display:none;flex-direction:column;box-shadow:-18px 0 50px -20px #000}
+  .drawer.open,.drawer-bg.open{display:flex}
+  .drawer .dr-h{display:flex;align-items:center;gap:9px;padding:16px 18px;border-bottom:1px solid rgba(164,147,255,.14)}
+  .drawer .dr-h h3{margin:0;font-size:15px}
+  .drawer .dr-x{margin-left:auto;background:none;border:none;color:var(--muted,#8b84ad);font-size:20px;cursor:pointer}
+  .drawer .dr-b{padding:16px 18px;overflow-y:auto;flex:1;font-size:13px;line-height:1.55}
+  .drawer .dr-b ul{padding-left:18px}.drawer .dr-b li{margin:7px 0}
+  .drawer .dr-ev{background:rgba(244,185,66,.08);border:1px solid rgba(244,185,66,.25);border-radius:10px;padding:10px 12px;font-size:12px;margin:12px 0}
+  .drawer .dr-f{display:flex;gap:9px;padding:14px 18px;border-top:1px solid rgba(164,147,255,.14)}
+  /* Lisa 4 build pipeline */
+  #l4sec{display:none;background:var(--card,#151126);border:1px solid rgba(45,212,191,.25);border-radius:16px;padding:15px 17px;margin:0 0 18px}
+  #l4sec .l4h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:11px}
+  #l4sec .pipe{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  #l4sec .pipe .pstage{background:var(--teal-d);border:1px solid rgba(45,212,191,.3);border-radius:9px;padding:6px 11px;font-size:11.5px}
+  #l4sec .pipe .pstage b{font-size:15px;margin-right:4px}
+  #l4sec .pipe .parr{color:var(--faint,#57506e)}
+  #l4sec .bkt{font-size:10.5px;color:var(--muted,#8b84ad);margin-left:auto}
+  #l4sec table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+  #l4sec th{font-size:9.5px;letter-spacing:.07em;color:var(--muted,#8b84ad);text-align:left;padding:5px 8px;border-bottom:1px solid rgba(164,147,255,.12)}
+  #l4sec td{padding:7px 8px;border-bottom:1px solid rgba(164,147,255,.07)}
+  .sitebtn{background:var(--teal-d);border:1px solid rgba(45,212,191,.35);color:var(--teal);border-radius:7px;
+    padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer}
+  .sitemodal-bg{position:fixed;inset:0;background:rgba(5,3,14,.8);z-index:70;display:none;align-items:center;justify-content:center;padding:22px}
+  .sitemodal-bg.open{display:flex}
+  .sitemodal{background:#fff;border-radius:14px;width:min(1100px,96vw);height:min(760px,92vh);display:flex;flex-direction:column;overflow:hidden}
+  .sitemodal .sm-h{display:flex;align-items:center;gap:10px;background:#171230;color:#efeaff;padding:10px 16px;font-size:13px}
+  .sitemodal .sm-h .dr-x{color:#cfc8f2}
+  .sitemodal iframe{flex:1;border:none;width:100%;background:#fff}
+  /* collapsible explainer + agent chip */
+  .sec-head.clps{cursor:pointer;user-select:none}
+  .sec-head.clps .chev{display:inline-block;transition:transform .18s;margin-left:6px;color:var(--muted,#8b84ad)}
+  .sec-head.clps.closed .chev{transform:rotate(-90deg)}
+  .agchip{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.05em;border-radius:5px;padding:1px 5px;
+    vertical-align:middle;margin-right:5px}
+  .agchip.l1{color:#a99bff;background:rgba(139,123,247,.14);border:1px solid rgba(139,123,247,.35)}
+  .agchip.l4{color:var(--teal);background:var(--teal-d);border:1px solid rgba(45,212,191,.35)}
 </style>
 </head>
 <body>
@@ -463,20 +553,34 @@
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
     ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
+    ['/meetings','/meetings','Emma Collins','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/>',2],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
   var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
   var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
-    h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+    h+='<a class="tr-rail-item'+act+(n[4]===2?' tr-sched':n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
   }
   h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
   var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+(function(){var st=document.createElement('style');st.textContent='#trBell{position:fixed;right:16px;bottom:66px;z-index:95;width:40px;height:40px;border-radius:50%;background:var(--panel2,#161c27);border:1px solid var(--line,#222b39);color:var(--txt,#e8edf5);cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(0,0,0,.4);font-size:16px}#trBell.on{display:flex}#trBell .b{position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:10px;font-weight:800;border-radius:10px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;padding:0 4px}#trNotif{position:fixed;right:16px;bottom:112px;z-index:96;width:340px;max-height:420px;overflow:auto;background:var(--panel,#10151e);border:1px solid var(--line,#222b39);border-radius:12px;box-shadow:0 18px 50px -20px rgba(0,0,0,.7);display:none}#trNotif.on{display:block}#trNotif .hd{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line,#222b39);font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase}#trNotif .hd button{background:none;border:0;color:#5b8cff;font:inherit;font-size:11px;cursor:pointer;font-weight:700}#trNotif .it{padding:10px 14px;border-bottom:1px solid var(--line-soft,#1a212c);display:block;text-decoration:none;color:inherit}#trNotif .it:hover{background:var(--panel2,#161c27)}#trNotif .it .k{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}#trNotif .it .k.reply{color:#4ade80}#trNotif .it .k.booking{color:#5b8cff}#trNotif .it .k.autopilot{color:#fbbf24}#trNotif .it b{display:block;font-size:12.5px;margin:2px 0}#trNotif .it span{font-size:11.5px;color:var(--muted,#8b96a6);display:block}#trNotif .emp{padding:22px;text-align:center;color:var(--muted,#8b96a6);font-size:12px}';document.head.appendChild(st);
+var bell=document.createElement('button');bell.id='trBell';bell.title='Notifications';bell.innerHTML='&#128276;<span class="b" style="display:none">0</span>';document.body.appendChild(bell);
+var pan=document.createElement('div');pan.id='trNotif';pan.innerHTML='<div class="hd">Notifications<button id="trNMark">Mark all read</button></div><div id="trNList"><div class="emp">Loading&hellip;</div></div>';document.body.appendChild(pan);
+function escN(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function fdtN(s){try{var d=new Date(s+(String(s).indexOf('Z')<0?'Z':''));return d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}catch(e){return ''}}
+function pull(){fetch('/api/notifications').then(function(r){return r.json()}).then(function(d){if(!d||!d.items)return;if(d.items.length||d.unread){bell.classList.add('on')}var b=bell.querySelector('.b');if(d.unread>0){b.style.display='flex';b.textContent=d.unread>99?'99+':d.unread}else{b.style.display='none'}
+var L=document.getElementById('trNList');L.innerHTML=d.items.length?d.items.map(function(i){return '<a class="it" href="'+escN(i.link||'#')+'"><span class="k '+escN(i.kind)+'">'+escN(i.kind)+'</span><b>'+escN(i.who)+'</b><span>'+escN(i.body)+'</span><span>'+fdtN(i.at)+'</span></a>'}).join(''):'<div class="emp">Nothing yet.</div>';}).catch(function(){})}
+bell.onclick=function(){pan.classList.toggle('on')};
+document.getElementById('trNMark').onclick=function(){fetch('/api/notifications/seen',{method:'POST'}).then(function(){pull()})};
+pull();setInterval(pull,60000);})();
+
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
     if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;
     var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);
@@ -496,6 +600,31 @@
     </div>
   </div>
 
+  <!-- ═══ FLOOR TODAY strip — all agents combined ═══ -->
+  <div class="floorstrip" id="floorstrip">
+    <span class="fs-t">FLOOR TODAY</span>
+    <span><b id="fsCalls">–</b> calls</span><span class="sep"></span>
+    <span><b id="fsConvos">–</b> convos</span><span class="sep"></span>
+    <span><b id="fsBooked">–</b> booked</span><span class="sep"></span>
+    <span><b id="fsCb">–</b> callbacks</span><span class="sep"></span>
+    <span><b id="fsCost">–</b> spend</span>
+    <span class="win" id="fsWin"><span class="dot"></span><span id="fsWinTxt">–</span></span>
+  </div>
+
+  <!-- ═══ REP RAIL — one card per AI agent; click to scope the page ═══ -->
+  <div class="replane" id="replane"></div>
+
+  <!-- ═══ LISA 4 · build pipeline (visible when Lisa 4 / All selected) ═══ -->
+  <div id="l4sec">
+    <div class="l4h"><span class="eyebrow" style="color:var(--teal)">🌐 Lisa 4 · Website reveals — build pipeline</span>
+      <span class="bkt" id="l4bkt"></span></div>
+    <div class="pipe" id="l4pipe"></div>
+    <div id="l4reveals" style="margin-top:10px;font-size:12px"></div>
+    <div class="scroll"><table id="l4sitesT" style="display:none"><thead><tr>
+      <th>Company</th><th>Domain</th><th>Issue</th><th>Status</th><th>Built</th><th>Size</th><th></th>
+    </tr></thead><tbody id="l4sites"></tbody></table></div>
+  </div>
+
   <div class="hero">
     <div class="orbcard">
       <div class="eyebrow">Live voice preview · Lisa 1</div>
@@ -507,6 +636,7 @@
       </div>
       <div class="orblbl" id="orbLbl">Talk to Lisa 1</div>
       <div class="orbsub" id="orbSub">Tap the orb to speak with her live</div>
+      <div class="orbpick" style="margin-top:8px;display:flex;align-items:center;gap:8px;justify-content:center;font-size:12px;color:#b9b1e6"><label for="orbAgent" style="opacity:.8">Agent</label><select id="orbAgent" onchange="orbAgentChanged()" style="background:#1a1533;color:#eee;border:1px solid #3a3560;border-radius:8px;padding:6px 8px;font:inherit;font-size:12px;max-width:240px"></select></div>
       <div class="orbbtns"><button class="btn stop" id="hangBtn" onclick="endCall()" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.8 12.8 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2A19.79 19.79 0 0 1 3.07 8.63"/><line x1="1" y1="1" x2="23" y2="23"/></svg>End call</button></div>
       <div class="voice-meta">
         <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>English (AU)</span>
@@ -534,8 +664,8 @@
 
   <div id="recos"></div>
 
-  <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How the calling system runs</span></div>
-  <div class="flowcard"><div id="flow" class="flow"></div></div>
+  <div class="sec-head clps closed" id="flowHead" onclick="this.classList.toggle('closed');$('flowWrap').style.display=this.classList.contains('closed')?'none':''"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How the calling system runs<span class="chev">▾</span></span></div>
+  <div class="flowcard" id="flowWrap" style="display:none"><div id="flow" class="flow"></div></div>
 
   <div class="sec-head"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M15 20a5 5 0 0 1 7 0"/></svg>Command structure — live floor</span><span class="beat" id="teamBeat"><span class="bd"></span>Auto · every 60s</span></div>
   <div id="system"></div>
@@ -567,7 +697,7 @@
           <button data-d="7d" onclick="setCallDate('7d')">7 days</button>
           <button data-d="all" class="on" onclick="setCallDate('all')">All</button>
         </span>
-        <select id="fOutcome" onchange="renderCalls()" title="Filter by outcome">
+        <select id="fOutcome" onchange="renderCalls();refetchCalls()" title="Filter by outcome">
           <option value="">All outcomes</option>
           <option value="booked">Booked</option>
           <option value="callback_requested">Callback</option>
@@ -598,6 +728,23 @@
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span class="m-ic go" id="roleIc" style="width:40px;height:40px;margin:0"></span><h3 id="roleTitle" style="margin:0"></h3></div>
     <div id="roleBody"></div>
     <div class="modal-btns" style="justify-content:flex-end;margin-top:16px"><button class="btn ghost" onclick="closeRole()">Close</button></div>
+  </div>
+</div>
+
+<!-- Coach-fix drawer -->
+<div class="drawer-bg" id="drawerBg" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="dr-h"><span style="color:var(--warn)">⚙</span><h3 id="drTitle">Recommended fix</h3><button class="dr-x" onclick="closeDrawer()">×</button></div>
+  <div class="dr-b" id="drBody"></div>
+  <div class="dr-f"><button class="btn primary" id="drApprove">✓ Approve &amp; apply</button><button class="btn ghost" id="drDismiss">Dismiss</button></div>
+</div>
+
+<!-- Lisa-4 site preview -->
+<div class="sitemodal-bg" id="siteBg" onclick="if(event.target===this)closeSite()">
+  <div class="sitemodal">
+    <div class="sm-h"><b id="siteTitle">Site preview</b><span id="siteMeta" style="opacity:.7;font-size:11.5px"></span>
+      <button class="dr-x" style="margin-left:auto" onclick="closeSite()">×</button></div>
+    <iframe id="siteFrame" sandbox="allow-same-origin"></iframe>
   </div>
 </div>
 
@@ -668,11 +815,17 @@ async function load(){
     $('dueTxt').innerHTML='<b>'+(s.due_now||0)+'</b> due now · '+(s.daily_target||0)+'/day';
     $('campNote').textContent=s.autodial_enabled?'Lisa is dialing her calendar automatically, within each prospect’s local business hours.':'Calendar is loaded and ready. Auto-dial is OFF — set LISA_AUTODIAL_ENABLED=true to go live.';
 
-    // ---- AI-Coach recommended fixes (approve to apply to the live agent) ----
-    const recos=s.recommendations||[];
-    $('recos').innerHTML=recos.length?recos.map(r=>`<div class="reco"><div class="rh">${svg('coach',1.9)}<span class="eyebrow">AI Sales Coach — recommended fix</span><span class="from">from ${Object.entries(r.from_flags||{}).map(([k,v])=>v+'× '+k.replace(/_/g,' ')).join(', ')||'QA'}</span></div>
-      <ul>${(r.adjustments||[]).map(a=>`<li>${esc(a)}</li>`).join('')}</ul>
-      <div class="racts"><button class="btn primary" onclick="approveReco(${r.id})">✓ Approve &amp; apply</button><button class="btn ghost" onclick="dismissReco(${r.id})">Dismiss</button></div></div>`).join(''):'';
+    // ---- AI-Coach recommended fixes → compact cards; click = drawer with the full fix + evidence ----
+    const recos=s.recommendations||[]; window.__recos=recos;
+    const sevOf=r=>{const n=Object.values(r.from_flags||{}).reduce((a,b)=>a+(+b||0),0);return n>=5?'HIGH':n>=3?'MED':'LOW';};
+    $('recos').innerHTML=recos.length?('<div class="sec-head"><span class="eyebrow">'+svg('coach',1.9)+'AI Sales Coach — '+recos.length+' open fix'+(recos.length>1?'es':'')+' <span class="muted" style="font-weight:400">· click a card for details</span></span></div>'
+      +'<div class="recmini">'+recos.map((r,i)=>{
+        const ev=Object.entries(r.from_flags||{}); const n=ev.reduce((a,[,v])=>a+(+v||0),0);
+        const t=(r.adjustments||[])[0]||'Recommended fix';
+        return `<div class="rc-card" onclick="openDrawer(${i})"><div class="rc-sev">⚠ ${sevOf(r)}</div>
+          <div class="rc-t">${esc(t)}</div>
+          <div class="rc-m">${n?n+' flagged call'+(n>1?'s':''):'QA'} · ${(r.adjustments||[]).length} change${(r.adjustments||[]).length>1?'s':''}</div></div>`;
+      }).join('')+'</div>'):'';
 
     // ---- system pipeline (real sequence) ----
     const pb0=s.playbook||{}, qa0=s.qa||{};
@@ -785,14 +938,27 @@ async function load(){
     // Never rebuild the calls table while a recording is playing — re-rendering would destroy the <audio>
     // element and stop playback partway. Skip this cycle's table refresh until it's paused/ended.
     if([...document.querySelectorAll('.recplay')].some(a=>!a.paused && !a.ended)) return;
-    const d=await jget('/api/lisa/calls?limit=300'); window.__calls=d.calls||[];
+    await fetchCalls();
     renderCalls();
   }catch(e){ $('rows').innerHTML=`<tr><td colspan="9" class="empty">Couldn't load (${esc(e.message||e)})</td></tr>`; }
 }
 
-/* ---- Recent-calls filtering (client-side over the fetched set) ---- */
+/* ---- Recent-calls filtering ----
+   Active filters (date / booked / rep scope) are pushed to the API: at 600+ calls/day the
+   recent-300 window can't cover a full day, so client-only filtering silently dropped the
+   morning's rows (e.g. 2 of today's 3 L4 bookings). The server applies the same either-leg
+   line attribution (from OR to = the Lisa-4 line) and returns ALL rows for the period. */
+async function fetchCalls(){
+  const p=new URLSearchParams({limit:'300'});
+  const f=window.__callFilter||{}; const oc=($('fOutcome')||{}).value||''; const ag=window.__agent||'all';
+  if(f.date==='today'||f.date==='7d')p.set('date',f.date);
+  if(oc==='booked')p.set('booked','1');
+  if(ag==='lisa1'||ag==='lisa4')p.set('agent',ag);
+  const d=await jget('/api/lisa/calls?'+p.toString()); window.__calls=d.calls||[];
+}
+function refetchCalls(){fetchCalls().then(renderCalls).catch(()=>{});}
 window.__callFilter={date:'all'};
-function setCallDate(d){window.__callFilter.date=d;[...document.querySelectorAll('#segDate button')].forEach(b=>b.classList.toggle('on',b.dataset.d===d));renderCalls();}
+function setCallDate(d){window.__callFilter.date=d;[...document.querySelectorAll('#segDate button')].forEach(b=>b.classList.toggle('on',b.dataset.d===d));renderCalls();refetchCalls();}
 function renderCalls(){
   const all=window.__calls||[]; const f=window.__callFilter||{date:'all'};
   const outcome=($('fOutcome')||{}).value||''; const q=(($('fSearch')||{}).value||'').trim().toLowerCase();
@@ -806,7 +972,14 @@ function renderCalls(){
     else if(outcome==='connected'){ if(!['conversation','callback_requested','not_interested','gatekeeper_only'].includes(oc))return false; }
     else if(outcome==='sms'){ if(!(c.audit_token||(c.sms&&c.sms.length)))return false; }
     else if(outcome&&oc!==outcome)return false;
-    if(q){const hay=((c.prospect_name||'')+' '+(c.company_name||'')+' '+(c.domain||'')+' '+(c.dest9||'')).toLowerCase(); if(!hay.includes(q))return false;}
+    if(q){const hay=((c.prospect_name||'')+' '+(c.display_name||c.company_name||'')+' '+(c.domain||'')+' '+(c.dest9||'')).toLowerCase(); if(!hay.includes(q))return false;}
+    // scope to the rep selected in the rail — trust the SERVER's either-leg attribution
+    // (c.agent); raw-number matching drops inbound legs when formatting differs.
+    const ag=window.__agent||'all';
+    if(ag!=='all'){
+      if(c.agent){ if(c.agent!==ag) return false; }
+      else {const nums=agentNums(ag); if(nums.length && !nums.includes(c.from_number) && !nums.includes(c.to_number)) return false;}
+    }
     return true;
   });
   const cc=$('callCount'); if(cc)cc.textContent=rows.length+' of '+all.length;
@@ -823,8 +996,10 @@ function renderCalls(){
       const sms=c.sms||[];
       const smsHtml=sms.length?`<div class="smsthread">${sms.map(m=>`<div class="sms ${esc(m.dir)}"><span class="smsdir">${m.dir==='inbound'?'⬅':'➡'}</span> ${esc(m.body)} <span class="smsat">${esc(m.at||'')}</span></div>`).join('')}</div>`:'';
       const rscell=(audit||smsHtml)?`${audit}${smsHtml}`:'<span class="muted">—</span>';
-      return `<tr><td class="mono muted">${esc(when)}</td>
-        <td>${key?`<a class="plink" href="/prospect/${encodeURIComponent(key)}" target="_blank" title="Open prospect page"><b>${esc(c.prospect_name||'—')}</b> ${svg('extlink',2)}</a>`:`<b>${esc(c.prospect_name||'—')}</b>`}<div class="muted">${esc(c.company_name||c.domain||c.dest9||'')}</div></td>
+      const l4n=agentNums('lisa4'); const isL4=c.agent?c.agent==='lisa4':(l4n.length&&(l4n.includes(c.from_number)||l4n.includes(c.to_number)));
+      const agch=(window.__floor)?`<span class="agchip ${isL4?'l4':'l1'}" title="${isL4?'Lisa 4 · website selling':'Lisa 1 · appointments'}">${isL4?'L4':'L1'}</span>`:'';
+      return `<tr><td class="mono muted">${agch}${esc(when)}</td>
+        <td>${c.inbound?'<span class="inb" title="Prospect called Lisa back (inbound)">↙ inbound</span> ':''}${key?`<a class="plink" href="/prospect/${encodeURIComponent(key)}" target="_blank" title="Open prospect page"><b>${esc(c.prospect_name||'—')}</b> ${svg('extlink',2)}</a>`:`<b>${esc(c.prospect_name||'—')}</b>`}<div class="muted">${esc(c.display_name||c.company_name||c.domain||c.dest9||'')}</div></td>
         <td><span class="oc ${esc(oc)}">${esc(String(oc).replace(/_/g,' '))}</span>${c.asked_if_ai?' <span class="ai">'+svg('mic',2)+'asked AI</span>':''}</td>
         <td>${booked}</td><td class="muted">${esc(c.main_objection||'')}</td>
         <td class="mono muted">${dur(c.duration_ms)}</td><td class="rec-col">${rec}</td>
@@ -927,7 +1102,7 @@ async function startCall(){
   orbState('connecting','Connecting…','Allow microphone access');
   $('hangBtn').style.display='';
   try{
-    const t=await jpost('/api/lisa/webcall',{});
+    const t=await jpost('/api/lisa/webcall',{agent_id:($('orbAgent')&&$('orbAgent').value)||undefined});
     if(!t.access_token) throw new Error(t.error||'no access token');
     if(!rc){ const m=await import('https://esm.sh/retell-client-js-sdk@2'); rc=new m.RetellWebClient();
       rc.on('call_started',()=>{inCall=true;orbState('live','Lisa is on the line','Speak naturally — say hello');});
@@ -940,6 +1115,16 @@ async function startCall(){
   }catch(e){ inCall=false; orbState('','Talk to Lisa 1','Couldn’t start: '+(e.message||e)); $('hangBtn').style.display='none'; }
 }
 function endCall(){ try{ rc&&rc.stopCall(); }catch(_){}; inCall=false; orbState('','Talk to Lisa 1','Tap the orb to speak with her live'); $('hangBtn').style.display='none'; }
+async function loadOrbAgents(){
+  try{
+    const r=await fetch('/api/lisa/agents').then(x=>x.json());
+    const sel=$('orbAgent'); if(!sel||!r.agents||!r.agents.length) return;
+    sel.innerHTML=''; r.agents.forEach(a=>{ const o=document.createElement('option'); o.value=a.agent_id; o.textContent=a.agent_name+(a.is_live?' · LIVE':''); sel.appendChild(o); });
+    orbAgentChanged();
+  }catch(_){}
+}
+function orbAgentChanged(){ if(inCall) endCall(); const sel=$('orbAgent'); const o=sel&&sel.selectedOptions&&sel.selectedOptions[0]; orbState('', o?('Talk to '+o.textContent.replace(' · LIVE','')):'Talk to Lisa 1', 'Tap the orb to speak with her live'); }
+loadOrbAgents();
 
 async function launch(){
   const to=$('toNum').value.trim(); if(!to){$('launchMsg').textContent='Enter a number';return;}
@@ -956,7 +1141,107 @@ async function previewBrief(){
     alert('BRIEF Lisa would be handed:\n\n'+Object.entries(b).map(([k,v])=>k+': '+v).join('\n\n')); }
   catch(e){ alert('Could not build brief: '+(e.message||e)); }
 }
-load(); loadCosts(); setInterval(load,20000); setInterval(loadCosts,300000);
+/* ═══════════ Outbound Intelligence 2.0 — floor strip · rep rail · drawer · Lisa 4 ═══════════ */
+window.__agent='all'; window.__floor=null;
+function agentNums(k){const f=window.__floor; if(!f)return[]; const a=(f.agents||[]).find(x=>x.key===k); return (a&&a.numbers)||[];}
+function fmtMoney(c){return '$'+((+c||0)/100).toFixed(2)}
+
+async function loadFloor(){
+  try{
+    const f=await jget('/api/lisa/floor'); window.__floor=f;
+    // floor strip
+    const t=f.floor_today||{};
+    $('fsCalls').textContent=t.calls||0; $('fsConvos').textContent=t.convos||0;
+    $('fsBooked').textContent=t.booked||0; $('fsCb').textContent=t.callbacks||0;
+    $('fsCost').textContent=fmtMoney(t.cost_cents);
+    const w=$('fsWin'); w.className='win'+(f.in_window?' open':'');
+    $('fsWinTxt').textContent=(f.in_window?'window OPEN · ':'window closed · ')+(f.window||'')+' · '+(f.now_local||'');
+    renderRail(); renderL4();
+  }catch(e){ /* floor is additive — never break the page */ }
+}
+function repCard(a){
+  const t=a.today||{}, live=!!a.inflight, sel=window.__agent===a.key;
+  const st=a.autodial?(live?'live':'idle'):'paused';
+  const pace=(()=>{ // calls today vs target, with a day-elapsed marker
+    const f=window.__floor||{}; if(!a.target) return '';
+    const pct=Math.min(100,Math.round(100*(t.calls||0)/a.target));
+    // day-elapsed marker between 8:30 and 18:00
+    const nowM=(()=>{const m=(f.now_local||'').match(/(\d+):(\d+)/);return m?(+m[1])*60+(+m[2]):null})();
+    const elapsed=nowM==null?0:Math.max(0,Math.min(100,Math.round(100*(nowM-510)/(1080-510))));
+    return `<div class="rp-pace"><i style="--w:${pct}%"></i><u style="--m:${elapsed}%"></u></div>
+      <div class="rp-pacet">${t.calls||0}/${a.target} calls · ${pct>=elapsed?'on pace ✓':'behind pace'}</div>`;})();
+  return `<div class="rep ${st==='live'?'live':(st==='paused'?'paused':'')}${sel?' sel':''}" data-k="${a.key}" onclick="selectAgent('${a.key}')">
+    <button class="rp-sw ${a.autodial?'on':'off'}" onclick="event.stopPropagation();toggleAgentDial('${a.key}',${!a.autodial})">${a.autodial?'● LIVE':'○ OFF'}</button>
+    <div class="rp-top"><span class="rp-dot"></span><div><div class="rp-name">${esc(a.name)}</div><div class="rp-role">${esc(a.role)}</div></div></div>
+    <span class="rp-camp">${esc(a.campaign)}</span>
+    <div class="rp-nums"><span><b>${t.calls||0}</b>calls</span><span><b>${t.convos||0}</b>convos</span><span><b>${t.booked||0}</b>booked</span><span><b>${a.pool||0}</b>pool</span></div>
+    ${live?`<div class="rp-live">📞 ${esc(a.inflight.company_name||a.inflight.to_number||'on a call')} · ${a.inflight.s||0}s</div>`:''}
+    ${pace}</div>`;
+}
+function renderRail(){
+  const f=window.__floor; if(!f)return;
+  const t=f.floor_today||{}, sel=window.__agent==='all';
+  const poolTot=(f.agents||[]).reduce((s,a)=>s+(a.pool||0),0);
+  const nAgents=(f.agents||[]).length;
+  const allCard=`<div class="rep all${sel?' sel':''}" data-k="all" onclick="selectAgent('all')">
+    <div class="rp-top"><span class="rp-dot" style="background:var(--rp)"></span><div><div class="rp-name">ALL</div><div class="rp-role">whole floor</div></div></div>
+    <div class="rp-nums"><span><b>${t.calls||0}</b>calls</span><span><b>${t.convos||0}</b>convos</span><span><b>${t.booked||0}</b>booked</span><span><b>${poolTot.toLocaleString()}</b>pool</span></div>
+    <div class="rp-foot">${nAgents} AI agents · combined floor</div></div>`;
+  $('replane').innerHTML=allCard+(f.agents||[]).map(repCard).join('');
+}
+function selectAgent(k){ window.__agent=k; renderRail(); renderL4(); renderCalls(); refetchCalls(); }
+async function toggleAgentDial(k,on){
+  const url=k==='lisa4'?'/api/lisa4/autodial':(k==='lisa5'?'/api/lisa5/autodial':'/api/lisa/autodial');
+  const nm=k==='lisa4'?'Lisa 4 (website selling)':(k==='lisa5'?'Lisa 5 (growth audit)':'Lisa 1 (appointments)');
+  if(!confirm((on?'Turn ON auto-dial for ':'Turn OFF auto-dial for ')+nm+'?'+(on?' Real Australian businesses will be called.':''))) return;
+  try{ await jpost(url,{on:on}); }catch(e){ alert('Could not toggle: '+(e.message||e)); }
+  loadFloor(); if(k!=='lisa4') load();
+}
+/* Lisa 4 build-pipeline section (visible when lisa4 or all is selected) */
+async function renderL4(){
+  const f=window.__floor; if(!f)return;
+  const a=(f.agents||[]).find(x=>x.key==='lisa4'); const el=$('l4sec'); if(!a||!el)return;
+  const show=(window.__agent==='lisa4'||window.__agent==='all');
+  el.style.display=show?'':'none'; if(!show)return;
+  const p=a.pipeline||{}, b=a.buckets||{};
+  $('l4bkt').textContent=`pool: ${b.critical_issue||0} critical-issue · ${b.no_website||0} no-website`;
+  const stages=[['Reveals booked',p.queued+p.building+p.built||0],['AI designer building',p.building||0],['Sites BUILT ✓',p.built||0]];
+  $('l4pipe').innerHTML=stages.map((x,i)=>`<span class="pstage"><b>${x[1]}</b>${esc(x[0])}</span>`+(i<stages.length-1?'<span class="parr">→</span>':'')).join('')
+    +(p.error?`<span class="pstage" style="border-color:rgba(244,110,90,.4);color:var(--bad)"><b>${p.error}</b>build errors</span>`:'');
+  $('l4reveals').innerHTML=(a.reveals&&a.reveals.length)
+    ? '<b style="font-size:11px;letter-spacing:.05em">UPCOMING REVEALS</b> '+a.reveals.map(r=>`<span class="pstage" style="margin-left:6px">${esc(r.title||'')} · ${esc(r.at_local||'')} ${r.site_status==='built'?'· site ready ✓':''}</span>`).join('')
+    : '<span class="muted">No reveals booked yet — sites get built automatically the moment Lisa 4 books one.</span>';
+  try{
+    const d=await jget('/api/lisa4/sites?limit=25'); const sites=d.sites||[];
+    $('l4sitesT').style.display=sites.length?'':'none';
+    $('l4sites').innerHTML=sites.map(s2=>`<tr><td><b>${esc(s2.company||'—')}</b></td><td class="muted">${esc(s2.domain||'—')}</td>
+      <td class="muted">${esc(s2.issue||'')}</td><td>${esc(s2.status)}</td><td class="muted">${esc(s2.built_local||'—')}</td>
+      <td class="muted">${s2.html_bytes?Math.round(s2.html_bytes/1024)+' KB':'—'}</td>
+      <td>${s2.status==='built'?`<button class="sitebtn" onclick="openSite(${s2.id},'${esc(s2.company||'')}')">👁 Preview</button>`:''}</td></tr>`).join('');
+  }catch(_){}
+}
+function openSite(id,name){ $('siteTitle').textContent=name||'Site preview'; $('siteMeta').textContent='AI-designed · built before the reveal meeting';
+  $('siteFrame').src='/api/lisa4/site/'+id; $('siteBg').classList.add('open'); }
+function closeSite(){ $('siteBg').classList.remove('open'); $('siteFrame').src='about:blank'; }
+/* Coach-fix drawer */
+function openDrawer(i){
+  const r=(window.__recos||[])[i]; if(!r)return;
+  $('drTitle').textContent='Recommended fix';
+  const ev=Object.entries(r.from_flags||{});
+  $('drBody').innerHTML=
+    `<div class="dr-ev"><b>Why the Coach flagged this</b><br>${ev.length?ev.map(([k,v])=>`${v}× <b>${esc(k.replace(/_/g,' '))}</b>`).join(' · '):'QA review pattern'}</div>`
+    +'<b>The fix'+((r.adjustments||[]).length>1?'es':'')+' to apply to the live prompt:</b>'
+    +`<ul>${(r.adjustments||[]).map(a=>`<li>${esc(a)}</li>`).join('')}</ul>`
+    +'<p class="muted" style="font-size:11.5px">Approving updates the agent prompt and republishes — takes effect on the next call.</p>';
+  $('drApprove').onclick=()=>{ closeDrawer(); approveReco(r.id); };
+  $('drDismiss').onclick=()=>{ closeDrawer(); dismissReco(r.id); };
+  $('drawer').classList.add('open'); $('drawerBg').classList.add('open');
+}
+function closeDrawer(){ $('drawer').classList.remove('open'); $('drawerBg').classList.remove('open'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeDrawer(); closeSite(); } });
+
+load(); loadCosts(); loadFloor();
+setInterval(load,20000); setInterval(loadCosts,300000); setInterval(loadFloor,15000);
 </script>
 </body>
 </html>

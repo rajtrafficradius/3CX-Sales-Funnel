@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lisa Data — pool readiness</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#141821; --muted:#5b6472; --line:#e3e7ee;
+    --accent:#3355ff; --ok:#0f9d58; --warn:#e8a13a; --bad:#d64545; --chip:#eef1f6;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0e1116; --panel:#161b22; --ink:#e8ecf3; --muted:#98a2b3; --line:#232b36;
+           --accent:#6f8cff; --ok:#3ecf8e; --warn:#f0b552; --bad:#ff6b6b; --chip:#1c2330; }
+  }
+  :root[data-theme="dark"]{ --bg:#0e1116; --panel:#161b22; --ink:#e8ecf3; --muted:#98a2b3; --line:#232b36; --accent:#6f8cff; --ok:#3ecf8e; --warn:#f0b552; --bad:#ff6b6b; --chip:#1c2330; }
+  :root[data-theme="light"]{ --bg:#f6f7f9; --panel:#fff; --ink:#141821; --muted:#5b6472; --line:#e3e7ee; --accent:#3355ff; --ok:#0f9d58; --warn:#e8a13a; --bad:#d64545; --chip:#eef1f6; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:18px 22px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+  h1{margin:0 0 2px;font-size:18px;font-weight:700;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:12.5px}
+  .wrap{padding:18px 22px;max-width:1400px;margin:0 auto}
+  .tabs{display:inline-flex;gap:2px;background:var(--chip);border-radius:10px;padding:3px;margin-top:12px}
+  .tab{padding:7px 16px;border-radius:8px;border:0;background:transparent;color:var(--muted);font-weight:600;cursor:pointer;font-size:13px}
+  .tab.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .stats{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 15px;min-width:120px}
+  .stat .n{font-size:20px;font-weight:750;font-variant-numeric:tabular-nums}
+  .stat .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+  .stat .pct{font-size:12px;font-weight:700}
+  .pct.ok{color:var(--ok)} .pct.warn{color:var(--warn)} .pct.bad{color:var(--bad)}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0 14px}
+  input,select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px}
+  input[type=search]{min-width:230px}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:1000px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{position:sticky;top:0;background:var(--panel);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);z-index:1}
+  tr:last-child td{border-bottom:0}
+  .spoken{font-weight:700}
+  .spoken.empty{color:var(--bad);font-weight:600;font-style:italic}
+  .mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .miss{color:var(--bad);font-weight:600}
+  .yes{color:var(--ok)}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;background:var(--chip)}
+  .pill.no_website{color:#c26a00;background:rgba(232,161,58,.16)}
+  .pill.critical_issue{color:var(--bad);background:rgba(214,69,69,.14)}
+  .pill.upgrade{color:var(--accent);background:rgba(51,85,255,.12)}
+  .issue{max-width:320px;color:var(--muted)}
+  .pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;color:var(--muted);font-size:12.5px}
+  .pager button{background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer}
+  .pager button:disabled{opacity:.4;cursor:default}
+  .empty-note{padding:26px;text-align:center;color:var(--muted)}
+  a.back{color:var(--accent);text-decoration:none;font-size:12.5px}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/database">← Database</a>
+  <h1>Lisa Data — pool readiness</h1>
+  <div class="sub">Exactly what each caller will work from: the <b>spoken name</b> Lisa actually says, the finding, decision-maker (RPC) coverage, and where data is missing.</div>
+  <div class="tabs">
+    <button class="tab on" data-agent="lisa4">Lisa 4 · no/broken website</button>
+    <button class="tab" data-agent="lisa5">Lisa 5 · has website + reviews</button>
+  </div>
+</header>
+<div class="wrap">
+  <div class="stats" id="stats"></div>
+  <div class="controls">
+    <input type="search" id="search" placeholder="Search company / domain / number…">
+    <select id="bucket"><option value="">All buckets</option></select>
+    <select id="gap">
+      <option value="">No gap filter</option>
+      <option value="no_issue">Missing finding</option>
+      <option value="no_email">Missing email</option>
+      <option value="no_domain">Missing domain</option>
+      <option value="no_rpc">Missing RPC (no decision-maker)</option>
+    </select>
+    <span id="count" class="sub"></span>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>Spoken name (what Lisa says)</th><th>Registered name</th><th>Mobile</th>
+        <th>Domain</th><th>Bucket</th><th>Finding (issue)</th><th>Email</th><th>Opens with (owner name)</th><th>Role</th><th>Company context (free Apollo)</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty-note" id="emptynote" style="display:none">No rows.</div>
+  </div>
+  <div class="pager">
+    <span id="pageinfo"></span>
+    <button id="prev">‹ Prev</button>
+    <button id="next">Next ›</button>
+  </div>
+</div>
+<script>
+const S={agent:'lisa4',search:'',bucket:'',gap:'',offset:0,limit:100,total:0};
+const $=id=>document.getElementById(id);
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function pctClass(p){return p>=80?'ok':p>=40?'warn':'bad';}
+function statCard(n,total,label){const p=total?Math.round(100*n/total):0;return `<div class="stat"><div class="n">${n.toLocaleString()}</div><div class="l">${label}</div><div class="pct ${pctClass(p)}">${p}%</div></div>`;}
+async function load(){
+  const qs=new URLSearchParams({agent:S.agent,search:S.search,bucket:S.bucket,gap:S.gap,offset:S.offset,limit:S.limit});
+  $('rows').innerHTML='<tr><td colspan="8" class="empty-note">Loading…</td></tr>';
+  let d;
+  try{ d=await (await fetch('/api/lisa/pool?'+qs)).json(); }
+  catch(e){ $('rows').innerHTML='<tr><td colspan="8" class="empty-note">Error loading.</td></tr>'; return; }
+  S.total=d.total;
+  const st=d.stats||{};
+  $('stats').innerHTML=[
+    `<div class="stat"><div class="n">${(st.total||0).toLocaleString()}</div><div class="l">Total in pool</div></div>`,
+    statCard(st.has_mobile||0,st.total,'Mobile'),
+    statCard(st.has_issue||0,st.total,'Has finding'),
+    statCard(st.has_domain||0,st.total,'Has domain'),
+    statCard(st.has_email||0,st.total,'Has email'),
+    statCard(st.has_rpc||0,st.total,'Has RPC (decision-maker)'),
+  ].join('');
+  // bucket dropdown (once)
+  const bsel=$('bucket');
+  if(bsel.options.length<=1 && d.buckets){ for(const [k,v] of Object.entries(d.buckets)){ const o=document.createElement('option'); o.value=k; o.textContent=`${k} (${v})`; bsel.appendChild(o);} }
+  const rows=d.rows||[];
+  $('emptynote').style.display=rows.length?'none':'block';
+  $('rows').innerHTML=rows.map(r=>{
+    const spoken=r.spoken_name||'';
+    const dm=r.spoken_owner?`<span class="yes">${esc(r.spoken_owner)}</span>${r.dm_email?'<br><span class="mono">'+esc(r.dm_email)+'</span>':''}`:'<span class="miss">— the owner —</span>';
+    return `<tr>
+      <td class="spoken ${spoken?'':'empty'}">${spoken?esc(spoken):'⚠ nameless ("the owner")'}</td>
+      <td>${esc(r.company)}</td>
+      <td class="mono">${esc(r.dest_number||r.dest9)}</td>
+      <td class="mono">${r.domain?esc(r.domain):'<span class="miss">—</span>'}</td>
+      <td><span class="pill ${esc(r.bucket)}">${esc(r.bucket)}</span></td>
+      <td class="issue">${r.issue?esc(r.issue):'<span class="miss">— missing —</span>'}</td>
+      <td class="mono">${r.email?esc(r.email):'<span class="miss">—</span>'}</td>
+      <td>${dm}${r.linkedin?' <a href="'+esc(r.linkedin)+'" target="_blank" style="color:var(--accent);font-size:11px">in</a>':''}</td>
+      <td>${r.role?'<span class="pill upgrade">'+esc(r.role)+'</span>':'<span class="miss">—</span>'}</td>
+      <td class="issue">${r.context?esc(r.context):'<span class="miss">—</span>'}</td>
+    </tr>`;}).join('');
+  const from=S.total?S.offset+1:0, to=Math.min(S.offset+S.limit,S.total);
+  $('pageinfo').textContent=`${from}–${to} of ${S.total.toLocaleString()}`;
+  $('count').textContent=`${S.total.toLocaleString()} rows match`;
+  $('prev').disabled=S.offset<=0; $('next').disabled=to>=S.total;
+}
+function reload(){S.offset=0;load();}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on'); S.agent=t.dataset.agent; $('bucket').innerHTML='<option value="">All buckets</option>'; S.bucket=''; reload();
+});
+let deb; $('search').oninput=e=>{clearTimeout(deb);deb=setTimeout(()=>{S.search=e.target.value.trim();reload();},300);};
+$('bucket').onchange=e=>{S.bucket=e.target.value;reload();};
+$('gap').onchange=e=>{S.gap=e.target.value;reload();};
+$('prev').onclick=()=>{S.offset=Math.max(0,S.offset-S.limit);load();};
+$('next').onclick=()=>{S.offset+=S.limit;load();};
+load();
+</script>
+</body>
+</html>

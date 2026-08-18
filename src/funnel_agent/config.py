@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model_cheap: str = ""
     llm_model_strong: str = ""
+    anthropic_api_key: str = ""                   # Claude API — powers the Lisa-4 AI website designer
+    google_places_api_key: str = ""               # GOOGLE_PLACES_API_KEY — Lisa-4's Maps prospect sweep
+    lisa4_designer_model: str = "claude-sonnet-4-5"  # Claude model the AI designer uses to build the site
+    lisa_sms_model: str = "claude-opus-4-8"       # Claude model the inbound-SMS auto-responder composes replies with
     confidence_threshold: float = Field(default=0.7, ge=0, le=1)
     llm_max_transcript_chars: int = 24000
     classify_workers: int = 8  # parallel LLM calls during classification
@@ -113,6 +117,22 @@ class Settings(BaseSettings):
     retellai_api_key: str = ""
     lisa_enabled: bool = False                    # master switch for outbound Lisa calls
     lisa_agent_id: str = "agent_a2a482e7f3bc1fad2fde7360d3"
+    lisa4_agent_id: str = "agent_b24cb23e82cdbea2caa25a4d41"  # Lisa 4 — website-selling agent (pre-built reveal)
+    lisa4_pool_size: int = 500                    # reserved Lisa-4 prospect pool (no-website + critical-issue)
+    lisa4_use_dnb_backfill: bool = False          # LISA4_USE_DNB_BACKFILL — when FALSE (default) reserve_lisa4_pool fills
+    #                                               from gmaps stock ONLY; the D&B/raghav critical-issue + no-website
+    #                                               backfill steps are skipped (D&B reserved for Lisa-1/human calling)
+    lisa4_from_numbers: str = "+61468030256"      # Lisa 4's caller ID (Twilio) — must be imported into Retell to dial
+    lisa4_autodial_enabled: bool = False          # master gate for Lisa-4 auto-dialing (env fallback; DB toggle wins)
+    lisa4_daily_target: int = 200                 # Lisa-4 calls per working day
+    lisa4_per_number_daily_cap: int = 150         # max outbound calls per caller-ID per day (rotation pool hygiene)
+    # --- Lisa-5: a second isolated cold-caller (cloned from Lisa-4's dialer; reads lisa5_pool). OFF by default. ---
+    lisa5_agent_id: str = ""                       # Lisa 5 — Retell agent id (empty until configured)
+    lisa5_from_numbers: str = ""                   # Lisa 5's caller ID(s) (Twilio, CSV E.164) — must be imported into Retell to dial
+    lisa5_autodial_enabled: bool = False          # master gate for Lisa-5 auto-dialing (env fallback; DB toggle wins)
+    lisa5_daily_target: int = 200                 # Lisa-5 calls per working day
+    lisa5_per_number_daily_cap: int = 150         # max outbound calls per caller-ID per day (rotation pool hygiene)
+    lisa_orb_agents: str = ""   # orb A/B picker whitelist "agent_id|Label,agent_id|Label" (empty = list all agents)
     lisa_from_numbers: str = ""                   # CSV of Lisa's Retell-registered caller numbers (E.164)
     lisa_session_minutes: int = 45               # length of the booked strategy session
     lisa_webhook_token: str = ""                 # shared secret guarding /api/lisa/postcall
@@ -134,11 +154,16 @@ class Settings(BaseSettings):
     lisa_daily_target: int = 50                  # calls Lisa places per working day
     lisa_retry_cadence_days: int = 3             # days between retry attempts on a no-answer
     lisa_retry_max_attempts: int = 4             # stop retrying after this many attempts
+    reveal_closer_names: str = "Manoj"  # human closer(s) who run Lisa-4 website reveals via Aircall — auto reveal-tracking (REVEAL_CLOSER_NAMES)
+    booking_qualifier_names: str = "Ben, Manoj"  # BDMs whose answered calls to BOOKED prospects auto-note the CRM (qualification tracking; BOOKING_QUALIFIER_NAMES)
     lisa_double_tap_hours: int = 2               # a no-answer gets one quick same-day retry after this many hours
     lisa_call_window_start: int = 9              # only auto-dial between these local hours (business hours)
+    lisa_call_window_start_min: int = 0          # minute past the start HOUR to actually open (e.g. 30 => 8:30)
     lisa_call_window_end: int = 17
     lisa_max_concurrent: int = 1                 # natural dialing: ONE call at a time (no concurrency)
     lisa_min_call_gap_seconds: int = 0           # min gap between calls; 0 = auto (window / daily_target, ~8h/50=~9.6min)
+    lisa_hos_heavy_interval_s: int = 180         # throttle heavy orchestration (reserve/coach/QA/enrich/schedule) to ~every N s so each 60s cycle is free to DIAL
+    lisa_dm_resolve_per_cycle: int = 12          # DM resolves per heavy cycle (kept small so the heavy pass stays fast; dial-order stays ahead of dialing)
     lisa_autodial_enabled: bool = False          # MASTER GATE — no call fires until this is true
     lisa_coaching_enabled: bool = True           # AI Sales Coach: learn playbook from won/lost + QA each call
     lisa_audit_before_call: bool = True          # run the Digital-Marketing-Insight audit before each call (cached)
@@ -160,6 +185,8 @@ class Settings(BaseSettings):
     # credits). apollo_enabled is a hard kill-switch; apollo_max_per_day caps lookups.
     apollo_enabled: bool = True
     apollo_max_per_day: int = 500
+    apollo_paid_reveal: bool = False   # PAID: reveal top-DM email(sync)+phone(async) per prospect via domain (APOLLO_PAID_REVEAL)
+    apollo_reveal_max_per_day: int = 300   # hard cap on paid reveals/day (credit safety)
     enrich_missing: bool = True      # run the enrich step in the pipeline
     enrich_workers: int = 4          # parallel domain lookups
     enrich_refresh_days: int = 30    # re-fetch a cached domain only if older than this
@@ -219,7 +246,7 @@ class Settings(BaseSettings):
     # Paced Apollo decision-maker (people) fill for running-ads prospects with missing/stale DMs.
     # Apollo rate-limits bursts, so a few per cycle (sequential, oldest-attempt first) fills the
     # gap over time from the always-on loop (fresh budget vs a one-off bulk run). 0 disables it.
-    apollo_people_trickle_per_cycle: int = 6
+    apollo_people_trickle_per_cycle: int = 12   # paid DM reveals per heavy cycle (throttled ~3min); daily cap still applies
 
     # GUARANTEE the fresh running-ads pool is fully enriched: each cycle, top up a few confirmed-ads
     # prospects that are still missing a free tab (website / Apollo org / business intel). Complements
@@ -307,6 +334,22 @@ class Settings(BaseSettings):
     whatsapp_tpl_reminder: str = "meeting_reminder"     # +2h: authority/FOMO + confirm
     whatsapp_reschedule_url: str = ""                   # link sent if they don't confirm
 
+    # --- Emma Collins (AI staff #3 — Meeting Scheduler) ---
+    # Who may open Emma's console + APIs BESIDES admins (comma-separated login emails).
+    # Admins always have access; this allow-list adds named non-admin users (Kiran is the
+    # approver — NOTHING sends without a human clicking Approve & schedule).
+    scheduler_users: str = ("kiran@trafficradius.com.au,vysakh@trafficradius.com.au,"
+                            "raj@trafficradius.com.au")
+    # Microsoft 365 / Graph app-only credentials for SENDING invites from the scheduler
+    # mailbox (Emma Collins). The full Graph client is already built (emma.py) — these 4 env
+    # values are ALL that's needed to go live. Until then approvals queue in emma_meetings as
+    # 'approved-awaiting-creds' and are sent automatically by emma_tick when creds land.
+    ms_tenant_id: str = ""        # MS_TENANT_ID
+    ms_client_id: str = ""        # MS_CLIENT_ID
+    ms_client_secret: str = ""    # MS_CLIENT_SECRET
+    scheduler_mailbox: str = ""   # SCHEDULER_MAILBOX — e.g. emma.collins@trafficradius.com.au
+    emma_default_duration_min: int = 45   # default meeting length for Emma's invites
+
     # --- Report email (optional) ---
     smtp_host: str = ""
     smtp_port: int = 587
@@ -369,6 +412,34 @@ class Settings(BaseSettings):
     def lisa_numbers(self) -> list[str]:
         """Lisa's Retell-registered caller numbers (E.164), rotated across calls. From LISA_FROM_NUMBERS."""
         return _csv(self.lisa_from_numbers)
+
+    @property
+    def lisa4_numbers(self) -> list[str]:
+        """Lisa 4's caller number(s) (E.164) — isolated from Lisa-1. From LISA4_FROM_NUMBERS."""
+        return _csv(self.lisa4_from_numbers)
+
+    @property
+    def lisa5_numbers(self) -> list[str]:
+        """Lisa 5's caller number(s) (E.164) — isolated from Lisa-1/4. From LISA5_FROM_NUMBERS."""
+        return _csv(self.lisa5_from_numbers)
+
+    @property
+    def scheduler_user_emails(self) -> list[str]:
+        """Lower-cased login emails allowed into Emma Collins' console (besides admins).
+        From SCHEDULER_USERS (CSV; default kiran@ + vysakh@ + raj@trafficradius.com.au)."""
+        return [e.lower() for e in _csv(self.scheduler_users)]
+
+    @property
+    def graph_configured(self) -> bool:
+        """True once all Microsoft Graph credentials for invite-sending are present."""
+        return bool(self.ms_tenant_id and self.ms_client_id
+                    and self.ms_client_secret and self.scheduler_mailbox)
+
+    @property
+    def reveal_closers(self) -> list[str]:
+        """Human closer(s) who run Lisa-4 website reveals (Aircall). Used to auto-mark booked reveals
+        'revealed' in the CRM when they call the prospect. From REVEAL_CLOSER_NAMES."""
+        return _csv(self.reveal_closer_names)
 
     @property
     def lisa_sms_number_list(self) -> list[str]:

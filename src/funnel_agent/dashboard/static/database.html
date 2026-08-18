@@ -65,6 +65,11 @@
   .fgroup{border-top:1px solid var(--line-soft);padding-top:var(--s4)}
   .fgroup:first-child{border-top:0;padding-top:0}
   .fgroup-head{font-size:var(--t-eyebrow);text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:700;margin-bottom:10px}
+  .advbtn{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);font:inherit;font-size:12px;font-weight:700;padding:6px 12px;cursor:pointer}
+  .advbtn:hover{color:var(--txt);border-color:var(--faint)}
+  .advcount{display:inline-flex;align-items:center;justify-content:center;background:#5b8cff;color:#fff;border-radius:9px;min-width:18px;height:18px;padding:0 5px;font-size:10.5px;font-weight:800}
+  #advWrap{display:none;flex-direction:column;gap:var(--s4)}
+  #advWrap.on{display:flex}
   .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:var(--s3)}
   /* ---- inputs ---- */
   input,select{background:var(--panel3);color:var(--txt);border:1px solid var(--line2);border-radius:var(--r1);padding:9px 12px;font:inherit;font-size:var(--t-body);transition:border-color .12s,box-shadow .12s}
@@ -235,9 +240,9 @@
     </div>
 
     <div class="fgroups">
-      <!-- Firmographics: who the company is -->
+      <!-- Primary: the filters used every day. Everything else lives behind "Advanced". -->
       <div class="fgroup">
-        <div class="fgroup-head">Firmographics</div>
+        <div class="fgroup-head">Quick filters</div>
         <div class="fgrid">
           <div class="field">
             <label for="source">Data source</label>
@@ -246,6 +251,37 @@
               <option value="raghav">Raghav (D&amp;B)</option>
               <option value="raven">Raven</option>
               <option value="3cx_calls">3CX calls</option>
+              <option value="gmaps">Google Maps</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="called">Called today</label>
+            <select id="called">
+              <option value="">Not filtered</option>
+              <option value="lisa_today">📞 Called today — Lisa (both lines)</option>
+              <option value="lisa4_today">🌐 Called today — Lisa 4 · websites</option>
+              <option value="lisa1_today">📈 Called today — Lisa 1 · marketing</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pool">Calling pool</label>
+            <select id="pool">
+              <option value="">Calling pool: any</option>
+              <option value="lisa4">🌐 In Lisa-4 pool (websites)</option>
+              <option value="lisa5">📞 In Lisa-5 pool</option>
+              <option value="none">In neither pool</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="paidAds">Paid ads</label>
+            <select id="paidAds">
+              <option value="">All</option>
+              <option value="google">🎯 Running Google Ads (Transparency · confirmed)</option>
+              <option value="meta">📘 Has Meta pixel</option>
+              <option value="both">Google + Meta</option>
+              <option value="either">Any paid ads</option>
+              <option value="none">No paid ads (scanned)</option>
+              <option value="unscanned">Not scanned yet</option>
             </select>
           </div>
           <div class="field">
@@ -260,20 +296,31 @@
             </select>
           </div>
           <div class="field">
-            <label>Custom revenue range ($M)</label>
-            <div style="display:flex;gap:6px;align-items:center">
-              <input id="revMin" type="number" min="0" step="0.1" placeholder="min" style="width:100%" />
-              <span class="muted" style="font-size:var(--t-body)">–</span>
-              <input id="revMax" type="number" min="0" step="0.1" placeholder="max" style="width:100%" />
-            </div>
-          </div>
-          <div class="field">
             <label for="industry">Industry</label>
             <input id="industry" type="search" placeholder="e.g. Retail…" autocomplete="off" />
           </div>
           <div class="field">
             <label for="state">State / location</label>
             <input id="state" type="search" placeholder="e.g. NSW…" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <button type="button" id="advToggle" class="advbtn">Advanced filters
+        <span id="advCount" class="advcount" style="display:none">0</span> <span id="advArrow">▾</span></button>
+
+      <div id="advWrap">
+      <!-- Firmographics: fine-grained revenue -->
+      <div class="fgroup">
+        <div class="fgroup-head">Firmographics</div>
+        <div class="fgrid">
+          <div class="field">
+            <label>Custom revenue range ($M)</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="revMin" type="number" min="0" step="0.1" placeholder="min" style="width:100%" />
+              <span class="muted" style="font-size:var(--t-body)">–</span>
+              <input id="revMax" type="number" min="0" step="0.1" placeholder="max" style="width:100%" />
+            </div>
           </div>
         </div>
       </div>
@@ -347,22 +394,10 @@
         </div>
       </div>
 
-      <!-- Paid advertising: Google Transparency is the primary confirmation -->
+      <!-- Paid advertising deep-dive: Transparency state + tag-level signals -->
       <div class="fgroup">
-        <div class="fgroup-head">Paid advertising</div>
+        <div class="fgroup-head">Paid advertising · deep dive</div>
         <div class="fgrid">
-          <div class="field">
-            <label for="paidAds">Paid ads</label>
-            <select id="paidAds">
-              <option value="">All</option>
-              <option value="google">🎯 Running Google Ads (Transparency · confirmed)</option>
-              <option value="meta">📘 Has Meta pixel</option>
-              <option value="both">Google + Meta</option>
-              <option value="either">Any paid ads</option>
-              <option value="none">No paid ads (scanned)</option>
-              <option value="unscanned">Not scanned yet</option>
-            </select>
-          </div>
           <div class="field">
             <label for="transparency">Google Ads Transparency</label>
             <select id="transparency">
@@ -386,6 +421,7 @@
           </div>
         </div>
       </div>
+      </div><!-- /advWrap -->
     </div>
   </section>
 
@@ -403,9 +439,11 @@
         <th class="sortable" data-sort="location">Location</th>
         <th class="num sortable" data-sort="businesses">Businesses</th><th class="num sortable" data-sort="revenue">Total revenue</th>
         <th class="num sortable" data-sort="employees">Employees</th><th class="num sortable" data-sort="contacts">Contacts</th>
-        <th class="sortable" data-sort="phone">Phone</th><th class="sortable" data-sort="enriched">Enriched</th>
+        <th class="sortable" data-sort="phone">Phone</th>
+        <th>Calling pool</th>
+        <th>Contact &middot; name / mobile / email</th><th class="sortable" data-sort="enriched">Enriched</th>
       </tr></thead>
-      <tbody id="rows"><tr><td colspan="13" class="muted">Loading…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="15" class="muted">Loading…</td></tr></tbody>
     </table>
   </div>
   <div class="pager">
@@ -430,6 +468,8 @@ const COV=[['scanned','✅ Scanned'],['transparency','🔭 Transparency checked'
 const COVLBL=Object.fromEntries(COV);
 const PA_LBL={google:'🎯 Running Google Ads',meta:'📘 Has Meta pixel',both:'Google + Meta',
               either:'Any paid ads',none:'No paid ads',unscanned:'Not scanned',yes:'Any paid ads',no:'No paid ads'};
+const CALLED_LBL={lisa_today:'📞 Called today · Lisa (both)',lisa4_today:'🌐 Called today · Lisa 4',lisa1_today:'📈 Called today · Lisa 1'};
+const POOL_LBL={lisa4:'🌐 In Lisa-4 pool',lisa5:'📞 In Lisa-5 pool',none:'In neither pool'};
 const TRANSP_LBL={checked:'Transparency checked',running:'Confirmed running ads',not_running:'Checked · not running'};
 const TRK_LBL={google_ads:'Google Ads tag',meta_pixel:'Meta Pixel',gtm:'GTM',ga4:'GA4',bing:'Bing',tiktok:'TikTok',linkedin:'LinkedIn'};
 const REV_LBL={lt1:'< $1M',['1-10']:'$1M–$10M',['10-50']:'$10M–$50M',['50-100']:'$50M–$100M',['100up']:'$100M+'};
@@ -446,7 +486,8 @@ function curFilters(){
           industry:$('#industry').value.trim(), state:$('#state').value.trim(),
           website:$('#website').value, multilocation:$('#multiloc').value, agency:$('#agency').value,
           pipeline:$('#pipeline').value, p4sub:$('#p4sub').value,
-          rev_min:$('#revMin').value.trim(), rev_max:$('#revMax').value.trim()};
+          rev_min:$('#revMin').value.trim(), rev_max:$('#revMax').value.trim(),
+          called:$('#called').value, pool:$('#pool').value};
 }
 function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComponent(f.source)}`
   +`&enriched=${encodeURIComponent(f.enriched)}&paid_ads=${encodeURIComponent(f.paid_ads)}`
@@ -456,7 +497,8 @@ function qs(f){ return `search=${encodeURIComponent(f.q)}&source=${encodeURIComp
   +`&website=${encodeURIComponent(f.website)}`
   +`&multilocation=${encodeURIComponent(f.multilocation)}&agency=${encodeURIComponent(f.agency)}`
   +`&pipeline=${encodeURIComponent(f.pipeline)}&p4sub=${encodeURIComponent(f.p4sub)}`
-  +`&rev_min=${encodeURIComponent(f.rev_min)}&rev_max=${encodeURIComponent(f.rev_max)}`; }
+  +`&rev_min=${encodeURIComponent(f.rev_min)}&rev_max=${encodeURIComponent(f.rev_max)}`
+  +`&called=${encodeURIComponent(f.called)}&pool=${encodeURIComponent(f.pool)}`; }
 
 function statCard(n,l){ return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
 function covCard(key,l,n){
@@ -499,6 +541,8 @@ function renderResult(){
   if(f.agency) _pills.push([(f.agency==='yes'?'Has an agency':'No agency'), ()=>{$('#agency').value='';}]);
   if(f.pipeline) _pills.push([(PIPE_LBL[f.pipeline]||f.pipeline), ()=>{$('#pipeline').value='';}]);
   if(f.p4sub) _pills.push([(P4SUB_LBL[f.p4sub]||f.p4sub), ()=>{$('#p4sub').value='';}]);
+  if(f.called) _pills.push([(CALLED_LBL[f.called]||f.called), ()=>{$('#called').value='';}]);
+  if(f.pool) _pills.push([(POOL_LBL[f.pool]||f.pool), ()=>{$('#pool').value='';}]);
   if(f.paid_ads) _pills.push([(PA_LBL[f.paid_ads]||f.paid_ads), ()=>{$('#paidAds').value='';}]);
   if(f.transparency) _pills.push([(TRANSP_LBL[f.transparency]||f.transparency), ()=>{$('#transparency').value='';}]);
   if(f.revenue) _pills.push([(REV_LBL[f.revenue]||f.revenue), ()=>{$('#revenue').value='';}]);
@@ -516,8 +560,8 @@ function renderResult(){
 }
 function clearPill(i){ const p=_pills[i]; if(p){ clearTimeout(searchTimer); p[1](); offset=0; syncTrkChips(); loadRows(); loadStats(); } }
 function clearAll(){ clearTimeout(searchTimer);
-  ['#search','#source','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency','#pipeline','#p4sub','#revMin','#revMax'].forEach(s=>$(s).value='');
-  cov.clear(); trk.clear(); syncTrkChips(); offset=0; loadRows(); loadStats(); }
+  ['#search','#source','#called','#pool','#enriched','#paidAds','#revenue','#transparency','#industry','#state','#website','#multiloc','#agency','#pipeline','#p4sub','#revMin','#revMax'].forEach(s=>$(s).value='');
+  cov.clear(); trk.clear(); syncTrkChips(); offset=0; loadRows(); loadStats(); syncAdvCount(); }
 
 // Revenue stored in millions USD; show as $X.XM / $X.XB.
 function fmtRev(m){
@@ -536,10 +580,39 @@ function paidAdsCell(r){
   if(r.scanned) return '<span class="muted" title="not transparency-checked yet">·</span>';
   return '<span class="muted" title="website not scanned yet">·</span>';
 }
-const SRC_LABEL={raghav:'Raghav (D&B)',raven:'Raven','3cx_calls':'3CX calls',dnb_wholesale:'Raghav (D&B)',given_data:'Uploaded'};
+const SRC_LABEL={raghav:'Raghav (D&B)',raven:'Raven','3cx_calls':'3CX calls',dnb_wholesale:'Raghav (D&B)',given_data:'Uploaded',gmaps:'Google Maps'};
 function sourcesCell(s){
   if(!s) return '<span class="muted">—</span>';
   return String(s).split(',').map(x=>`<span class="pill" style="background:var(--chip);font-size:11px">${esc(SRC_LABEL[x]||x)}</span>`).join(' ');
+}
+// Which outbound calling pool the prospect sits in (matched on last-9), + a mobile badge and
+// Google review count when we have them. For a domain row these roll up across its businesses.
+function poolCell(r){
+  const tags=[];
+  if(r.in_lisa4_pool) tags.push('<span class="pill" style="background:rgba(91,140,255,.16);color:#7cb0ff" title="In the Lisa-4 (websites) calling pool">🌐 Lisa 4</span>');
+  if(r.in_lisa5_pool) tags.push('<span class="pill" style="background:rgba(168,85,247,.16);color:#c79bf7" title="In the Lisa-5 calling pool">📞 Lisa 5</span>');
+  if(!tags.length) tags.push('<span class="muted">—</span>');
+  const meta=[];
+  if(r.is_mobile) meta.push('<span class="pill ok" style="font-size:9px" title="Has a mobile number">📱 mobile</span>');
+  if(r.review_count) meta.push(`<span class="muted" style="font-size:10px" title="Google reviews">★ ${fmtN(r.review_count)}</span>`);
+  return `<div style="display:flex;flex-direction:column;gap:3px"><span>${tags.join(' ')}</span>${meta.length?`<span style="display:flex;gap:6px;align-items:center">${meta.join('')}</span>`:''}</div>`;
+}
+function contactCell(r){
+  const bits=[];
+  // Prefer the ACTUAL dialed number + call-time contact (called-today view); fall back to the
+  // resolved decision-maker (lisa_dm) for the general view.
+  const nm = r.dm_name || r.called_contact_name || r.called_name;
+  if(nm) bits.push(`<b>${esc(nm)}</b>${r.dm_title?` <span class="muted" style="font-size:10px">${esc(r.dm_title)}</span>`:''}`);
+  const ph = r.dialed_number || r.dm_phone;
+  if(ph){
+    const d=String(ph).replace(/[^0-9]/g,'').replace(/^61/,'0');
+    const mob=/^04/.test(d);
+    const tag = r.dialed_number ? (mob?'📞 dialed':'📞 dialed') : '';
+    bits.push(`<span class="dom">${mob?'📱':'☎'} ${esc(ph)}</span> <span class="pill ${mob?'ok':'none'}" style="font-size:9px">${mob?'mobile':'landline'}</span>${r.dialed_number?' <span class="muted" style="font-size:9px">dialed</span>':''}`);
+  }
+  const em = r.dm_email || r.called_email;
+  if(em) bits.push(`<span class="muted" style="font-size:11px">✉ ${esc(em)}</span>`);
+  return bits.length?`<div style="display:flex;flex-direction:column;gap:2px;max-width:230px">${bits.join('')}</div>`:'<span class="muted">—</span>';
 }
 function rowHtml(r){
   const enr = r.enriched?'<span class="pill ok">enriched</span>':'<span class="pill none">—</span>';
@@ -560,6 +633,8 @@ function rowHtml(r){
     <td class="num">${fmtN(r.employees)}</td>
     <td class="num">${fmtN(r.contacts)}</td>
     <td>${esc(r.phone||'—')}</td>
+    <td>${poolCell(r)}</td>
+    <td>${contactCell(r)}</td>
     <td>${enr}</td>
   </tr>`;
 }
@@ -578,7 +653,7 @@ async function loadRows(flash){
   let d; try{ d=await fetch(url).then(r=>r.json()); }catch(e){ return; }
   if(my!==_rowSeq) return;               // a newer filter state superseded this request
   total=d.total;
-  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="13" class="muted">No matching businesses.</td></tr>';
+  $('#rows').innerHTML = d.rows.length ? d.rows.map(rowHtml).join('') : '<tr><td colspan="15" class="muted">No matching businesses.</td></tr>';
   if(flash){ $('#rows').classList.add('flash'); setTimeout(()=>$('#rows').classList.remove('flash'),1200); }
   const from = total?offset+1:0, to=Math.min(offset+limit,total);
   $('#rangeText').textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`;
@@ -586,16 +661,16 @@ async function loadRows(flash){
   renderResult();
 }
 
-const _deb=()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();loadStats();},300); };
+const _deb=()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(()=>{offset=0;loadRows();loadStats();syncAdvCount();},300); };
 $('#search').addEventListener('input',_deb);
 $('#industry').addEventListener('input',_deb);
 $('#state').addEventListener('input',_deb);
 $('#revMin').addEventListener('input',_deb);
 $('#revMax').addEventListener('input',_deb);
-['#enriched','#paidAds','#revenue','#source','#transparency','#website','#multiloc','#agency','#pipeline','#p4sub'].forEach(s=>$(s).onchange=()=>{offset=0;loadRows();loadStats();});
+['#enriched','#paidAds','#revenue','#source','#called','#pool','#transparency','#website','#multiloc','#agency','#pipeline','#p4sub'].forEach(s=>$(s).onchange=()=>{offset=0;loadRows();loadStats();syncAdvCount();});
 document.querySelectorAll('.trkchip').forEach(b=>b.onclick=()=>{
   const k=b.dataset.trk; trk.has(k)?trk.delete(k):trk.add(k); b.classList.toggle('active', trk.has(k));
-  offset=0; loadRows(); loadStats();
+  offset=0; loadRows(); loadStats(); syncAdvCount();
 });
 $('#prev').onclick=()=>{ offset=Math.max(0,offset-limit); loadRows(); };
 $('#next').onclick=()=>{ offset+=limit; loadRows(); };
@@ -610,12 +685,31 @@ document.querySelectorAll('#dbhead th.sortable').forEach(th=>th.onclick=()=>{
   updateHead(); offset=0; loadRows();
 });
 
+// Advanced filters: hidden by default, toggled open; badge shows how many advanced filters are active.
+// Quick filters (always visible): source, called, paidAds, revenue, industry, state, search.
+const ADV_FIELDS=['#revMin','#revMax','#website','#enriched','#multiloc','#agency','#pipeline','#p4sub','#transparency'];
+function advActiveCount(){
+  let n=ADV_FIELDS.reduce((a,s)=>a+(($(s).value||'').trim()?1:0),0);
+  return n+trk.size;
+}
+function syncAdvCount(){
+  const n=advActiveCount(), b=$('#advCount');
+  if(n>0){ b.style.display='inline-flex'; b.textContent=n; } else { b.style.display='none'; }
+}
+$('#advToggle').onclick=()=>{
+  const open=$('#advWrap').classList.toggle('on');
+  $('#advArrow').textContent=open?'▴':'▾';
+};
 // Deep-link support: /database?pipeline=p4&p4sub=fresh_ads presets the pipeline filters
-// (used by the dashboard's P4 worklist tiles).
+// (used by the dashboard's P4 worklist tiles). Also accepts ?called=lisa4_today.
 (function(){ const p=new URLSearchParams(location.search);
   const setSel=(id,val)=>{ const el=$(id); if(el && val && [...el.options].some(o=>o.value===val)) el.value=val; };
   setSel('#pipeline', p.get('pipeline')); setSel('#p4sub', p.get('p4sub'));
   setSel('#paidAds', p.get('paid_ads')); setSel('#agency', p.get('agency'));
+  setSel('#called', p.get('called')); setSel('#pool', p.get('pool'));
+  // auto-open the Advanced panel if a deep-link (or restored state) set an advanced filter
+  syncAdvCount();
+  if(advActiveCount()>0){ $('#advWrap').classList.add('on'); $('#advArrow').textContent='▴'; }
 })();
 
 // realtime: SSE refresh + a stats poll that detects DB changes and reloads.
@@ -645,20 +739,34 @@ setInterval(loadStats, 8000);
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
     ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
+    ['/meetings','/meetings','Emma Collins','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/>',2],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
   var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
   var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
-    h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+    h+='<a class="tr-rail-item'+act+(n[4]===2?' tr-sched':n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
   }
   h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
   var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+(function(){var st=document.createElement('style');st.textContent='#trBell{position:fixed;right:16px;bottom:66px;z-index:95;width:40px;height:40px;border-radius:50%;background:var(--panel2,#161c27);border:1px solid var(--line,#222b39);color:var(--txt,#e8edf5);cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(0,0,0,.4);font-size:16px}#trBell.on{display:flex}#trBell .b{position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:10px;font-weight:800;border-radius:10px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;padding:0 4px}#trNotif{position:fixed;right:16px;bottom:112px;z-index:96;width:340px;max-height:420px;overflow:auto;background:var(--panel,#10151e);border:1px solid var(--line,#222b39);border-radius:12px;box-shadow:0 18px 50px -20px rgba(0,0,0,.7);display:none}#trNotif.on{display:block}#trNotif .hd{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line,#222b39);font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase}#trNotif .hd button{background:none;border:0;color:#5b8cff;font:inherit;font-size:11px;cursor:pointer;font-weight:700}#trNotif .it{padding:10px 14px;border-bottom:1px solid var(--line-soft,#1a212c);display:block;text-decoration:none;color:inherit}#trNotif .it:hover{background:var(--panel2,#161c27)}#trNotif .it .k{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}#trNotif .it .k.reply{color:#4ade80}#trNotif .it .k.booking{color:#5b8cff}#trNotif .it .k.autopilot{color:#fbbf24}#trNotif .it b{display:block;font-size:12.5px;margin:2px 0}#trNotif .it span{font-size:11.5px;color:var(--muted,#8b96a6);display:block}#trNotif .emp{padding:22px;text-align:center;color:var(--muted,#8b96a6);font-size:12px}';document.head.appendChild(st);
+var bell=document.createElement('button');bell.id='trBell';bell.title='Notifications';bell.innerHTML='&#128276;<span class="b" style="display:none">0</span>';document.body.appendChild(bell);
+var pan=document.createElement('div');pan.id='trNotif';pan.innerHTML='<div class="hd">Notifications<button id="trNMark">Mark all read</button></div><div id="trNList"><div class="emp">Loading&hellip;</div></div>';document.body.appendChild(pan);
+function escN(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function fdtN(s){try{var d=new Date(s+(String(s).indexOf('Z')<0?'Z':''));return d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}catch(e){return ''}}
+function pull(){fetch('/api/notifications').then(function(r){return r.json()}).then(function(d){if(!d||!d.items)return;if(d.items.length||d.unread){bell.classList.add('on')}var b=bell.querySelector('.b');if(d.unread>0){b.style.display='flex';b.textContent=d.unread>99?'99+':d.unread}else{b.style.display='none'}
+var L=document.getElementById('trNList');L.innerHTML=d.items.length?d.items.map(function(i){return '<a class="it" href="'+escN(i.link||'#')+'"><span class="k '+escN(i.kind)+'">'+escN(i.kind)+'</span><b>'+escN(i.who)+'</b><span>'+escN(i.body)+'</span><span>'+fdtN(i.at)+'</span></a>'}).join(''):'<div class="emp">Nothing yet.</div>';}).catch(function(){})}
+bell.onclick=function(){pan.classList.toggle('on')};
+document.getElementById('trNMark').onclick=function(){fetch('/api/notifications/seen',{method:'POST'}).then(function(){pull()})};
+pull();setInterval(pull,60000);})();
+
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
     if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;
     var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);

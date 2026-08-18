@@ -73,7 +73,10 @@ WITH base AS (
                    AND NOT (CASE WHEN qo.booking_outcome='rescheduled' THEN true
                                  WHEN qo.booking_outcome IN ('counts','not_booking','confirmation') THEN false
                                  ELSE COALESCE(cl.meeting_rescheduled, false) END)
-                   AND NOT COALESCE(cl.booking_already_exists, false)  -- referral/hand-off to a 2nd contact of an already-booked company
+                   -- BDM 'counts' override is DEFINITIVE: it forces this call to count as a NEW
+                   -- booking on ITS OWN day, bypassing the referral guard AND the once-per-prospect
+                   -- dedupe below (the BDM reviewed the reschedule/duplicate and ruled it counts).
+                   AND (qo.booking_outcome='counts' OR (NOT COALESCE(cl.booking_already_exists, false)  -- referral/hand-off to a 2nd contact of an already-booked company
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
                          WHERE pc.in_scope
@@ -85,7 +88,7 @@ WITH base AS (
                            -- ANY prior booking signal (booking, confirmation OR reschedule) means a
                            -- booking already exists for this prospect → later bookings are repeats.
                            AND (pcl.meeting_booked OR COALESCE(pcl.meeting_confirmation,false) OR COALESCE(pcl.meeting_rescheduled,false)
-                                OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))))
+                                OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))))))
               THEN 1 ELSE 0 END) AS meetings_booked,
         -- Qualified Booked = the strict subset: a new booking where the prospect is
         -- QUALIFIED. Effective qualification = a BDM/admin OVERRIDE if present (#4b),
@@ -102,7 +105,8 @@ WITH base AS (
                    AND NOT (CASE WHEN qo.booking_outcome='rescheduled' THEN true
                                  WHEN qo.booking_outcome IN ('counts','not_booking','confirmation') THEN false
                                  ELSE COALESCE(cl.meeting_rescheduled, false) END)
-                   AND NOT COALESCE(cl.booking_already_exists, false)
+                   -- BDM 'counts' override: same definitive bypass as meetings_booked above.
+                   AND (qo.booking_outcome='counts' OR (NOT COALESCE(cl.booking_already_exists, false)
                    AND NOT EXISTS (
                          SELECT 1 FROM calls pc JOIN classifications pcl ON pcl.call_id = pc.call_id
                          WHERE pc.in_scope
@@ -113,7 +117,7 @@ WITH base AS (
                            -- ANY prior booking signal (booking, confirmation OR reschedule) means a
                            -- booking already exists for this prospect → later bookings are repeats.
                            AND (pcl.meeting_booked OR COALESCE(pcl.meeting_confirmation,false) OR COALESCE(pcl.meeting_rescheduled,false)
-                                OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))))
+                                OR (pcl.booking_status='tentative' AND pcl.meeting_datetime ~* '[0-9]:[0-9]|[0-9][[:space:]]*[ap][.]?m|noon|midday' AND NOT COALESCE(pcl.callback_requested,false))))))
                    -- Effective qualification: a BDM/admin OVERRIDE on THE BOOKED CALL is DEFINITIVE —
                    -- it wins over everything, including a sibling call's qualification. So when the
                    -- BDM explicitly disqualifies a booked meeting ("client doesn't need us, nurture"),

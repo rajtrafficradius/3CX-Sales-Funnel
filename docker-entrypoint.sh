@@ -38,6 +38,31 @@ if [ "$1" = "dashboard" ]; then
       done
     fi
   ) &
+  # DEDICATED fast Lisa dial loop — SEPARATE from the heavy refresh loop above so Lisa dials every
+  # ~LISA_DIAL_INTERVAL s (cadence ~= call length) instead of once per multi-minute refresh. The inner
+  # `lisa-dial` command has its own while-loop; the outer shell loop just restarts it if it ever crashes.
+  if [ "${LISA_DIAL_IN_WEB:-1}" = "1" ]; then
+    (
+      sleep "${LISA_DIAL_INITIAL_DELAY:-40}"
+      while true; do
+        funnel-agent lisa-dial --interval "${LISA_DIAL_INTERVAL:-25}" >&2 || \
+          echo "[lisa-dial] loop exited/crashed — restarting in 10s" >&2
+        sleep 10
+      done
+    ) &
+  fi
+  # DEDICATED Lisa 4 (website-selling) autopilot loop — isolated from Lisa-1. GATED by its own DB toggle
+  # (off by default) so it reserves/schedules/builds but places NO call until the Lisa-4 toggle is turned on.
+  if [ "${LISA4_DIAL_IN_WEB:-1}" = "1" ]; then
+    (
+      sleep "${LISA4_DIAL_INITIAL_DELAY:-50}"
+      while true; do
+        funnel-agent lisa4-dial --interval "${LISA4_DIAL_INTERVAL:-25}" >&2 || \
+          echo "[lisa4-dial] loop exited/crashed — restarting in 10s" >&2
+        sleep 10
+      done
+    ) &
+  fi
   exec funnel-agent dashboard --host 0.0.0.0 --port "${PORT:-8080}"
 fi
 

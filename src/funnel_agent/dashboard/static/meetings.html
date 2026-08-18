@@ -1,0 +1,1092 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>(function(){try{var t=localStorage.getItem("tr-theme-v2");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}catch(e){}})();</script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Emma Collins · 3CX Funnel</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
+<style>
+  :root{
+    /* indigo-biased neutrals — same system as the Outbound Intelligence console */
+    --bg:#080a14; --bg-2:#0a0d1a; --panel:#0e1220; --panel-2:#121729; --panel-3:#161d33;
+    --line:#1c2440; --line-2:#28324f; --hair:rgba(255,255,255,.05);
+    --txt:#eef1fb; --txt-2:#c3cbe2; --muted:#8792b2; --faint:#5a6485;
+    /* one accent (violet) + signal cyan; teal reserved for Lisa 4 */
+    --vio:#7c6cff; --vio-2:#a493ff; --cyan:#28dbef; --teal:#2dd4bf;
+    --good:#34d399; --good-d:#0f2f28; --warn:#fbbf24; --warn-d:#33270a; --bad:#fb7185; --bad-d:#331420;
+    --accent:var(--vio); --accent-soft:rgba(124,108,255,.14);
+    --r1:10px; --r2:14px; --r3:20px; --r-pill:999px;
+    --elev:inset 0 1px 0 rgba(255,255,255,.04), 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.7);
+    --elev-lift:inset 0 1px 0 rgba(255,255,255,.06), 0 2px 6px rgba(0,0,0,.4), 0 20px 46px -22px rgba(0,0,0,.8);
+    --glow:0 0 0 1px rgba(124,108,255,.22), 0 22px 60px -26px rgba(88,64,220,.6);
+  }
+  :root[data-theme=light]{
+    --bg:#f3f5fc; --bg-2:#eaeef8; --panel:#ffffff; --panel-2:#f6f8fe; --panel-3:#eef2fb;
+    --line:#e3e8f4; --line-2:#d2daee; --hair:rgba(20,30,55,.05);
+    --txt:#111730; --txt-2:#3a4463; --muted:#67728f; --faint:#8b95b1;
+    --good-d:#e7f7f0; --warn-d:#fdf4dd; --bad-d:#fdeaee;
+    --accent-soft:rgba(124,108,255,.1);
+    --elev:inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(20,30,50,.06), 0 10px 26px -18px rgba(20,30,50,.18);
+    --elev-lift:inset 0 1px 0 rgba(255,255,255,1), 0 2px 8px rgba(20,30,50,.08), 0 22px 46px -24px rgba(20,30,50,.26);
+    --glow:0 0 0 1px rgba(124,108,255,.18), 0 22px 60px -30px rgba(88,64,220,.35);
+  }
+  @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+    --bg:#f3f5fc; --bg-2:#eaeef8; --panel:#ffffff; --panel-2:#f6f8fe; --panel-3:#eef2fb;
+    --line:#e3e8f4; --line-2:#d2daee; --hair:rgba(20,30,55,.05);
+    --txt:#111730; --txt-2:#3a4463; --muted:#67728f; --faint:#8b95b1;
+    --good-d:#e7f7f0; --warn-d:#fdf4dd; --bad-d:#fdeaee;
+    --accent-soft:rgba(124,108,255,.1);
+    --elev:inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(20,30,50,.06), 0 10px 26px -18px rgba(20,30,50,.18);
+    --elev-lift:inset 0 1px 0 rgba(255,255,255,1), 0 2px 8px rgba(20,30,50,.08), 0 22px 46px -24px rgba(20,30,50,.26);
+    --glow:0 0 0 1px rgba(124,108,255,.18), 0 22px 60px -30px rgba(88,64,220,.35);
+  }}
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--txt);min-height:100vh;
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
+    font-variant-numeric:tabular-nums slashed-zero;-webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(1100px 560px at 82% -12%, rgba(124,108,255,.16), transparent 58%),
+      radial-gradient(820px 460px at -6% 4%, rgba(40,219,239,.09), transparent 56%),
+      var(--bg);}
+  a{color:var(--vio-2);text-decoration:none}
+  h1,h2,h3{text-wrap:balance}
+  ::selection{background:rgba(124,108,255,.32)}
+  input[type=datetime-local],input[type=date]{color-scheme:dark}
+  :root[data-theme=light] input[type=datetime-local],:root[data-theme=light] input[type=date]{color-scheme:light}
+  .wrap{max-width:1120px;margin:0 auto;padding:24px 26px 64px}
+
+  .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}
+  .muted{color:var(--muted)} .small{font-size:12px}
+
+  /* ── console header — Emma persona ───────────────────── */
+  .top{display:flex;align-items:center;gap:15px;margin-bottom:20px;flex-wrap:wrap}
+  .mark{width:46px;height:46px;border-radius:14px;flex:none;display:grid;place-items:center;
+    font-weight:800;font-size:15px;letter-spacing:.03em;color:#fff;
+    background:radial-gradient(70% 70% at 32% 26%,rgba(255,255,255,.28),transparent 60%),
+      linear-gradient(150deg,var(--vio),var(--cyan));box-shadow:var(--glow)}
+  .top .title h1{font-size:21px;margin:1px 0 0;font-weight:780;letter-spacing:-.02em;line-height:1.1}
+  .top .title .sub{color:var(--muted);font-size:12px;margin-top:3px;letter-spacing:.01em;max-width:58ch}
+  .top .title .sub b{color:var(--txt-2);font-weight:650}
+  .top .right{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .who{font-size:11.5px;color:var(--faint);white-space:nowrap}
+
+  /* day-counter stat chips */
+  #hdCounts{display:contents}
+  .dchip{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:var(--r-pill);
+    font-size:11.5px;font-weight:650;border:1px solid var(--line-2);background:var(--panel);color:var(--txt-2);white-space:nowrap}
+  .dchip b{font-size:13px;font-weight:760;color:var(--txt)}
+  .dchip .dot{width:7px;height:7px;border-radius:50%;flex:none}
+
+  /* status chips (M365) */
+  .chip{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:var(--r-pill);
+    font-size:11.5px;font-weight:650;border:1px solid var(--line-2);background:var(--panel);color:var(--txt-2);white-space:nowrap}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none}
+  .chip.on{color:var(--good);border-color:rgba(52,211,153,.42);background:var(--good-d)} .chip.on .dot{background:var(--good);box-shadow:0 0 9px var(--good)}
+  .chip.off{color:var(--warn);border-color:rgba(251,191,36,.4);background:var(--warn-d)} .chip.off .dot{background:var(--warn)}
+
+  button{font:inherit;cursor:pointer}
+  .btn-ghost{display:inline-flex;align-items:center;gap:7px;background:var(--panel);color:var(--txt-2);
+    border:1px solid var(--line-2);border-radius:var(--r1);padding:8px 13px;font-size:12px;font-weight:640;
+    transition:background .15s,color .15s,border-color .15s}
+  .btn-ghost:hover{background:var(--panel-2);color:var(--txt);border-color:var(--muted)}
+  .btn-ghost svg{width:14px;height:14px}
+  .btn-ghost:focus-visible{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+
+  /* ── tabs — same control language as the main dashboard ── */
+  .tabs{display:flex;gap:2px;margin:4px 0 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);
+    font:inherit;font-size:13px;font-weight:640;padding:9px 14px;cursor:pointer;margin-bottom:-1px;letter-spacing:.01em;
+    transition:color .12s,border-color .12s}
+  .tab:hover{color:var(--txt-2)}
+  .tab.on{color:var(--txt);border-bottom-color:var(--vio)}
+  .tab:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-soft);border-radius:8px 8px 0 0}
+  .tab .n{display:inline-block;font-size:10.5px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);
+    border-radius:var(--r-pill);padding:1px 7px;margin-left:6px;font-weight:600;font-variant-numeric:tabular-nums}
+  .tab .n:empty{display:none}
+  .tab.on .n{color:var(--vio-2);border-color:rgba(124,108,255,.4);background:var(--accent-soft)}
+
+  /* ── filter row ──────────────────────────────────────── */
+  .fbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
+  .fbar .fl2{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-right:2px}
+  .fbar .fl2 svg{width:13px;height:13px}
+  .fbar select,.fbar input{background:var(--panel);border:1px solid var(--line-2);color:var(--txt);
+    border-radius:9px;padding:8px 11px;font:inherit;font-size:12.5px}
+  .fbar select{cursor:pointer}
+  .fbar select:focus,.fbar input:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+  .fbar input::placeholder{color:var(--faint)}
+  .fbar input[type=search]{flex:1;min-width:200px}
+
+  /* ── day groups ──────────────────────────────────────── */
+  .dayhead{display:flex;align-items:baseline;gap:10px;margin:24px 0 10px}
+  #board>.dayhead:first-child{margin-top:2px}
+  .dayhead h2{font-size:14px;font-weight:720;margin:0;letter-spacing:-.01em;color:var(--txt-2)}
+  .dayhead .dn{font-size:11px;color:var(--faint);font-weight:600}
+  .dayhead.today::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--vio);
+    box-shadow:0 0 10px var(--vio);align-self:center;flex:none}
+  .dayhead.today h2{color:var(--vio-2)}
+
+  /* ── meeting cards ───────────────────────────────────── */
+  .cards{display:grid;gap:10px}
+  .mcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);box-shadow:var(--elev);
+    padding:15px 17px 13px;display:flex;flex-direction:column;gap:9px;
+    transition:transform .14s,box-shadow .14s,border-color .14s}
+  .mcard:hover{transform:translateY(-2px);box-shadow:var(--elev-lift);border-color:var(--line-2)}
+  .mcard.cancelled{opacity:.55}
+  .mcard.cancelled:hover{transform:none;box-shadow:var(--elev);border-color:var(--line)}
+  .mhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .co{font-weight:720;font-size:15.5px;letter-spacing:-.01em;color:var(--txt)}
+  a.co:hover{color:var(--vio-2)}
+  .badges{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+  /* source badges — colors mirror the sales-floor reps (Lisa 1 violet, Lisa 4 teal, humans amber) */
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:750;letter-spacing:.05em;
+    text-transform:uppercase;padding:4px 9px;border-radius:var(--r-pill);border:1px solid;white-space:nowrap}
+  .src-l1{color:var(--vio-2);background:var(--accent-soft);border-color:rgba(124,108,255,.42)}
+  .src-l4{color:var(--teal);background:rgba(45,212,191,.12);border-color:rgba(45,212,191,.4)}
+  .src-bde{color:var(--warn);background:var(--warn-d);border-color:rgba(251,191,36,.4)}
+
+  /* status chips with a signal dot */
+  .st{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--r-pill);
+    font-size:11px;font-weight:640;border:1px solid var(--line-2);background:var(--panel-3);
+    color:var(--txt-2);white-space:nowrap}
+  .st::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.9;flex:none}
+  .st.warn{color:var(--warn);background:var(--warn-d);border-color:rgba(251,191,36,.38)}
+  .st.vio{color:var(--vio-2);background:var(--accent-soft);border-color:rgba(124,108,255,.4)}
+  .st.good{color:var(--good);background:var(--good-d);border-color:rgba(52,211,153,.4)}
+  .st.bad{color:var(--bad);background:var(--bad-d);border-color:rgba(251,113,133,.34)}
+  .st.mut{color:var(--muted)}
+  a.st.vio:hover{filter:brightness(1.15)}
+
+  .meta{display:flex;gap:4px 16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted)}
+  .meta b{color:var(--txt-2);font-weight:640}
+  .meta svg{width:12px;height:12px;vertical-align:-1.5px;margin-right:4px;color:var(--faint)}
+  .links{margin-left:auto;display:flex;gap:14px;font-size:11.5px}
+  .links a{color:var(--muted);font-weight:550}
+  .links a:hover{color:var(--vio-2)}
+
+  .summ1{font-size:12.5px;line-height:1.55;color:var(--txt-2);background:var(--panel-2);border:1px solid var(--line);
+    border-radius:var(--r1);padding:8px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .summ1 b{color:var(--muted);font-weight:700}
+  .summ1.open{white-space:normal}
+
+  .hint{display:flex;gap:7px;align-items:flex-start;color:var(--warn);font-size:12px;font-weight:550;line-height:1.5}
+  .hint svg{width:13px;height:13px;flex:none;margin-top:2px}
+  .hint b{font-weight:700}
+  .hint.parsed{color:var(--vio-2)}
+  .errline{font-size:11.5px;color:var(--bad)}
+
+  /* action row — inline-editable fields + ONE violet primary */
+  .act{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;border-top:1px solid var(--hair);padding-top:11px;margin-top:2px}
+  .fld{display:flex;flex-direction:column;gap:4px}
+  .fld .fl{font-size:9.5px;font-weight:750;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+  .fld input{background:var(--panel-2);border:1px solid var(--line-2);color:var(--txt);border-radius:9px;
+    padding:8px 11px;font:inherit;font-size:12.5px}
+  .fld input:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+  .fld input:disabled{opacity:.55;cursor:not-allowed}
+  .fld input[type=email]{min-width:220px}
+  .fld input::placeholder{color:var(--faint)}
+  .act .grow{flex:1}
+  .qcancel{color:var(--faint);font-size:12px;font-weight:550;cursor:pointer;white-space:nowrap}
+  .qcancel:hover{color:var(--bad)}
+  .btn-primary{border:none;border-radius:var(--r1);padding:9px 16px;font:inherit;font-size:12.5px;font-weight:660;
+    cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--vio),var(--vio-2));
+    box-shadow:0 10px 24px -12px rgba(124,108,255,.8);display:inline-flex;align-items:center;gap:7px;
+    transition:filter .15s,transform .1s;white-space:nowrap}
+  .btn-primary:hover{filter:brightness(1.08)}
+  .btn-primary:active{transform:translateY(1px)}
+  .btn-primary[disabled]{opacity:.55;cursor:not-allowed}
+  .btn-primary:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-soft),0 10px 24px -12px rgba(124,108,255,.8)}
+  .btn-done{border-radius:var(--r1);padding:8px 14px;font:inherit;font-size:12px;font-weight:680;color:var(--good);
+    background:var(--good-d);border:1px solid rgba(52,211,153,.4);cursor:default;white-space:nowrap}
+
+  /* ── empty state ─────────────────────────────────────── */
+  .empty{padding:52px 30px;text-align:center;color:var(--muted);background:var(--panel);
+    border:1px dashed var(--line-2);border-radius:var(--r3)}
+  .empty .e-ic{width:46px;height:46px;margin:0 auto 14px;border-radius:14px;display:grid;place-items:center;
+    background:var(--panel-3);border:1px solid var(--line-2);color:var(--faint)}
+  .empty .e-ic svg{width:22px;height:22px}
+  .empty h3{margin:0 0 6px;font-size:14.5px;font-weight:700;color:var(--txt-2)}
+  .empty p{margin:0;font-size:12.5px;line-height:1.6}
+
+  .footnote{font-size:11.5px;color:var(--faint);margin-top:18px;line-height:1.7}
+  .footnote b{color:var(--txt-2);font-weight:650}
+
+  /* ── drill-down slide-over (click a card) ────────────── */
+  .mcard{cursor:pointer}
+  .mcard input,.mcard a,.mcard button{cursor:auto}
+  .mcard a,.mcard button{cursor:pointer}
+  .ovl{position:fixed;inset:0;z-index:70;background:rgba(5,7,14,.55);opacity:0;pointer-events:none;transition:opacity .18s}
+  .ovl.on{opacity:1;pointer-events:auto}
+  :root[data-theme=light] .ovl{background:rgba(25,32,52,.35)}
+  .spanel{position:fixed;top:0;right:0;bottom:0;z-index:71;width:min(480px,94vw);background:var(--panel);
+    border-left:1px solid var(--line-2);box-shadow:-28px 0 80px -36px rgba(0,0,0,.85);
+    transform:translateX(103%);transition:transform .22s cubic-bezier(.4,0,.2,1);
+    display:flex;flex-direction:column}
+  .spanel.on{transform:none}
+  :root[data-theme=light] .spanel{box-shadow:-28px 0 80px -40px rgba(20,30,50,.4)}
+  .sp-head{display:flex;align-items:flex-start;gap:10px;padding:18px 20px 14px;border-bottom:1px solid var(--line);flex:none}
+  .sp-head .t{flex:1;min-width:0}
+  .sp-head h2{margin:2px 0 0;font-size:16.5px;font-weight:760;letter-spacing:-.01em;color:var(--txt)}
+  .sp-head .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .sp-x{flex:none;width:30px;height:30px;border-radius:9px;border:1px solid var(--line-2);background:var(--panel-2);
+    color:var(--muted);font-size:16px;line-height:1;display:grid;place-items:center;padding:0}
+  .sp-x:hover{color:var(--txt);border-color:var(--muted)}
+  .sp-body{flex:1;overflow-y:auto;padding:16px 20px 30px;display:flex;flex-direction:column;gap:20px}
+  .sp-sec .eyebrow{margin-bottom:9px}
+  .kv{display:grid;grid-template-columns:118px 1fr;gap:7px 12px;font-size:12.5px}
+  .kv .k{color:var(--faint);font-weight:600}
+  .kv .v{color:var(--txt-2);word-break:break-word;min-width:0}
+  .kv .v b{color:var(--txt);font-weight:660}
+  .kv .v .sub{display:block;font-size:11px;color:var(--faint);margin-top:1px}
+  .sp-note{font-size:12.5px;line-height:1.6;color:var(--txt-2);background:var(--panel-2);
+    border:1px solid var(--line);border-radius:var(--r1);padding:9px 12px;white-space:pre-wrap;word-break:break-word}
+  .sp-links{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-top:9px}
+  .sp-links a{color:var(--muted);font-weight:560}
+  .sp-links a:hover{color:var(--vio-2)}
+  .sp-cc{display:flex;gap:8px;align-items:center}
+  .sp-cc input{flex:1;min-width:0;background:var(--panel-2);border:1px solid var(--line-2);color:var(--txt);
+    border-radius:9px;padding:8px 11px;font:inherit;font-size:12.5px}
+  .sp-cc input:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+  .sp-cc input::placeholder{color:var(--faint)}
+  .sp-cc-cap{font-size:11px;color:var(--faint);margin-top:6px;line-height:1.5}
+  /* invite body preview */
+  .sp-preview{width:100%;height:560px;border:1px solid var(--line-2);border-radius:var(--r1);
+    background:#fff;display:block}
+  /* timeline */
+  .tl{display:flex;flex-direction:column}
+  .tl-i{display:flex;gap:12px;position:relative;padding:0 0 15px}
+  .tl-i::before{content:"";position:absolute;left:4.5px;top:15px;bottom:1px;width:1px;background:var(--line-2)}
+  .tl-i:last-child{padding-bottom:0}
+  .tl-i:last-child::before{display:none}
+  .tl-dot{flex:none;width:10px;height:10px;border-radius:50%;margin-top:4px;background:var(--muted);
+    box-shadow:0 0 0 3px var(--panel)}
+  .tl-i.vio .tl-dot{background:var(--vio);box-shadow:0 0 0 3px var(--panel),0 0 8px rgba(124,108,255,.7)}
+  .tl-i.good .tl-dot{background:var(--good)}
+  .tl-i.warn .tl-dot{background:var(--warn)}
+  .tl-i.bad .tl-dot{background:var(--bad)}
+  .tl-b{flex:1;min-width:0}
+  .tl-t{font-size:12.5px;font-weight:660;color:var(--txt)}
+  .tl-d{font-size:11.5px;color:var(--muted);margin-top:1px;word-break:break-word;line-height:1.5}
+  .tl-when{font-size:10.5px;color:var(--faint);margin-top:2px}
+  @media(max-width:680px){.spanel{width:100vw}}
+
+  /* ── drill-down: editable invite form ────────────────── */
+  .sp-form{display:flex;flex-direction:column;gap:12px}
+  .spf{display:flex;flex-direction:column;gap:5px}
+  .spf-l{font-size:9.5px;font-weight:750;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+  .spf input{background:var(--panel-2);border:1px solid var(--line-2);color:var(--txt);border-radius:9px;
+    padding:9px 11px;font:inherit;font-size:12.5px;width:100%}
+  .spf input:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+  .spf input:disabled{opacity:.6;cursor:not-allowed}
+  .spf input::placeholder{color:var(--faint)}
+  .spf-h{font-size:11px;line-height:1.5;color:var(--faint);display:flex;gap:5px;align-items:flex-start}
+  .spf-h svg{width:12px;height:12px;flex:none;margin-top:1.5px}
+  .spf-h.warn{color:var(--warn)} .spf-h.parsed{color:var(--vio-2)}
+  .spf-h b{color:var(--txt-2);font-weight:640}
+
+  /* reminders toggle — drill-down (big) + card (mini) */
+  .sp-rem .rem-row{display:flex;align-items:center;gap:14px;justify-content:space-between;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r1);padding:11px 13px}
+  .rem-t{font-size:12.5px;font-weight:650;color:var(--txt-2)}
+  .rem-d{font-size:11px;color:var(--faint);margin-top:2px;line-height:1.45}
+  .rem-tog{flex:none;width:40px;height:23px;border-radius:999px;border:1px solid var(--line-2);
+    background:var(--panel-3);position:relative;cursor:pointer;padding:0;transition:background .15s,border-color .15s}
+  .rem-tog .knob{position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;
+    background:var(--muted);transition:transform .16s,background .16s}
+  .rem-tog.on{background:var(--accent-soft);border-color:rgba(124,108,255,.5)}
+  .rem-tog.on .knob{transform:translateX(17px);background:var(--vio)}
+  .rem-tog:disabled{opacity:.5;cursor:default}
+  .rem-tog:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
+  .rem-mini{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);
+    background:none;border:none;padding:4px 2px;cursor:pointer;white-space:nowrap}
+  .rem-mini:hover{color:var(--txt-2)}
+  .rem-mini .sw{width:30px;height:17px;border-radius:999px;border:1px solid var(--line-2);
+    background:var(--panel-3);position:relative;flex:none;transition:background .15s,border-color .15s}
+  .rem-mini .sw::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;
+    background:var(--muted);transition:transform .16s,background .16s}
+  .rem-mini.on{color:var(--vio-2)}
+  .rem-mini.on .sw{background:var(--accent-soft);border-color:rgba(124,108,255,.5)}
+  .rem-mini.on .sw::after{transform:translateX(13px);background:var(--vio)}
+  .rem-mini:focus-visible{outline:none;border-radius:8px;box-shadow:0 0 0 3px var(--accent-soft)}
+
+  /* sticky action footer inside the slide-over */
+  .sp-foot{flex:none;border-top:1px solid var(--line);background:var(--panel);padding:13px 20px;
+    display:flex;flex-direction:column;gap:10px}
+  .sp-foot .foot-btns{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+  .sp-foot.settled{align-items:center;justify-content:center}
+  .sp-foot .st{margin-right:auto}
+  .foot-hint{display:flex;gap:7px;align-items:flex-start;color:var(--warn);font-size:11.5px;font-weight:550;line-height:1.5}
+  .foot-hint svg{width:13px;height:13px;flex:none;margin-top:1.5px}
+  .btn-outline{border:1px solid var(--line-2);background:var(--panel-2);color:var(--txt-2);border-radius:var(--r1);
+    padding:9px 15px;font:inherit;font-size:12.5px;font-weight:640;cursor:pointer;
+    transition:border-color .15s,color .15s,background .15s}
+  .btn-outline:hover{color:var(--txt);border-color:var(--muted)}
+  .btn-outline.danger{color:var(--bad)} .btn-outline.danger:hover{border-color:var(--bad);background:var(--bad-d)}
+  .btn-outline:focus-visible{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+  .btn-danger{border:none;border-radius:var(--r1);padding:9px 16px;font:inherit;font-size:12.5px;font-weight:660;
+    cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--bad),#f0526b);
+    box-shadow:0 10px 24px -12px rgba(251,113,133,.7);transition:filter .15s}
+  .btn-danger:hover{filter:brightness(1.05)} .btn-danger[disabled]{opacity:.55;cursor:not-allowed}
+
+  /* decline reason modal */
+  .dmodal-ovl{position:fixed;inset:0;z-index:80;background:rgba(5,7,14,.55);opacity:0;pointer-events:none;transition:opacity .16s}
+  .dmodal-ovl.on{opacity:1;pointer-events:auto}
+  :root[data-theme=light] .dmodal-ovl{background:rgba(25,32,52,.4)}
+  .dmodal{position:fixed;z-index:81;top:50%;left:50%;transform:translate(-50%,-46%) scale(.98);opacity:0;pointer-events:none;
+    width:min(430px,94vw);background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r3);
+    box-shadow:var(--elev-lift);padding:20px 22px;transition:opacity .16s,transform .16s}
+  .dmodal.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+  .dmodal h3{margin:0 0 5px;font-size:16px;font-weight:740;color:var(--txt)}
+  .dm-sub{margin:0 0 15px;font-size:12px;line-height:1.55;color:var(--muted)}
+  .dm-reasons{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+  .dm-reasons label{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:10px;font-size:13px;
+    color:var(--txt-2);cursor:pointer;border:1px solid transparent;transition:background .12s,border-color .12s}
+  .dm-reasons label:hover{background:var(--panel-2)}
+  .dm-reasons input{accent-color:var(--vio);width:15px;height:15px;flex:none}
+  .dm-reasons label:has(input:checked){background:var(--accent-soft);border-color:rgba(124,108,255,.4);color:var(--txt)}
+  .dmodal textarea{width:100%;background:var(--panel-2);border:1px solid var(--line-2);color:var(--txt);border-radius:9px;
+    padding:9px 11px;font:inherit;font-size:12.5px;resize:vertical;margin-bottom:16px}
+  .dmodal textarea:focus{outline:none;border-color:var(--vio);box-shadow:0 0 0 3px var(--accent-soft)}
+  .dmodal textarea::placeholder{color:var(--faint)}
+  .dm-act{display:flex;gap:10px;justify-content:flex-end}
+  @media (prefers-reduced-motion:reduce){.dmodal{transition:opacity .01ms}}
+
+  .tr-theme-btn{position:fixed;right:16px;bottom:16px;z-index:90;width:40px;height:40px;border-radius:50%;
+    background:var(--panel-2);border:1px solid var(--line-2);color:var(--txt);font-size:17px;cursor:pointer;
+    box-shadow:var(--elev);display:flex;align-items:center;justify-content:center}
+  .tr-theme-btn:hover{border-color:var(--vio)}
+
+  @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important}}
+
+  /* ── responsive ──────────────────────────────────────── */
+  @media(max-width:860px){
+    .wrap{padding:20px 16px 56px}
+    .top .right{margin-left:0;flex-basis:100%;justify-content:flex-start}
+  }
+  @media(max-width:680px){
+    .badges{margin-left:0;flex-basis:100%}
+    .links{margin-left:0;flex-basis:100%}
+    .act{align-items:stretch;flex-direction:column}
+    .fld input{width:100%}
+    .fld input[type=email]{min-width:0}
+    .btn-primary{justify-content:center}
+    .qcancel{align-self:flex-end}
+  }
+
+  /* ── left rail (shared) ──────────────────────────────── */
+  :root{--rail-w:58px;--rail-open:238px}
+  body{padding-left:var(--rail-w)}
+  html.tv body{padding-left:0}
+  html.tv .tr-rail{display:none}
+  .tr-rail{position:fixed;top:0;left:0;bottom:0;width:var(--rail-w);z-index:60;box-sizing:border-box;
+    background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;
+    padding:10px 0;overflow:hidden;transition:width .19s cubic-bezier(.4,0,.2,1),box-shadow .19s}
+  .tr-rail:hover,.tr-rail:focus-within{width:var(--rail-open);box-shadow:22px 0 48px -30px rgba(8,12,20,.6)}
+  .tr-rail-nav{display:flex;flex-direction:column;gap:2px;flex:1;overflow-y:auto;overflow-x:hidden}
+  .tr-rail-nav::-webkit-scrollbar{width:0}
+  .tr-rail-foot{flex:none;display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
+  .tr-rail-item,.tr-rail-user{display:flex;align-items:center;height:42px;margin:0 8px;border-radius:10px;
+    color:var(--txt-2);text-decoration:none;font-weight:600;font-size:13.5px;overflow:hidden;white-space:nowrap;
+    transition:background .12s,color .12s}
+  .tr-rail-item:hover{background:var(--panel-2);color:var(--txt)}
+  .tr-rail-item.active{background:var(--accent-soft);color:var(--accent)}
+  .tr-rail-item .ic,.tr-rail-user .ic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
+  .tr-rail svg{width:20px;height:20px;flex:none}
+  .tr-rail .lbl{opacity:0;transition:opacity .16s;letter-spacing:-.1px}
+  .tr-rail:hover .lbl,.tr-rail:focus-within .lbl{opacity:1}
+  .tr-rail-user .av{width:28px;height:28px;flex:none;border-radius:50%;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+  .tr-rail-user .lbl{font-weight:600;font-size:12.5px;color:var(--txt-2);overflow:hidden;text-overflow:ellipsis;max-width:150px}
+  :root[data-theme=light] .tr-rail{box-shadow:none}
+  :root[data-theme=light] .tr-rail:hover,:root[data-theme=light] .tr-rail:focus-within{box-shadow:22px 0 48px -30px rgba(20,30,50,.35)}
+  .tr-rail-brand{position:relative;display:block;height:46px;margin:2px 8px 8px;color:var(--txt-2)}
+  .tr-rail-brand .barsic{position:absolute;left:0;top:0;width:42px;height:46px;display:flex;align-items:center;justify-content:center;opacity:1;transition:opacity .15s}
+  .tr-rail-brand .barsic svg{width:23px;height:23px}
+  .tr-rail-brand .fulllogo{position:absolute;left:12px;top:50%;transform:translateY(-50%);height:24px;opacity:0;transition:opacity .18s;pointer-events:none;max-width:none;filter:brightness(0) invert(1)}
+  :root[data-theme=light] .tr-rail-brand .fulllogo{filter:none}
+  .tr-rail:hover .tr-rail-brand .barsic,.tr-rail:focus-within .tr-rail-brand .barsic{opacity:0}
+  .tr-rail:hover .tr-rail-brand .fulllogo,.tr-rail:focus-within .tr-rail-brand .fulllogo{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── console header: Emma persona ── -->
+  <div class="top">
+    <div class="mark" title="Emma Collins — AI staff">EC</div>
+    <div class="title">
+      <div class="eyebrow">AI Staff · Meeting Scheduler</div>
+      <h1>Emma Collins</h1>
+      <div class="sub">Pre-drafts a Teams invite for every booked meeting — Lisa&nbsp;1, Lisa&nbsp;4 and human-BDE bookings. <b>Nothing sends without Approve &amp; schedule.</b></div>
+    </div>
+    <div class="right">
+      <span id="hdCounts"></span>
+      <span class="chip on" id="credsOk" style="display:none" title="MS Graph credentials verified — approvals send immediately"><span class="dot"></span>M365 connected</span>
+      <span class="chip off" id="credsPill" style="display:none" title="Approvals queue safely and send automatically the moment the 4 MS Graph env values are set"><span class="dot"></span>M365 not connected &mdash; approvals queue</span>
+      <button id="testBtn" class="btn-ghost" onclick="testInvite()" title="Validates the Graph credentials end-to-end by sending a real test invite">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        Test invite
+      </button>
+      <span class="who" id="who"></span>
+    </div>
+  </div>
+
+  <!-- ── Needs approval / Scheduled / Past tabs ── -->
+  <div class="tabs" id="tabs" role="tablist">
+    <button class="tab on" data-tab="need" role="tab" aria-selected="true" title="Only what still needs you — drafts pending a time / email and your Approve (or Decline)">Needs approval <span class="n" id="tabNeedN"></span></button>
+    <button class="tab" data-tab="sched" role="tab" aria-selected="false" title="Approved &amp; sent invites still ahead — reschedule or cancel from here">Scheduled <span class="n" id="tabSchedN"></span></button>
+    <button class="tab" data-tab="past" role="tab" aria-selected="false" title="Read-only reference — meetings whose time has passed, plus declined and cancelled">Past <span class="n" id="tabPastN"></span></button>
+  </div>
+
+  <!-- ── filter row ── -->
+  <div class="fbar">
+    <span class="fl2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>Filter</span>
+    <select id="fSrc" title="Source">
+      <option value="all">All sources</option>
+      <option value="lisa4">Lisa 4 — Websites</option>
+      <option value="lisa1">Lisa 1 — Marketing</option>
+      <option value="bde">Human BDEs</option>
+    </select>
+    <select id="fSt" title="Status">
+      <option value="all">Any status</option>
+      <option value="draft">Pending approval</option>
+      <option value="needs-info">Needs time / email</option>
+      <option value="approved-awaiting-creds">Queued (M365)</option>
+      <option value="scheduled">Scheduled</option>
+      <option value="accepted">Accepted</option>
+      <option value="declined">Declined</option>
+      <option value="reschedule-requested">Reschedule requested</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
+    <input type="date" id="fDay" title="Only this day" />
+    <input type="search" id="fQ" placeholder="Search company, contact, phone, email&hellip;" />
+  </div>
+
+  <div id="board"><div class="empty"><h3>Loading&hellip;</h3><p>Fetching Emma&rsquo;s meeting queue.</p></div></div>
+
+  <p class="footnote">Every invite (and every change) waits for <b>Approve &amp; schedule</b>; only reminders for already-approved meetings go out on their own. Email <b>opens</b> come from a tracking pixel &mdash; a signal, not proof. Reschedules PATCH the <i>same</i> Teams event.</p>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let DATA=[], TODAY='', GRAPH=false, MISSING=[], TAB='need', PAST=false;   // PAST = (TAB==='past'), kept for read-only semantics
+const F={src:'all', st:'all', day:'', q:''};
+const ICO_USER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+const ICO_PHONE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const ICO_WARN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+const ICO_CAL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/></svg>';
+const ICO_SPARK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>';
+async function api(u,opts){const r=await fetch(u,opts);if(!r.ok){let d='';try{d=(await r.json()).detail||'';}catch(e){}throw new Error(d||r.status);}return r.json();}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function dlv(s){ // ISO/timestamptz string -> datetime-local value "YYYY-MM-DDTHH:MM"
+  if(!s)return '';return String(s).slice(0,16).replace(' ','T');}
+function fdt(s){if(!s)return '';try{const d=new Date(s);if(isNaN(d))return '';return d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false});}catch(e){return '';}}
+function dayLabel(ds){
+  if(!ds)return 'No date';
+  let base='';try{const d=new Date(ds+'T00:00:00');if(!isNaN(d))base=d.toLocaleDateString('en-AU',{weekday:'long',day:'numeric',month:'long',year:'numeric'});}catch(e){}
+  if(ds===TODAY)return 'Today — '+(base||ds);
+  return base||ds;
+}
+function srcBadge(r){
+  if(r.source==='lisa4')return '<span class="pill src-l4">Lisa 4 &middot; Website</span>';
+  if(r.source==='lisa1')return '<span class="pill src-l1">Lisa 1 &middot; Marketing</span>';
+  return '<span class="pill src-bde">BDE'+(r.bde?(' &middot; '+esc(r.bde)):'')+'</span>';
+}
+const STATUS_META={
+  'draft':['warn','Awaiting approval'],
+  'needs-info':['warn','Needs time / email'],
+  'approved-awaiting-creds':['warn','Approved &mdash; queued for M365'],
+  'scheduled':['vio','Invite sent'],
+  'accepted':['good','Accepted'],
+  'declined':['bad','Declined'],
+  'reschedule-requested':['warn','Reschedule requested'],
+  'cancelled':['mut','Cancelled']};
+function statusChip(r){
+  const m=STATUS_META[r.status]||['mut',esc(r.status)];
+  return '<span class="st '+m[0]+'">'+m[1]+'</span>';
+}
+function extraChips(r){
+  let h='';
+  if(r.attendee_response==='tentative')h+='<span class="st warn">Tentative</span>';
+  if(r.teams_join_url)h+='<a class="st vio" href="'+esc(r.teams_join_url)+'" target="_blank" rel="noopener">Teams link &#8599;</a>';
+  if(r.pixel_opened_at)h+='<span class="st mut" title="Email-open pixel fired '+esc(fdt(r.pixel_opened_at))+' — a signal, not proof they read it">Opened</span>';
+  if(r.reminder_sent_at)h+='<span class="st mut" title="Reminder emailed '+esc(fdt(r.reminder_sent_at))+'">Reminded</span>';
+  return h;
+}
+const DONE_LABEL={'approved-awaiting-creds':'Approved &#10003; &mdash; queued','scheduled':'Scheduled &#10003;',
+                  'accepted':'Accepted &#10003;','declined':'Declined'};
+function card(r,i){
+  const phone=r.dest9?('0'+r.dest9):'';
+  const time=r.start_at?dlv(r.start_at):'';
+  const cancelled=r.status==='cancelled';
+  const ro=PAST;                                                            // Past tab = read-only reference
+  const approvable=(r.status==='draft'||r.status==='needs-info');           // pre-approval
+  const queued=r.status==='approved-awaiting-creds';                        // approved, not yet sent
+  const emailEditable=(approvable||queued)&&!cancelled&&!ro;
+  // inline amber hints — missing time/email stays visible on the card, never a separate tray
+  let hints='';
+  if(!cancelled&&!ro){
+    if(!r.start_at)hints+='<div class="hint">'+ICO_WARN+'<span>No confirmed time yet'+(r.agreed_text?(' &mdash; agreed on the call: &ldquo;<b>'+esc(r.agreed_text)+'</b>&rdquo;'):'')+'. Pick a slot below.</span></div>';
+    if(!r.attendee_email&&emailEditable)hints+='<div class="hint">'+ICO_WARN+'<span>No email on file &mdash; add the prospect&rsquo;s address so the invite can send.</span></div>';
+    // Emma prefilled the time from the agreed phrase — provenance stays visible until approval.
+    if(r.start_at&&r.start_at_parsed_from)hints+='<div class="hint parsed">'+ICO_SPARK+'<span>Time prefilled by Emma &mdash; parsed from: &ldquo;<b>'+esc(r.start_at_parsed_from)+'</b>&rdquo;. Check it, adjust if wrong, then approve.</span></div>';
+  }
+  // ONE primary button per card (Past tab: no actions at all — reference only)
+  let primary='';
+  if(ro){primary='<span class="muted small">'+(cancelled?'cancelled':'past')+'</span>';}
+  else if(cancelled){primary='<span class="muted small">cancelled</span>';}
+  else if(approvable){primary='<button class="btn-primary" id="p'+i+'" onclick="approve('+i+')">Approve &amp; schedule</button>';}
+  else if(r.status==='reschedule-requested'){primary='<button class="btn-primary" id="p'+i+'" onclick="reschedule('+i+')">Approve new time</button>';}
+  else{primary='<button class="btn-done" id="p'+i+'" disabled>'+(DONE_LABEL[r.status]||'Done &#10003;')+'</button>';}
+  return `<div class="mcard${cancelled?' cancelled':''}" data-i="${i}">
+    <div class="mhead">
+      <a class="co" href="/prospect/${esc(r.dest9)}">${esc(r.company||'(unknown)')}</a>
+      <span class="badges">${srcBadge(r)} ${statusChip(r)} ${extraChips(r)}</span>
+    </div>
+    <div class="meta">
+      ${r.contact_name?`<span>${ICO_USER}<b>${esc(r.contact_name)}</b></span>`:''}
+      <span>${ICO_PHONE}<b>${esc(phone)}</b></span>
+      <span>booked ${esc(fdt(r.booked_at))}</span>
+      ${r.approved_by?`<span>approved by <b>${esc(r.approved_by)}</b></span>`:''}
+      <span class="links">
+        <a href="javascript:void(0)" onclick="openPanel(${r.id})" title="Full timeline, invite details, CRM note">details</a>
+        ${r.call_id?`<a href="/call/${encodeURIComponent(r.call_id)}">booked call &#8599;</a>`:''}
+        <a href="/prospect/${esc(r.dest9)}">prospect &#8599;</a>
+        ${r.domain?`<a href="https://${esc(r.domain)}" target="_blank" rel="noopener">${esc(r.domain)} &#8599;</a>`:''}
+      </span>
+    </div>
+    ${r.summary?`<div class="summ1" onclick="this.classList.toggle('open')" title="${esc(r.summary)}"><b>Context:</b> ${esc(r.summary)}</div>`:''}
+    ${r.last_reply?`<div class="summ1" onclick="this.classList.toggle('open')" title="${esc(r.last_reply)}"><b>Reply ${esc(fdt(r.last_reply_at))}:</b> ${esc(r.last_reply)}</div>`:''}
+    ${hints}
+    ${r.error?`<div class="errline">last send error: ${esc(r.error)} &mdash; Emma retries automatically</div>`:''}
+    <div class="act">
+      <label class="fld"><span class="fl">Time</span>
+        <input type="datetime-local" id="t${i}" value="${esc(time)}" ${(cancelled||ro)?'disabled':''} oninput="edited(${i})" /></label>
+      <label class="fld"><span class="fl">Invite to</span>
+        <input type="email" id="e${i}" value="${esc(r.attendee_email||'')}" placeholder="prospect@email.com" ${emailEditable?'':'disabled'} oninput="edited(${i})" /></label>
+      <label class="fld"><span class="fl">CC / extra attendees</span>
+        <input type="text" id="c${i}" value="${esc(r.cc_emails||'')}" placeholder="colleague@…, manager@…" title="Comma-separated emails — added to the invite as required attendees. For sent invites, edit CC from the details panel." ${emailEditable?'':'disabled'} oninput="edited(${i})" /></label>
+      <span class="grow"></span>
+      ${(cancelled||ro)?'':remMini(r,i)}
+      ${(cancelled||ro)?''
+        :(approvable||queued
+          ? `<a class="qcancel" onclick="openDecline(${r.id})" title="Don't send this invite — logs a reason">Decline</a>`
+          : `<a class="qcancel" onclick="cancelMeeting(${i})">Cancel${r.has_event?' meeting':''}</a>`)}
+      ${primary}
+    </div>
+  </div>`;
+}
+// Compact per-card reminders switch (owner req 5d). Reminders are the only approval-exempt
+// send; silencing here just drops the meeting from Emma's reminder set.
+function remMini(r,i){
+  const on=r.reminders_enabled!==false;
+  return '<button type="button" class="rem-mini'+(on?' on':'')+'" onclick="toggleReminders(event,'+i+')" '
+    +'role="switch" aria-checked="'+(on?'true':'false')+'" aria-label="Toggle reminders" title="'
+    +(on?'Reminders ON — auto morning-of + Friday-for-Monday. Click to silence.'
+        :'Reminders OFF for this meeting. Click to enable.')+'">'
+    +'<span class="sw"></span><span>Reminders</span></button>';
+}
+window.toggleReminders=async function(ev,i){
+  if(ev)ev.stopPropagation();
+  const r=DATA[i]; if(!r)return;
+  const on=(r.reminders_enabled===false);              // target = the opposite of current
+  try{
+    await api('/api/emma/reminders',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:r.id,enabled:on})});
+    r.reminders_enabled=on; render();
+  }catch(e){alert('Reminders toggle failed: '+e.message);}
+};
+// Editing a done-state card re-arms its primary button: queued rows re-approve
+// (approve_meeting accepts 'approved-awaiting-creds'), sent rows go via reschedule.
+window.edited=function(i){
+  if(PAST)return;                                  // Past tab is read-only
+  const r=DATA[i]; if(!r)return;
+  const b=$('#p'+i); if(!b||!b.disabled||r.status==='cancelled')return;
+  b.disabled=false; b.className='btn-primary';
+  if(r.status==='approved-awaiting-creds'){b.innerHTML='Approve &amp; schedule';b.onclick=function(){approve(i);};}
+  else{b.innerHTML='Approve new time';b.onclick=function(){reschedule(i);};}
+};
+window.approve=async function(i){
+  const r=DATA[i]; if(!r)return;
+  const t=($('#t'+i)&&$('#t'+i).value)||'';
+  const em=($('#e'+i)&&$('#e'+i).value.trim())||'';
+  const ccEl=$('#c'+i); const cc=ccEl?ccEl.value.trim():null;   // null = leave stored CC as-is
+  if(!t){alert('Set the meeting time first.');return;}
+  if(!em){alert('Add the prospect’s email first — the invite needs an attendee.');return;}
+  const btn=$('#p'+i); if(btn)btn.disabled=true;
+  try{
+    const body={id:r.id,start_at:t+':00',attendee_email:em,title:r.title,notes:r.notes};
+    if(cc!==null)body.cc=cc;
+    const res=await api('/api/emma/approve',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    if(res.note)console.log('emma approve:',res.note);
+    await load();
+  }catch(e){alert('Approve failed: '+e.message); if(btn)btn.disabled=false;}
+};
+window.reschedule=async function(i){
+  const r=DATA[i]; if(!r)return;
+  const t=($('#t'+i)&&$('#t'+i).value)||'';
+  if(!t){alert('Pick the new time first.');return;}
+  const btn=$('#p'+i); if(btn)btn.disabled=true;
+  try{
+    await api('/api/emma/reschedule',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:r.id,start_at:t+':00'})});
+    await load();
+  }catch(e){alert('Reschedule failed: '+e.message); if(btn)btn.disabled=false;}
+};
+window.cancelMeeting=async function(i){
+  const r=DATA[i]; if(!r)return;
+  if(!confirm('Cancel this meeting'+(r.has_event?' (the attendee is notified)':'')+'?'))return;
+  const reason=prompt('Reason (optional, goes on the cancellation):','')||'';
+  try{
+    await api('/api/emma/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:r.id,reason})});
+    await load();
+  }catch(e){alert('Cancel failed: '+e.message);}
+};
+window.testInvite=async function(){
+  const em=prompt('Send a REAL test Teams invite to which address?','');
+  if(!em)return;
+  try{
+    const res=await api('/api/emma/test',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:em.trim()})});
+    if(res.ok)alert('Test invite sent from '+(res.mailbox||'the scheduler mailbox')+' — check '+em+'.');
+    else alert('Not ready: '+(res.missing?('missing env values '+res.missing.join(', ')):(res.error||'unknown error')));
+  }catch(e){alert('Test failed: '+e.message);}
+};
+// ── drill-down slide-over: full timeline + invite details + CRM note ─────────
+let PANEL_ID=null;
+const TL_META={
+  'drafted':['Drafted by Emma','vio'],
+  'time-parsed':['Agreed time parsed &rarr; prefilled','vio'],
+  'time-set':['Time updated (pre-approval)',''],
+  'approved':['Approved','good'],
+  'approved-new-time':['New time approved','good'],
+  'sent':['Invite sent &mdash; Teams event created','vio'],
+  'confirmation-email':['Confirmation email sent','vio'],
+  'pixel-open':['Email opened &mdash; signal, not proof','warn'],
+  'reply':['Prospect replied','warn'],
+  'patched':['Invite updated &mdash; same event PATCHed','vio'],
+  'cc-updated':['CC list updated',''],
+  'cc-patched':['Extra attendees added to the live invite','vio'],
+  'reminder':['Reminder sent',''],
+  'reminders-toggled':['Reminders toggled',''],
+  'declined':['Declined &mdash; not sent','bad'],
+  'cancelled':['Cancelled','bad'],
+  'error':['Error','bad'],
+  'test':['Test invite','']};
+function tlMeta(ev){
+  if(ev.kind==='response'){const rr=(ev.detail||{}).response||'responded';
+    return ['Attendee '+esc(rr),rr==='declined'?'bad':(rr==='tentative'?'warn':'good')];}
+  return TL_META[ev.kind]||[esc(ev.kind),''];
+}
+function tlDetail(ev){
+  const d=ev.detail||{};const bits=[];
+  if(d.by)bits.push('by '+esc(d.by));
+  if(d.to)bits.push('to '+esc(d.to));
+  if(d.flavour)bits.push(esc(d.flavour));
+  if(d.start_at)bits.push('&rarr; '+esc(fdt(d.start_at)||d.start_at));
+  if(d.from_text)bits.push('from &ldquo;'+esc(d.from_text)+'&rdquo;');
+  if(d.cc)bits.push('CC: '+esc(d.cc));
+  if(d.subject)bits.push('&ldquo;'+esc(d.subject)+'&rdquo;');
+  if(d.preview)bits.push(esc(d.preview));
+  if(d.reason)bits.push(esc(d.reason));
+  if(d.action)bits.push('during '+esc(d.action));
+  if(d.error)bits.push(esc(d.error));
+  return bits.join(' &middot; ');
+}
+function respChip(m){
+  if(m.attendee_response==='accepted')return '<span class="st good">Accepted</span>';
+  if(m.attendee_response==='declined')return '<span class="st bad">Declined</span>';
+  if(m.attendee_response==='tentative')return '<span class="st warn">Tentative</span>';
+  return '<span class="st mut">'+(m.has_event||m.graph_event_id?'No response yet':'Invite not sent yet')+'</span>';
+}
+function renderPanel(d){
+  const m=d.meeting||{}; const el=$('#spanel'); if(!el)return;
+  // Editing model: pre-send rows are fully editable + Approve/Decline; a live invite is
+  // reschedule/cancel only (its email/title are frozen — double-send guard); settled = read-only.
+  const canEdit=(m.status==='draft'||m.status==='needs-info'||m.status==='approved-awaiting-creds');
+  const hasEvent=!!m.graph_event_id;                    // an invite already exists
+  const isSettled=(m.status==='cancelled'||m.status==='declined');
+  const timeVal=m.start_at?dlv(m.start_at):'';
+  const noEmail=!(m.attendee_email&&String(m.attendee_email).trim());
+  const variantCap=(m.source==='lisa4'?'website (15-min) variant':'marketing (45-min) variant');
+  const remOn=m.reminders_enabled!==false;
+
+  // read-only provenance (never edited inline)
+  const kv=[];
+  if(m.contact_name)kv.push(['Contact','<b>'+esc(m.contact_name)+'</b>']);
+  if(m.dest9)kv.push(['Phone','0'+esc(m.dest9)]);
+  if(m.agreed_text)kv.push(['Agreed on call','&ldquo;'+esc(m.agreed_text)+'&rdquo;']);
+  kv.push(['Source',(m.source==='lisa4'?'Lisa 4 · Website reveal':m.source==='lisa1'?'Lisa 1 · Marketing':('Human BDE'+(m.bde?' · '+esc(m.bde):'')))]);
+  kv.push(['Booked',esc(fdt(m.booked_at))||'&mdash;']);
+  if(m.approved_by)kv.push(['Approved','by '+esc(m.approved_by)+' &middot; '+esc(fdt(m.approved_at))]);
+  if(m.teams_join_url)kv.push(['Teams','<a href="'+esc(m.teams_join_url)+'" target="_blank" rel="noopener">Join link &#8599;</a>']);
+  if(m.confirmation_sent_at)kv.push(['Confirmation','emailed '+esc(fdt(m.confirmation_sent_at))
+    +(m.pixel_opened_at?('<span class="sub">opened '+esc(fdt(m.pixel_opened_at))+' &mdash; signal, not proof</span>'):'')]);
+  if(m.reminder_sent_at)kv.push(['Reminder','sent '+esc(fdt(m.reminder_sent_at))]);
+
+  const tl=(d.timeline||[]).map(ev=>{
+    const mt=tlMeta(ev);const det=tlDetail(ev);
+    return '<div class="tl-i '+mt[1]+'"><span class="tl-dot"></span><div class="tl-b">'
+      +'<div class="tl-t">'+mt[0]+'</div>'
+      +(det?'<div class="tl-d">'+det+'</div>':'')
+      +'<div class="tl-when">'+esc(fdt(ev.at))+'</div></div></div>';
+  }).join('');
+
+  // ── editable invite form (time stays editable even for live rows so Reschedule can read it) ──
+  const dateFld='<label class="spf"><span class="spf-l">Date &amp; time</span>'
+    +'<input type="datetime-local" id="spDate" value="'+esc(timeVal)+'"'+(isSettled?' disabled':'')+' />'
+    +(m.start_at_parsed_from&&canEdit?('<span class="spf-h parsed">'+ICO_SPARK+'<span>Prefilled by Emma from &ldquo;<b>'+esc(m.start_at_parsed_from)+'</b>&rdquo; &mdash; check &amp; adjust before you approve.</span></span>'):'')
+    +(hasEvent&&!isSettled?'<span class="spf-h"><span>Change this, then use <b>Reschedule</b> below &mdash; the same Teams event is updated.</span></span>':'')
+    +'</label>';
+  const emailFld='<label class="spf"><span class="spf-l">Invite to</span>'
+    +'<input type="email" id="spEmail" value="'+esc(m.attendee_email||'')+'" placeholder="prospect@email.com"'+(canEdit?'':' disabled')+' />'
+    +(noEmail&&!isSettled?('<span class="spf-h warn">'+ICO_WARN+'<span>No email on file &mdash; add one or the invite can&rsquo;t send.</span></span>'):'')
+    +'</label>';
+  const titleFld='<label class="spf"><span class="spf-l">Meeting title</span>'
+    +'<input type="text" id="spTitle" value="'+esc(m.title||'')+'" placeholder="Meeting — Traffic Radius"'+(canEdit?'':' disabled')+' /></label>';
+  const ccFld='<label class="spf"><span class="spf-l">CC / extra attendees</span>'
+    +'<div class="sp-cc"><input type="text" id="spCC" value="'+esc(m.cc_emails||'')+'" placeholder="colleague@company.com, manager@…"'+(isSettled?' disabled':'')+' />'
+    +(isSettled?'':'<button class="btn-ghost" id="spCCbtn" onclick="updateCC()">'+(hasEvent?'Update':'Save')+'</button>')+'</div>'
+    +'<span class="spf-h"><span>'+(hasEvent
+        ?'Added as <b>required attendees</b> on the live invite &mdash; Graph mails everyone the update.'
+        :'They join the invite as required attendees when it sends.')+'</span></span></label>';
+
+  const remRow=isSettled?'':('<div class="sp-sec sp-rem"><div class="rem-row">'
+    +'<div><div class="rem-t">Automatic reminders</div><div class="rem-d">Morning-of + Friday-for-Monday &mdash; the only emails that go without your approval.</div></div>'
+    +'<button type="button" class="rem-tog'+(remOn?' on':'')+'" role="switch" aria-checked="'+(remOn?'true':'false')+'" onclick="panelReminders(this)" aria-label="Toggle reminders"><span class="knob"></span></button>'
+    +'</div></div>');
+
+  // ── sticky footer: primary/secondary actions, contextual to state ──
+  let foot;
+  if(isSettled){
+    const rsn=(d.timeline||[]).slice().reverse().find(e=>e.kind==='declined'||e.kind==='cancelled');
+    const rtxt=(rsn&&rsn.detail&&rsn.detail.reason)?(' &mdash; '+esc(rsn.detail.reason)):'';
+    foot='<div class="sp-foot settled"><span class="muted small">This meeting was '+esc(m.status)+rtxt+'. Read-only.</span></div>';
+  }else if(canEdit){
+    foot='<div class="sp-foot">'
+      +(noEmail?('<div class="foot-hint">'+ICO_WARN+'<span>Add the prospect&rsquo;s email above to enable sending.</span></div>'):'')
+      +'<div class="foot-btns"><button class="btn-outline danger" onclick="declinePanel()">Decline &amp; don&rsquo;t send</button>'
+      +'<button class="btn-primary" id="spApprove" onclick="approvePanel()"'+(noEmail?' disabled':'')+'>Approve &amp; send invite</button></div></div>';
+  }else{  // live invite — NO Approve button (double-send guard); show status + reschedule/cancel
+    const prim=(m.status==='reschedule-requested')?'Approve new time':'Reschedule';
+    const done=(m.status==='accepted')?'Accepted &#10003;':(m.status==='declined')?'Declined':'Invite sent &#10003;';
+    const dcls=(STATUS_META[m.status]?STATUS_META[m.status][0]:'vio');
+    foot='<div class="sp-foot"><span class="st '+dcls+'">'+done+'</span>'
+      +'<div class="foot-btns"><button class="btn-outline danger" onclick="cancelPanel()">Cancel meeting</button>'
+      +'<button class="btn-primary" id="spResched" onclick="reschedulePanel()">'+prim+'</button></div></div>';
+  }
+
+  el.innerHTML=
+    '<div class="sp-head"><div class="t">'
+      +'<div class="eyebrow">Meeting drill-down</div>'
+      +'<h2>'+esc(m.company||'(unknown)')+'</h2>'
+      +'<div class="chips">'+srcBadge(m)+' '+statusChip(m)+' '+respChip(m)+'</div>'
+    +'</div><button class="sp-x" onclick="closePanel()" aria-label="Close">&times;</button></div>'
+    +'<div class="sp-body">'
+      // (owner req 2) invite preview FIRST — Kiran sees exactly what sends before approving
+      +(d.body_preview?('<div class="sp-sec"><div class="eyebrow">Invite preview</div>'
+        +'<div class="spf-h" style="margin:0 0 8px"><span>Exactly what '+(m.attendee_email?('<b>'+esc(m.attendee_email)+'</b>'):'the prospect')+' receives &mdash; '+variantCap+'.</span></div>'
+        +'<iframe id="spPreview" class="sp-preview" title="Invite email preview" sandbox=""></iframe>'
+      +'</div>'):'')
+      // editable fields
+      +'<div class="sp-sec"><div class="eyebrow">Invite '+(canEdit?'&mdash; edit before you approve':'details')+'</div>'
+        +'<div class="sp-form">'+dateFld+emailFld+titleFld+ccFld+'</div></div>'
+      // read-only provenance
+      +(kv.length?('<div class="sp-sec"><div class="eyebrow">Context</div><div class="kv">'
+        +kv.map(p=>'<span class="k">'+p[0]+'</span><span class="v">'+p[1]+'</span>').join('')+'</div></div>'):'')
+      +remRow
+      // booking-call context + links
+      +(m.summary?('<div class="sp-sec"><div class="eyebrow">Booking-call context</div><div class="sp-note">'+esc(m.summary)+'</div>'
+        +'<div class="sp-links">'
+        +(d.call_url?('<a href="'+esc(d.call_url)+'">call summary &amp; transcript &#8599;</a>'):'')
+        +(d.prospect_url?('<a href="'+esc(d.prospect_url)+'">prospect page &#8599;</a>'):'')
+        +(m.domain?('<a href="https://'+esc(m.domain)+'" target="_blank" rel="noopener">'+esc(m.domain)+' &#8599;</a>'):'')
+        +'</div></div>')
+        :('<div class="sp-sec"><div class="eyebrow">Links</div><div class="sp-links">'
+        +(d.call_url?('<a href="'+esc(d.call_url)+'">call summary &amp; transcript &#8599;</a>'):'')
+        +(d.prospect_url?('<a href="'+esc(d.prospect_url)+'">prospect page &#8599;</a>'):'')
+        +'</div></div>'))
+      +(m.last_reply?('<div class="sp-sec"><div class="eyebrow">Latest reply '+esc(fdt(m.last_reply_at))+'</div><div class="sp-note">'+esc(m.last_reply)+'</div></div>'):'')
+      +(d.crm&&d.crm.note?('<div class="sp-sec"><div class="eyebrow">CRM note</div><div class="sp-note">'+esc(d.crm.note)
+        +'</div><div class="spf-h" style="margin-top:6px"><span>last updated by '+esc(d.crm.updated_by||'?')+' &middot; '+esc(fdt(d.crm.updated_at))+'</span></div></div>'):'')
+      +'<div class="sp-sec"><div class="eyebrow">Timeline</div><div class="tl">'+(tl||'<span class="muted small">No events yet.</span>')+'</div></div>'
+    +'</div>'
+    +foot;
+  // Fill the preview iframe via the srcdoc PROPERTY (avoids attribute-escaping the whole email).
+  if(d.body_preview){const pv=$('#spPreview');if(pv)pv.srcdoc=d.body_preview;}
+}
+window.openPanel=async function(id){
+  PANEL_ID=id;
+  $('#ovl').classList.add('on');$('#spanel').classList.add('on');
+  $('#spanel').innerHTML='<div class="sp-body"><p class="muted small">Loading&hellip;</p></div>';
+  try{const d=await api('/api/emma/meeting/'+id);if(PANEL_ID!==id)return;renderPanel(d);}
+  catch(e){if(PANEL_ID===id)$('#spanel').innerHTML='<div class="sp-body"><p class="muted small">Could not load: '+esc(e.message)+'</p></div>';}
+};
+window.closePanel=function(){PANEL_ID=null;$('#ovl').classList.remove('on');$('#spanel').classList.remove('on');};
+window.updateCC=async function(){
+  if(PANEL_ID==null)return;
+  const inp=$('#spCC'); if(!inp)return;
+  const btn=$('#spCCbtn'); if(btn){btn.disabled=true;btn.textContent='Updating…';}
+  try{
+    await api('/api/emma/cc',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:PANEL_ID,cc:inp.value.trim()})});
+    await load();
+    if(PANEL_ID!=null)await openPanel(PANEL_ID);   // re-render with the fresh timeline
+  }catch(e){alert('CC update failed: '+e.message);if(btn){btn.disabled=false;btn.textContent='Update';}}
+};
+// ── drill-down actions: approve / reschedule / decline / cancel + reminders ──────────────
+function _reopen(id){return load().then(function(){if(PANEL_ID===id)return openPanel(id);});}
+window.approvePanel=async function(){
+  if(PANEL_ID==null)return; const id=PANEL_ID;
+  const t=(($('#spDate')||{}).value)||'';
+  const em=(($('#spEmail')||{}).value||'').trim();
+  const title=(($('#spTitle')||{}).value||'').trim();
+  const ccEl=$('#spCC'); const cc=ccEl?ccEl.value.trim():null;
+  if(!t){alert('Set the meeting time first.');return;}
+  if(!em){alert('Add the prospect’s email first — the invite needs an attendee.');return;}
+  const btn=$('#spApprove'); if(btn){btn.disabled=true;btn.textContent='Sending…';}
+  try{
+    const body={id:id,start_at:t+':00',attendee_email:em,title:title};
+    if(cc!==null)body.cc=cc;
+    await api('/api/emma/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    await _reopen(id);
+  }catch(e){alert('Approve failed: '+e.message);if(btn){btn.disabled=false;btn.innerHTML='Approve &amp; send invite';}}
+};
+window.reschedulePanel=async function(){
+  if(PANEL_ID==null)return; const id=PANEL_ID;
+  const t=(($('#spDate')||{}).value)||'';
+  if(!t){alert('Pick the new time first.');return;}
+  const btn=$('#spResched'); if(btn)btn.disabled=true;
+  try{
+    await api('/api/emma/reschedule',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id,start_at:t+':00'})});
+    await _reopen(id);
+  }catch(e){alert('Reschedule failed: '+e.message);if(btn)btn.disabled=false;}
+};
+window.declinePanel=function(){if(PANEL_ID!=null)openDecline(PANEL_ID);};
+window.cancelPanel=async function(){
+  if(PANEL_ID==null)return; const id=PANEL_ID;
+  const r=DATA.find(x=>x.id===id)||{};
+  if(!confirm('Cancel this meeting'+(r.has_event?' (the attendee is notified)':'')+'?'))return;
+  const reason=prompt('Reason (optional, goes on the cancellation):','')||'';
+  try{
+    await api('/api/emma/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id,reason})});
+    await load(); closePanel();
+  }catch(e){alert('Cancel failed: '+e.message);}
+};
+window.panelReminders=async function(btn){
+  if(PANEL_ID==null||!btn)return; const id=PANEL_ID;
+  const on=btn.getAttribute('aria-checked')!=='true';   // target = opposite of current
+  btn.disabled=true;
+  try{
+    await api('/api/emma/reminders',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id,enabled:on})});
+    const idx=DATA.findIndex(r=>r.id===id); if(idx>=0)DATA[idx].reminders_enabled=on;
+    render(); await _reopen(id);
+  }catch(e){alert('Reminders toggle failed: '+e.message);btn.disabled=false;}
+};
+// Decline reason picker (owner req 3) — "don't send", sets status=cancelled with a logged reason.
+let DECLINE_ID=null;
+window.openDecline=function(id){
+  DECLINE_ID=id;
+  const n=$('#dNote'); if(n)n.value='';
+  const first=document.querySelector('input[name=dreason][value=already-scheduled]'); if(first)first.checked=true;
+  $('#declineOvl').classList.add('on'); $('#declineModal').classList.add('on');
+  if(n)setTimeout(function(){const f=document.querySelector('input[name=dreason]:checked');if(f)f.focus();},30);
+};
+window.closeDecline=function(){DECLINE_ID=null;$('#declineOvl').classList.remove('on');$('#declineModal').classList.remove('on');};
+window.doDecline=async function(){
+  if(DECLINE_ID==null)return; const id=DECLINE_ID;
+  const codeEl=document.querySelector('input[name=dreason]:checked');
+  const code=codeEl?codeEl.value:'other';
+  const note=(($('#dNote')||{}).value||'').trim();
+  const btn=$('#dConfirm'); if(btn){btn.disabled=true;btn.textContent='Declining…';}
+  try{
+    await api('/api/emma/decline',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:id,reason_code:code,note:note})});
+    closeDecline(); if(PANEL_ID===id)closePanel();
+    await load();
+  }catch(e){alert('Decline failed: '+e.message);if(btn){btn.disabled=false;btn.innerHTML='Decline &amp; don’t send';}}
+};
+// Tabs: [Needs approval] = draft/needs-info still ahead (the only thing that needs Kiran now);
+// [Scheduled] = approved/sent/accepted (+ reschedule-requested) still ahead; [Past] = time
+// already passed (any status) plus declined/cancelled — read-only, latest first. Times compare
+// in Melbourne wall-clock, same space as dlv().
+function melNow(){try{return new Date().toLocaleString('sv-SE',{timeZone:'Australia/Melbourne'}).slice(0,16).replace(' ','T');}catch(e){return new Date().toISOString().slice(0,16);}}
+function needsAction(r){return r.status==='draft'||r.status==='needs-info';}
+function settled(r){return r.status==='cancelled'||r.status==='declined';}
+function hasPassed(r){const t=dlv(r.start_at);return !!t&&t<melNow();}
+function isUpcoming(r){
+  if(settled(r))return false;                     // settled rows always read from Past
+  if(r.start_at)return !hasPassed(r);             // has a time → future only
+  // no time yet → only TODAY's bookings onward (Raj: "upcoming = today's bookings and daily
+  // going forward"). Bookings from previous days never appear in the main view — Past only.
+  if(!needsAction(r))return false;
+  if(!r.booked_at)return false;
+  try{
+    const bkDay=new Date(r.booked_at).toLocaleString('sv-SE',{timeZone:'Australia/Melbourne'}).slice(0,10);
+    return bkDay>=melNow().slice(0,10);   // string compare, both Melbourne "YYYY-MM-DD"
+  }catch(e){return dlv(r.booked_at).slice(0,10)>=melNow().slice(0,10);}
+}
+// Three destinations, one classifier — a row lives in exactly one tab:
+//   need  = draft/needs-info still ahead → the ONLY thing that needs Kiran now (default view)
+//   sched = approved/sent/accepted (and reschedule-requested) still ahead → live invites
+//   past  = time already passed (any status), OR declined/cancelled → read-only archive
+// Everything already-scheduled/accepted/declined/cancelled is kept OUT of "need" (owner rule).
+function tabOf(r){
+  if(!isUpcoming(r))return 'past';                // isUpcoming already excludes settled + passed
+  return needsAction(r)?'need':'sched';
+}
+function visible(){
+  let rows=DATA.filter(r=>tabOf(r)===TAB);
+  if(F.src!=='all')rows=rows.filter(r=>r.source===F.src);
+  if(F.st!=='all')rows=rows.filter(r=>r.status===F.st);
+  if(F.day)rows=rows.filter(r=>r.day===F.day);
+  if(F.q){const q=F.q.toLowerCase();
+    rows=rows.filter(r=>[r.company,r.contact_name,r.dest9,r.attendee_email,r.domain,r.bde]
+      .some(v=>v&&String(v).toLowerCase().includes(q)));}
+  if(PAST)rows=rows.slice().reverse();           // Past reads latest-first
+  return rows;                                    // server order is already soonest-first
+}
+function counters(){
+  let need=0,sched=0,past=0;
+  DATA.forEach(r=>{const t=tabOf(r);if(t==='need')need++;else if(t==='sched')sched++;else past++;});
+  // "scheduled today" = live invites whose meeting is TODAY (the number Kiran watches this morning)
+  const schToday=DATA.filter(r=>tabOf(r)==='sched'&&r.day===TODAY).length;
+  const accToday=DATA.filter(r=>r.status==='accepted'&&r.day===TODAY).length;
+  const tn=$('#tabNeedN'),ts=$('#tabSchedN'),tp=$('#tabPastN');
+  if(tn)tn.textContent=need; if(ts)ts.textContent=sched; if(tp)tp.textContent=past;
+  // header micro-counter: "X need approval / Y scheduled today" (+ accepted-today when any)
+  $('#hdCounts').innerHTML=
+    '<span class="dchip" title="Drafts still waiting on your Approve &amp; schedule"><span class="dot" style="background:var(--warn)"></span><b>'+need+'</b> need approval</span>'
+   +'<span class="dchip" title="Approved / sent invites whose meeting is today"><span class="dot" style="background:var(--vio)"></span><b>'+schToday+'</b> scheduled today</span>'
+   +(accToday?'<span class="dchip" title="Prospect accepted a meeting happening today"><span class="dot" style="background:var(--good)"></span><b>'+accToday+'</b> accepted today</span>':'');
+}
+function render(){
+  counters();
+  const rows=visible();
+  if(!rows.length){
+    const empty={
+      need:'<h3>Nothing needs you right now</h3><p>Every booking is approved or scheduled. New bookings from Lisa and the BDE floor land here the moment they come in — pre-drafted and ready for one click.</p>',
+      sched:'<h3>No scheduled meetings ahead</h3><p>Approved &amp; sent invites still to come will show here. Approve a draft from <b>Needs approval</b> to schedule one.</p>',
+      past:'<h3>No past meetings match</h3><p>Nothing in the archive fits these filters — try widening them.</p>'}[TAB];
+    $('#board').innerHTML='<div class="empty"><div class="e-ic">'+ICO_CAL+'</div>'+empty+'</div>';
+    return;
+  }
+  const groups=[]; const idx={};
+  rows.forEach(r=>{const k=r.day||'zzzz';if(!(k in idx)){idx[k]=groups.length;groups.push({day:r.day,rows:[]});}groups[idx[k]].rows.push(r);});
+  $('#board').innerHTML=groups.map(g=>{
+    const n=g.rows.length;
+    const cls=g.day===TODAY?' today':'';
+    return `<div class="dayhead${cls}"><h2>${esc(dayLabel(g.day))}</h2><span class="dn">${n} meeting${n>1?'s':''}</span></div>
+      <div class="cards">${g.rows.map(r=>card(r,DATA.indexOf(r))).join('')}</div>`;
+  }).join('');
+}
+function readFilters(){F.src=$('#fSrc').value;F.st=$('#fSt').value;F.day=$('#fDay').value;F.q=$('#fQ').value.trim();render();}
+async function load(){
+  try{
+    const d=await api('/api/emma/queue');
+    DATA=d.rows||[];TODAY=d.today||'';GRAPH=!!d.graph_configured;MISSING=d.missing_creds||[];
+    const pill=$('#credsPill');
+    pill.style.display=GRAPH?'none':'';
+    const ok=$('#credsOk'); if(ok)ok.style.display=GRAPH?'':'none';
+    if(!GRAPH&&MISSING.length)pill.title='Still needed: '+MISSING.join(', ')+' — approvals queue safely and send the moment these land.';
+    render();
+    // keep an open drill-down panel fresh (skipped while an input is focused — the
+    // 30s auto-refresh guard above already covers mid-typing)
+    if(PANEL_ID!=null){
+      try{const dd=await api('/api/emma/meeting/'+PANEL_ID);if(PANEL_ID!=null)renderPanel(dd);}catch(e){}
+    }
+  }catch(e){$('#board').innerHTML='<div class="empty"><div class="e-ic">'+ICO_CAL+'</div><h3>Could not load</h3><p>'+esc(e.message)+' — retrying on the next refresh.</p></div>';}
+}
+(async function(){
+  ['fSrc','fSt','fDay'].forEach(id=>$('#'+id).addEventListener('change',readFilters));
+  $('#fQ').addEventListener('input',readFilters);
+  document.querySelectorAll('#tabs .tab').forEach(function(b){
+    b.addEventListener('click',function(){
+      TAB=b.dataset.tab||'need'; PAST=(TAB==='past');   // Past tab alone is read-only
+      document.querySelectorAll('#tabs .tab').forEach(function(x){x.classList.toggle('on',x===b);x.setAttribute('aria-selected',x===b?'true':'false');});
+      render();
+    });
+  });
+  // click anywhere on a card (not its controls) → drill-down slide-over
+  $('#board').addEventListener('click',function(e){
+    const c=e.target.closest('.mcard'); if(!c)return;
+    if(e.target.closest('a,button,input,select,textarea,label,.summ1'))return;
+    const r=DATA[+c.dataset.i]; if(r&&r.id!=null)openPanel(r.id);
+  });
+  document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;
+    if(DECLINE_ID!=null){closeDecline();}else{closePanel();}});
+  try{const me=await api('/api/me');$('#who').textContent=(me.name||me.email||'');}catch(e){}
+  load();
+  // REAL-TIME: refresh every 30s; skip while the tab is hidden or the user is mid-edit.
+  setInterval(function(){if(document.hidden)return;var a=document.activeElement;if(a&&(a.tagName==='SELECT'||a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;load();},30000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)load();});})();
+</script>
+
+<!-- drill-down slide-over: filled by renderPanel() when a card is clicked -->
+<div class="ovl" id="ovl" onclick="closePanel()"></div>
+<aside class="spanel" id="spanel" role="dialog" aria-label="Meeting details"></aside>
+
+<!-- decline reason picker (owner req 3): "don't send" — logs a reason, never emails the prospect -->
+<div class="dmodal-ovl" id="declineOvl" onclick="closeDecline()"></div>
+<div class="dmodal" id="declineModal" role="dialog" aria-modal="true" aria-label="Decline meeting">
+  <h3>Decline &mdash; don&rsquo;t send this invite</h3>
+  <p class="dm-sub">Removes it from <b>Needs approval</b> and never emails the prospect. Logged with your reason for the record.</p>
+  <div class="dm-reasons">
+    <label><input type="radio" name="dreason" value="already-scheduled" checked> Already scheduled manually</label>
+    <label><input type="radio" name="dreason" value="not-proceeding"> Not proceeding</label>
+    <label><input type="radio" name="dreason" value="duplicate"> Duplicate</label>
+    <label><input type="radio" name="dreason" value="other"> Other</label>
+  </div>
+  <textarea id="dNote" rows="2" placeholder="Optional note (recommended for “Other”)…"></textarea>
+  <div class="dm-act">
+    <button class="btn-ghost" onclick="closeDecline()">Back</button>
+    <button class="btn-danger" id="dConfirm" onclick="doDecline()">Decline &amp; don&rsquo;t send</button>
+  </div>
+</div>
+
+<button class="tr-theme-btn" title="Toggle light / dark" aria-label="Toggle theme" onclick="var e=document.documentElement,n=e.getAttribute('data-theme')==='light'?'dark':'light';e.setAttribute('data-theme',n);try{localStorage.setItem('tr-theme-v2',n)}catch(x){};this.textContent=n==='light'?'\u{1F319}':'☀️'">🌙</button>
+
+<nav class="tr-rail" id="trRail" aria-label="Primary navigation"></nav>
+<script>(function(){
+  var P=location.pathname, S='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">';
+  var NAV=[
+    ['/','/','Dashboard','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>'],
+    ['/calendar','/calendar','Calendar','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'],
+    ['/next-calls','/next-calls','Next calls','<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>'],
+    ['/pipeline/rpc-callback','/pipeline','Call pipelines','<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'],
+    ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
+    ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
+    ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
+    ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
+    ['/meetings','/meetings','Emma Collins','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/>',2],
+    ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
+  ];
+  var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
+  var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
+  for(var i=0;i<NAV.length;i++){var n=NAV[i];
+    var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
+    h+='<a class="tr-rail-item'+act+(n[4]===2?' tr-sched':n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+  }
+  h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
+  var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+
+  fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+    if(!m) return;
+    if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
+    var nm=(m.name||m.email||'').trim(); if(!nm) return;
+    var w=document.getElementById('trWho'); if(w) w.textContent=nm;
+    var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);
+    var ini=((parts[0]||'')[0]||'')+((parts[1]||'')[0]||''); if(!ini) ini=(base[0]||'?');
+    var av=document.getElementById('trAv'); if(av) av.textContent=ini.toUpperCase();
+  }).catch(function(){});
+})();</script>
+</body>
+</html>

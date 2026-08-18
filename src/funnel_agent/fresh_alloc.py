@@ -155,6 +155,10 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
         f"= {_D9.format(col='e.dest_number')})")
 
     roster = calling_bdes(pool, settings)   # excludes the BDM (non-calling) names
+    # AI agents run their OWN pools/calendars (lisa.py / lisa4.py) at their own daily targets — they must
+    # NEVER be treated as human roster BDEs here. Without this, the over-target trim below saw Lisa's
+    # 300-call day, "trimmed" it to the human target and silently cancelled hundreds of her queued calls.
+    roster = [b for b in roster if not (b or "").lower().startswith("lisa")]
     if not roster:
         return {"skipped": "no_active_bdes", "resolved": resolved}
 
@@ -186,6 +190,7 @@ def schedule_fresh_calls(pool: ConnectionPool, settings: Settings) -> dict:
                 trimmed = _execute(pool,
                     "UPDATE calendar_events SET status='cancelled' WHERE id IN ("
                     "  SELECT id FROM calendar_events WHERE bde_name=%s AND type='fresh_call' "
+                    "  AND bde_name NOT ILIKE 'lisa%%' "   # defense-in-depth: never trim an AI agent's day
                     "  AND status='pending' AND (start_at AT TIME ZONE %s)::date=%s "
                     "  ORDER BY start_at DESC LIMIT %s)", (b, tz, dy, excess))
                 pend[(b, dy)] = max(target, pend.get((b, dy), 0) - trimmed)

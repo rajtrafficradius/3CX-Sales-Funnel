@@ -295,7 +295,8 @@ const RPC_REASON={reached_rpc:'Reached the decision-maker',gatekeeper_block:'Blo
 // (e.g. prospect said "call back later" -> a callback lands on the calendar automatically).
 function nextActionCard(d){
   const ns=d.next_scheduled, cl=d.classification||{}, c=d.call||{};
-  const LABELS={callback:'📞 Callback',retry:'🔁 Retry call',reached_call:'👤 Re-call (reached, no next step)',
+  const LABELS={reveal:'📅 MEETING BOOKED — website reveal (a human closer runs this; no more agent calls)',
+    callback:'📞 Callback',retry:'🔁 Retry call',reached_call:'👤 Re-call (reached, no next step)',
                 fresh_call:'🎯 Fresh call',recall:'🔁 Recall',rpc_retry:'🔁 RPC retry'};
   if(ns){
     const when=esc(String(ns.start_at||'').slice(0,16).replace('T',' '));
@@ -438,6 +439,22 @@ function bapuChip(label,v){const on=v&&v.value;const m=BANT_MEAN[label]||'';retu
 // button is shown only to BDM / admin (can_override from the API). The endpoint streams via
 // HTTP Range (206) so playback seeks smoothly; speed controls make long-call review faster.
 function recordingCard(c, canDownload){
+  // Retell (Lisa) calls: a directly-playable recording_url (CloudFront), no 3CX recording_id.
+  if(c && c.recording_url && !c.recording_id){
+    const aid='rec_'+String(c.call_id||'x').replace(/[^A-Za-z0-9]/g,'_');
+    const rates=[1,1.5,2].map(r=>`<button type="button" class="rec-rate${r===1?' on':''}" onclick="recSetRate('${aid}',${r},this)">${r}×</button>`).join('');
+    const dl = canDownload
+      ? `<a class="lnk" href="${c.recording_url}" download target="_blank">⬇ Download</a>`
+      : `<span class="muted" style="font-size:12px">Download: BDM / admin only</span>`;
+    return `<div class="card full"><h2>🎧 Call recording</h2>
+      <div class="rec-wrap">
+        <audio id="${aid}" class="rec-audio" controls preload="none" src="${c.recording_url}" onerror="recErr('${aid}')"></audio>
+        <div class="rec-speed"><span class="lbl">Speed</span>${rates}</div>
+        ${dl}
+      </div>
+      <div id="${aid}_err" class="rec-err"></div>
+    </div>`;
+  }
   if(!c || !c.recording_id) return c && c.recording_present
     ? `<div class="card full"><h2>🎧 Call recording</h2><div class="muted">The call was recorded but 3CX did not return a downloadable recording id.</div></div>`
     : '';
@@ -804,7 +821,12 @@ async function load(){
   const transcript=`<div class="card full"><h2>Transcript (proof)</h2><div class="transcript">${txBody}</div></div>`;
 
   const msgs=(d.messages||[]);
-  const messagesPane = msgs.length ? `<div class="card full"><h2>💬 SMS / chat from prospect (${msgs.length})</h2>${
+  const aiSms=((d.ai_call&&d.ai_call.sms)||[]).slice().reverse();
+  const aiSmsPane = aiSms.length ? `<div class="card full"><h2>📱 Lisa's SMS thread with this prospect (${aiSms.length})</h2>${
+    aiSms.map(m=>`<div style="padding:9px 0;border-bottom:1px solid var(--line)">
+      <div class="muted" style="font-size:12px">${esc(String(m.created_at||'').slice(0,16).replace('T',' '))} · ${m.direction==='inbound'?'👤 prospect':'🤖 Lisa'}</div>
+      <div style="margin-top:3px">${esc(m.body||'')}</div></div>`).join('')}</div>` : '';
+  const messagesPane = aiSmsPane + (msgs.length ? `<div class="card full"><h2>💬 SMS / chat from prospect (${msgs.length})</h2>${
     msgs.map(m=>{
       const badge = m.is_booking_confirmation ? `<span class="pill yes">📅 booking confirmation</span>`
         : (m.intent && !['reply','other'].includes(m.intent) ? `<span class="pill" style="background:rgba(148,163,184,.2);color:var(--txt-dim)">${esc(m.intent)}</span>` : '');
@@ -813,13 +835,45 @@ async function load(){
       const mt = m.meeting_datetime ? `<div class="muted" style="font-size:12px;margin-top:3px">🗓 ${esc(m.meeting_datetime)}</div>` : '';
       return `<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div class="muted" style="font-size:12px">${when} · ${esc(m.sender_name||m.sender_phone||'')} ${badge}${firmed}</div><div style="margin-top:3px">${esc(m.body||'')}</div>${mt}</div>`;
     }).join('')}</div>`
-    : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`;
+    : (aiSmsPane ? '' : `<div class="card full"><h2>💬 SMS / chat from prospect</h2><div class="muted">No inbound SMS/chat captured from this prospect's number.</div></div>`));
 
+  // ---- AI-agent (Lisa 1 / Lisa 4) call: booking + reveal + the BUILT website + SMS thread ------------
+  function aiAgentCard(d){
+    const a=d.ai_call; if(!a) return '';
+    const lc=a.call||{}, rev=a.reveal, site=a.site, pl=a.pool||{};
+    const booked = lc.meeting_agreed;
+    const banner = booked
+      ? `<div style="background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.5);color:var(--good);padding:12px 16px;border-radius:12px;font-weight:800;font-size:16px;margin-bottom:10px">
+           📅 MEETING BOOKED — ${esc(lc.agreed_day_time||'time agreed on the call')}
+           ${rev?`<div style="font-weight:600;font-size:13px;margin-top:4px">Reveal on calendar: ${esc(String(rev.start_at||'').slice(0,16).replace('T',' '))} (${esc(rev.status)}) — a human closer runs this screen-share.</div>`:''}
+         </div>`
+      : (lc.callback_when?`<div style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.4);padding:10px 14px;border-radius:10px;margin-bottom:10px"><b>📞 Callback promised:</b> ${esc(lc.callback_when)}</div>`:'');
+    const siteRow = site
+      ? (site.status==='built'
+          ? `<a class="lnk" href="/api/lisa4/site/${site.id}" target="_blank" style="display:inline-block;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.4);padding:9px 14px;border-radius:10px;font-weight:700;margin:4px 0">🌐 Open the NEW website we built ↗</a>`
+          : `<div class="muted">🛠 New website is ${esc(site.status)}…</div>`)
+      : '';
+    const smsRows=(a.sms||[]).slice().reverse().map(m=>
+      `<div style="padding:6px 0;border-bottom:1px solid var(--line)"><span class="muted" style="font-size:11px">${esc(String(m.created_at||'').slice(5,16).replace('T',' '))} · ${m.direction==='inbound'?'👤 them':'🤖 Lisa'}</span><div>${esc(m.body||'')}</div></div>`).join('');
+    return `<div class="card full" style="border:1px solid rgba(139,92,246,.45)">
+      <h2>🤖 ${esc(a.agent)} call — ${esc(a.display_name||'')}</h2>
+      ${banner}
+      <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin-bottom:6px">
+        <div><span class="muted">Outcome</span><br><b>${esc(lc.call_outcome||'—')}</b></div>
+        <div><span class="muted">Pitch angle</span><br><b>${esc(pl.bucket||'—')}</b>${pl.issue?`<div class="muted">${esc(pl.issue)}</div>`:''}</div>
+        <div><span class="muted">Prospect number</span><br><b>${esc(a.prospect_number||lc.to_number||'')}</b>${a.prospect_number?` · <a class="lnk" href="/prospect/${encodeURIComponent(a.prospect_number)}" target="_blank">prospect page ↗</a>`:''}</div>
+        <div><span class="muted">Duration</span><br><b>${lc.duration_ms?Math.round(lc.duration_ms/1000)+'s':'—'}</b></div>
+      </div>
+      ${siteRow}
+      ${lc.call_summary?`<div style="margin-top:8px"><span class="muted">Agent summary</span><div>${esc(lc.call_summary)}</div></div>`:''}
+      ${smsRows?`<div style="margin-top:10px"><span class="muted">SMS thread with this prospect</span>${smsRows}</div>`:''}
+    </div>`;
+  }
   const tabs=[
-    ['summary','Summary', overallCallSummary(c,cl,ev,t) + nextActionCard(d) + leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(c, d.can_override) + feedbackCard(ev,cl,d.feedback) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
+    ['summary','Summary', aiAgentCard(d) + overallCallSummary(c,cl,ev,t) + nextActionCard(d) + leadCard(cl,ev,d.qual_override) + verdicts + meta + recordingCard(Object.assign({}, (d.ai_call&&d.ai_call.call)||{}, c), d.can_override) + feedbackCard(ev,cl,d.feedback) + rpcNextMoveCard(d) + qualOverrideCard(d) + extractedCard(cl,ev)],
     ['convo','Conversation', prospect + bde + ciCard(ev) + reasoning + (notes||'')],
     ['biz','Business &amp; marketing', bizCard(d)],
-    ['messages','SMS / chat'+(msgs.length?' ('+msgs.length+')':''), messagesPane],
+    ['messages','SMS / chat'+((msgs.length+aiSms.length)?' ('+(msgs.length+aiSms.length)+')':''), messagesPane],
     ['transcript','Transcript', transcript],
   ];
   document.getElementById('main').innerHTML =
@@ -876,20 +930,34 @@ async function liveReload(){
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
     ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
+    ['/meetings','/meetings','Emma Collins','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/>',2],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
   var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
   var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
-    h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+    h+='<a class="tr-rail-item'+act+(n[4]===2?' tr-sched':n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
   }
   h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
   var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+(function(){var st=document.createElement('style');st.textContent='#trBell{position:fixed;right:16px;bottom:66px;z-index:95;width:40px;height:40px;border-radius:50%;background:var(--panel2,#161c27);border:1px solid var(--line,#222b39);color:var(--txt,#e8edf5);cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(0,0,0,.4);font-size:16px}#trBell.on{display:flex}#trBell .b{position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:10px;font-weight:800;border-radius:10px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;padding:0 4px}#trNotif{position:fixed;right:16px;bottom:112px;z-index:96;width:340px;max-height:420px;overflow:auto;background:var(--panel,#10151e);border:1px solid var(--line,#222b39);border-radius:12px;box-shadow:0 18px 50px -20px rgba(0,0,0,.7);display:none}#trNotif.on{display:block}#trNotif .hd{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line,#222b39);font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase}#trNotif .hd button{background:none;border:0;color:#5b8cff;font:inherit;font-size:11px;cursor:pointer;font-weight:700}#trNotif .it{padding:10px 14px;border-bottom:1px solid var(--line-soft,#1a212c);display:block;text-decoration:none;color:inherit}#trNotif .it:hover{background:var(--panel2,#161c27)}#trNotif .it .k{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}#trNotif .it .k.reply{color:#4ade80}#trNotif .it .k.booking{color:#5b8cff}#trNotif .it .k.autopilot{color:#fbbf24}#trNotif .it b{display:block;font-size:12.5px;margin:2px 0}#trNotif .it span{font-size:11.5px;color:var(--muted,#8b96a6);display:block}#trNotif .emp{padding:22px;text-align:center;color:var(--muted,#8b96a6);font-size:12px}';document.head.appendChild(st);
+var bell=document.createElement('button');bell.id='trBell';bell.title='Notifications';bell.innerHTML='&#128276;<span class="b" style="display:none">0</span>';document.body.appendChild(bell);
+var pan=document.createElement('div');pan.id='trNotif';pan.innerHTML='<div class="hd">Notifications<button id="trNMark">Mark all read</button></div><div id="trNList"><div class="emp">Loading&hellip;</div></div>';document.body.appendChild(pan);
+function escN(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function fdtN(s){try{var d=new Date(s+(String(s).indexOf('Z')<0?'Z':''));return d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}catch(e){return ''}}
+function pull(){fetch('/api/notifications').then(function(r){return r.json()}).then(function(d){if(!d||!d.items)return;if(d.items.length||d.unread){bell.classList.add('on')}var b=bell.querySelector('.b');if(d.unread>0){b.style.display='flex';b.textContent=d.unread>99?'99+':d.unread}else{b.style.display='none'}
+var L=document.getElementById('trNList');L.innerHTML=d.items.length?d.items.map(function(i){return '<a class="it" href="'+escN(i.link||'#')+'"><span class="k '+escN(i.kind)+'">'+escN(i.kind)+'</span><b>'+escN(i.who)+'</b><span>'+escN(i.body)+'</span><span>'+fdtN(i.at)+'</span></a>'}).join(''):'<div class="emp">Nothing yet.</div>';}).catch(function(){})}
+bell.onclick=function(){pan.classList.toggle('on')};
+document.getElementById('trNMark').onclick=function(){fetch('/api/notifications/seen',{method:'POST'}).then(function(){pull()})};
+pull();setInterval(pull,60000);})();
+
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
     if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;
     var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);

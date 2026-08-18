@@ -881,6 +881,18 @@ function nextActionCard(d){
         <span class="muted">— no further calls are scheduled.</span>
       </div></div>`;
   }
+  if(na && na.when && na.type==='reveal'){
+    // A booked WEBSITE REVEAL is a MEETING, not a "next call" — a human closer runs it; no agent is assigned.
+    return `<div class="card full" style="border-color:#3fb950;background:rgba(63,185,80,.10)">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span style="font-weight:800;color:var(--good);font-size:15px">📅 MEETING BOOKED — ${esc(fmtDate(na.when))}</span>
+        <span class="pill" style="font-size:10px">🌐 website reveal (screen-share)</span>
+        <span class="muted small">a human closer runs this meeting — bring the video link; the new site is pre-built</span>
+        ${calLink(na)}
+      </div>
+      ${na.reason?`<div style="margin-top:9px;font-size:12.5px;color:var(--txt-dim)">${esc(na.reason)}</div>`:''}
+    </div>`;
+  }
   if(na && na.when){
     const assigned=na.bde?`Assigned: <b>${esc(na.bde)}</b>`:'<span style="color:var(--warn);font-weight:600">⚠ Unassigned — not on any BDE calendar</span>';
     // 'parked' = a deliberately far-out re-engage (e.g. locked into a renewed contract) —
@@ -1210,6 +1222,7 @@ async function load(){
 
   const tabs=[
     ['uploaded','Uploaded database info', businessDataCard(d)+contactsCard(d)],
+    ['phones','Phone numbers', phoneNumbersCard()],
     ['apollo','Apollo (company + people)', apolloCard(d)],
     ['business','Website business intel', businessIntelCard(d)],
     ['whois','Domain / WHOIS', whoisCard(d)],
@@ -1241,6 +1254,7 @@ async function load(){
   const db=document.getElementById('dfsBtn'); if(db) db.onclick=enrichDataforseo;
   const sb=document.getElementById('seoAuditBtn'); if(sb) sb.onclick=runSeoAudit;
   loadDM();
+  loadPhones();
 }
 async function loadDM(){
   const box=document.getElementById('dmBox'); if(!box) return;
@@ -1254,6 +1268,32 @@ async function loadDM(){
         <div class="ti muted small">${dm.confidence!=null?dm.confidence+'% confidence · '+esc(dm.source||''):''}</div>
       </div><div class="ph"><b>${esc(dm.dm_phone||'—')}</b> ${mob}</div></div>`;
   }catch(e){ box.innerHTML='<div class="muted small">Could not resolve decision-maker.</div>'; }
+}
+// ---- Phone numbers tab: every known person/contact across all sources, one merged table ----
+function phoneNumbersCard(){
+  return `<div class="card full"><h2>📇 Phone numbers &amp; contacts</h2>
+    <div class="muted small" style="margin-bottom:8px">Every person we know at this prospect — merged from the Lisa-resolved decision-maker, master business data, call captures (BDE + Lisa) and Apollo.</div>
+    <div id="pnBox"><div class="muted small">Loading contacts…</div></div></div>`;
+}
+async function loadPhones(){
+  const box=document.getElementById('pnBox'); if(!box) return;
+  try{
+    const r=await fetch('/api/prospect/'+encodeURIComponent(KEY)+'/phone-contacts');
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status);
+    const cs=(j&&j.contacts)||[];
+    if(!cs.length){ box.innerHTML='<div class="muted small">No people or phone numbers captured for this prospect yet.</div>'; return; }
+    const SRC={lisa_dm:['Lisa DM','#4ade80'],companies:['Master DB','#60a5fa'],call_intel:['Call intel','#f472b6'],lisa_call:['Lisa call','#fbbf24'],apollo:['Apollo','#c79bf7']};
+    const badge=s=>{const e=SRC[s]||[s,'var(--muted)'];return `<span class="pill" style="background:var(--chip);color:${e[1]};font-size:10px;padding:2px 8px">${esc(e[0])}</span>`;};
+    box.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;min-width:560px;font-size:var(--t-body)">
+      <thead><tr><th style="text-align:left;padding:4px">Name</th><th style="text-align:left;padding:4px">Role / title</th><th style="text-align:left;padding:4px">Mobile / phone</th><th style="text-align:left;padding:4px">Email</th><th style="text-align:left;padding:4px">Source</th></tr></thead>
+      <tbody>${cs.map(c=>`<tr>
+        <td><b>${esc(c.name)||'—'}</b>${(c.notes||[]).length?`<div class="muted" style="font-size:10.5px">${esc(c.notes.join(' · '))}</div>`:''}</td>
+        <td>${esc(c.title)||'—'}</td>
+        <td style="font-family:ui-monospace,Menlo,monospace;white-space:nowrap">${c.phone?`<a class="lnk" href="tel:${esc(c.phone)}">${esc(c.phone)}</a>`:'—'}</td>
+        <td>${c.email?`<a class="lnk" href="mailto:${esc(c.email)}" style="word-break:break-all">${esc(c.email)}</a>`:'—'}</td>
+        <td style="white-space:nowrap">${(c.sources||[]).map(badge).join(' ')}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+  }catch(e){ box.innerHTML='<div class="muted small">Could not load contacts ('+esc(e.message)+').</div>'; }
 }
 load();
 /* LIVE: refresh on server push (SSE /api/events) + 60s poll fallback; pause when hidden. Re-fetches
@@ -1298,20 +1338,34 @@ async function liveReload(){
     ['/database','/database','Prospect database','<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/>'],
     ['/agency-rpc','/agency-rpc','Agency & RPC','<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/>'],
     ['/coaching','/coaching','Coaching','<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>'],
+    ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
     ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
+    ['/meetings','/meetings','Emma Collins','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/>',2],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
   var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
   var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
   for(var i=0;i<NAV.length;i++){var n=NAV[i];
     var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
-    h+='<a class="tr-rail-item'+act+(n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+    h+='<a class="tr-rail-item'+act+(n[4]===2?' tr-sched':n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
   }
   h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
   var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+(function(){var st=document.createElement('style');st.textContent='#trBell{position:fixed;right:16px;bottom:66px;z-index:95;width:40px;height:40px;border-radius:50%;background:var(--panel2,#161c27);border:1px solid var(--line,#222b39);color:var(--txt,#e8edf5);cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(0,0,0,.4);font-size:16px}#trBell.on{display:flex}#trBell .b{position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:10px;font-weight:800;border-radius:10px;min-width:18px;height:18px;display:flex;align-items:center;justify-content:center;padding:0 4px}#trNotif{position:fixed;right:16px;bottom:112px;z-index:96;width:340px;max-height:420px;overflow:auto;background:var(--panel,#10151e);border:1px solid var(--line,#222b39);border-radius:12px;box-shadow:0 18px 50px -20px rgba(0,0,0,.7);display:none}#trNotif.on{display:block}#trNotif .hd{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line,#222b39);font-weight:800;font-size:12px;letter-spacing:.08em;text-transform:uppercase}#trNotif .hd button{background:none;border:0;color:#5b8cff;font:inherit;font-size:11px;cursor:pointer;font-weight:700}#trNotif .it{padding:10px 14px;border-bottom:1px solid var(--line-soft,#1a212c);display:block;text-decoration:none;color:inherit}#trNotif .it:hover{background:var(--panel2,#161c27)}#trNotif .it .k{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}#trNotif .it .k.reply{color:#4ade80}#trNotif .it .k.booking{color:#5b8cff}#trNotif .it .k.autopilot{color:#fbbf24}#trNotif .it b{display:block;font-size:12.5px;margin:2px 0}#trNotif .it span{font-size:11.5px;color:var(--muted,#8b96a6);display:block}#trNotif .emp{padding:22px;text-align:center;color:var(--muted,#8b96a6);font-size:12px}';document.head.appendChild(st);
+var bell=document.createElement('button');bell.id='trBell';bell.title='Notifications';bell.innerHTML='&#128276;<span class="b" style="display:none">0</span>';document.body.appendChild(bell);
+var pan=document.createElement('div');pan.id='trNotif';pan.innerHTML='<div class="hd">Notifications<button id="trNMark">Mark all read</button></div><div id="trNList"><div class="emp">Loading&hellip;</div></div>';document.body.appendChild(pan);
+function escN(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function fdtN(s){try{var d=new Date(s+(String(s).indexOf('Z')<0?'Z':''));return d.toLocaleString('en-AU',{timeZone:'Australia/Melbourne',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})}catch(e){return ''}}
+function pull(){fetch('/api/notifications').then(function(r){return r.json()}).then(function(d){if(!d||!d.items)return;if(d.items.length||d.unread){bell.classList.add('on')}var b=bell.querySelector('.b');if(d.unread>0){b.style.display='flex';b.textContent=d.unread>99?'99+':d.unread}else{b.style.display='none'}
+var L=document.getElementById('trNList');L.innerHTML=d.items.length?d.items.map(function(i){return '<a class="it" href="'+escN(i.link||'#')+'"><span class="k '+escN(i.kind)+'">'+escN(i.kind)+'</span><b>'+escN(i.who)+'</b><span>'+escN(i.body)+'</span><span>'+fdtN(i.at)+'</span></a>'}).join(''):'<div class="emp">Nothing yet.</div>';}).catch(function(){})}
+bell.onclick=function(){pan.classList.toggle('on')};
+document.getElementById('trNMark').onclick=function(){fetch('/api/notifications/seen',{method:'POST'}).then(function(){pull()})};
+pull();setInterval(pull,60000);})();
+
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
     if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;
     var base=nm.replace(/@.*/,''), parts=base.split(/[ ._-]+/).filter(Boolean);

@@ -686,6 +686,95 @@ def daily(
 
 
 # --------------------------------------------------------------------------- #
+# Lisa — dedicated fast auto-dial loop (decoupled from `refresh`)
+# --------------------------------------------------------------------------- #
+@app.command(name="lisa-dial")
+def lisa_dial(
+    interval: int = typer.Option(25, help="seconds between dial checks"),
+) -> None:
+    """DEDICATED fast auto-dial loop for Lisa. The heavy `refresh` cycle (transcription / aggregation /
+    company-sync) takes minutes, which capped Lisa at ~1 call per refresh. This loop instead dials one due
+    call whenever the pipeline is idle, every `interval`s, so cadence tracks call length (~90s) not refresh
+    length. Reserve / enrich / schedule / coach still run in `refresh` (head_of_sales). Gated by
+    LISA_ENABLED + the autodial DB toggle + the call window; safe to run alongside `refresh`."""
+    import time as _t
+    settings = _settings()
+    from . import emma as _emma
+    from . import lisa as _lisa
+    with _analytics_pool(settings) as ana:
+        try:
+            _lisa.ensure_tables(ana)
+        except Exception as exc:
+            log.warning("lisa_dial_ensure_failed", error=str(exc)[:160])
+        log.info("lisa_dial_loop_start", interval=interval)
+        while True:
+            try:
+                if getattr(settings, "lisa_enabled", False):
+                    _lisa.run_lisa_autodial(ana, settings)
+                # AUTO reveal-tracking: mark booked reveals 'revealed' when the closer (Manoj) calls them.
+                _lisa.sync_reveal_calls(ana, settings)
+                # AUTO qualification-tracking: note Ben's (BDM) answered calls to booked prospects.
+                _lisa.sync_qualifier_calls(ana, settings)
+                # Emma Collins (AI staff #3 — meeting scheduler): refresh her unified booking queue,
+                # send APPROVED invites, poll RSVPs/replies, fire due reminders. Self-throttled +
+                # creds-gated inside (queues safely until the 4 MS Graph env values are set).
+                _emma.emma_tick(ana, settings)
+            except Exception as exc:
+                log.warning("lisa_dial_loop_failed", error=str(exc)[:160])
+            _t.sleep(interval)
+
+
+# --------------------------------------------------------------------------- #
+# Lisa 4 — dedicated website-selling autopilot loop (ISOLATED from Lisa-1)
+# --------------------------------------------------------------------------- #
+@app.command(name="lisa4-dial")
+def lisa4_dial(
+    interval: int = typer.Option(25, help="seconds between dial checks"),
+) -> None:
+    """Lisa 4 (+ Lisa 5) autopilot loop: each tick it (throttled) reserves/schedules its pool + builds any
+    booked-reveal sites, then dials ONE due call for Lisa 4, then ONE for Lisa 5. Each agent is fully
+    isolated (own pool/agent/number/toggle). GATED: no call fires unless that agent's autodial toggle is on.
+    Safe to run alongside `refresh`/`lisa-dial`."""
+    import time as _t
+    settings = _settings()
+    from . import lisa4 as _l4
+    from . import lisa5 as _l5
+    with _analytics_pool(settings) as ana:
+        try:
+            _l4.ensure_lisa4_tables(ana)
+            _l4.ensure_lisa4_control(ana)
+        except Exception as exc:
+            log.warning("lisa4_dial_ensure_failed", error=str(exc)[:160])
+        try:
+            _l5.ensure_lisa5_tables(ana)
+            _l5.ensure_lisa5_control(ana)
+        except Exception as exc:
+            log.warning("lisa5_dial_ensure_failed", error=str(exc)[:160])
+        log.info("lisa4_dial_loop_start", interval=interval)
+        i = 0
+        while True:
+            try:
+                if getattr(settings, "lisa_enabled", False):
+                    if i % 6 == 0:                       # ~every 6 ticks, do the reserve/schedule/build prep
+                        _l4.run_lisa4_head(ana, settings)
+                    _l4.run_lisa4_autodial(ana, settings)
+            except Exception as exc:
+                log.warning("lisa4_dial_loop_failed", error=str(exc)[:160])
+            # Lisa 5 — cloned isolated dialer, run next to Lisa 4 (own pool/agent/numbers/toggle; GATED,
+            # no call fires unless the Lisa-5 autodial toggle is on). Kept in its own try so a Lisa-5
+            # error never stalls Lisa-4's loop.
+            try:
+                if getattr(settings, "lisa_enabled", False):
+                    if i % 6 == 0:                       # ~every 6 ticks, schedule Lisa-5's pool
+                        _l5.run_lisa5_head(ana, settings)
+                    _l5.run_lisa5_autodial(ana, settings)
+            except Exception as exc:
+                log.warning("lisa5_dial_loop_failed", error=str(exc)[:160])
+            i += 1
+            _t.sleep(interval)
+
+
+# --------------------------------------------------------------------------- #
 # Phase I — report
 # --------------------------------------------------------------------------- #
 @app.command()
@@ -786,14 +875,21 @@ def refresh(
             try:
                 from . import lisa as _lisa
                 _lisa.ensure_tables(ana)
-                # Head of Sales · Strategist (AI) ORCHESTRATES the whole team, automatically, every cycle:
-                # value-ranks the pool, then directs the Coach (playbook), QA (reviews), Researcher (briefs),
-                # keeps the pool topped up + the calendar filled in priority order, and guards compliance.
-                # Runs with no instruction — this is the one call that drives all the other AI staff.
+                # Head of Sales · Strategist (AI): reserve pool, enrich DMs, fill the calendar, coach/QA,
+                # guard compliance. NOTE: DIALING is NOT done here — it runs in the dedicated `lisa-dial`
+                # loop, decoupled from this heavy refresh cycle (transcription/aggregation/company-sync take
+                # minutes) so Lisa's cadence tracks call length (~90s), not the multi-minute refresh.
                 _lisa.run_head_of_sales(ana, settings)
-
             except Exception as exc:
                 log.warning("lisa_calendar_failed", error=str(exc)[:160])
+            # Evening catch-up on inbound SMS across BOTH Lisa lines — answer any prospect whose last
+            # message is an unanswered inbound. SMS has no call-window restriction, so this runs every
+            # cycle; the per-thread dedupe keeps it from racing the live webhook.
+            try:
+                from . import lisa as _lisa
+                _lisa.sweep_unanswered_sms(ana, settings)
+            except Exception as exc:
+                log.warning("lisa_sms_sweep_failed", error=str(exc)[:160])
         # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
         # 90-day performance). The ONLY cold pool on the calendar; resolves once a number is dialled.
         fx = {"scheduled": 0}
@@ -804,13 +900,8 @@ def refresh(
             except Exception as exc:
                 fx = {"error": str(exc)[:80]}
                 log.warning("schedule_fresh_calls_failed", error=str(exc)[:160])
-        # Lisa auto-dialer — GATED by LISA_AUTODIAL_ENABLED (off by default). Places her due calendar calls.
-        if settings.lisa_enabled:
-            try:
-                from . import lisa as _lisa
-                _lisa.run_lisa_autodial(ana, settings)
-            except Exception as exc:
-                log.warning("lisa_autodial_failed", error=str(exc)[:160])
+        # (Lisa auto-dial now runs FIRST in the lisa_enabled block above — before the heavy orchestration —
+        #  so each 60s cycle dials without waiting on enrichment. See DIAL FIRST comment above.)
         # FREE tracking-pixel scan across the DB (paid-ads detection), a batch per cycle.
         ws = {"scanned": 0}
         if settings.website_scan_per_cycle > 0:

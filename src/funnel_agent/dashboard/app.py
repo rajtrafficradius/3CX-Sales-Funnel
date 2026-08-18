@@ -501,8 +501,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # /api/lisa/postcall is the Retell webhook — it has NO session (Retell posts server-to-server), so it
     # must bypass the login gate; it is guarded instead by its own LISA_WEBHOOK_TOKEN query token.
     _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall",
-               "/api/lisa/inbound", "/api/lisa/sms-inbound"}
-    _PUBLIC_PREFIXES = ("/r/",)   # tokenised audit share links a prospect opens from an SMS (no login)
+               "/api/lisa/inbound", "/api/lisa/sms-inbound", "/api/lisa/apollo-phone",
+               "/api/lisa4/postcall", "/api/lisa4/inbound", "/api/lisa4/sms-inbound",
+               "/api/lisa5/postcall", "/api/lisa5/inbound", "/api/lisa5/sms-inbound"}
+    # tokenised share links (audit SMS links + Lisa-4 reveal sites) + Emma's email-open pixel
+    # (the prospect's mail client fetches it) — no login.
+    _PUBLIC_PREFIXES = ("/r/", "/api/lisa4/site/public/", "/api/emma/px/")
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
@@ -529,7 +533,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # token); only /api requests accept the bare cookie.
         via_cookie = (bool(kiosk_cookie) and (kiosk_cookie == ktok or kiosk_cookie == "tv")
                       and path.startswith("/api"))
-        if user is None and (via_query_token or via_tv or via_cookie):
+        # STRICT TV: an EXPLICIT TV entry (/tv, ?tv=1, kiosk token) is ALWAYS the read-only kiosk view,
+        # even on a browser with a logged-in session — an office TV must never show private BDEs just
+        # because an admin once logged in on that machine. (The bare kiosk COOKIE still never downgrades
+        # a real login — only the explicit TV intent does.)
+        if via_query_token or via_tv:
+            user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
+        if user is None and via_cookie:
             user = {"role": "kiosk", "bde_name": None, "email": "kiosk", "name": "Display"}
         request.state.user = user
 
@@ -634,6 +644,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return (not allow) or (u.get("bde_name") in allow)
         return False
 
+    def _can_schedule(request: Request) -> bool:
+        """Meeting Scheduler access: admins (like other admin pages) PLUS the SCHEDULER_USERS
+        allow-list (comma emails; default raj@trafficradius.com.au). Kiosk never qualifies."""
+        u = getattr(request.state, "user", None) or {}
+        if u.get("role") == "kiosk":
+            return False
+        if is_admin(u):
+            return True
+        return (u.get("email") or "").lower() in settings.scheduler_user_emails
+
+    def _require_scheduler(request: Request) -> dict:
+        u = getattr(request.state, "user", None) or {}
+        if not _can_schedule(request):
+            raise HTTPException(status_code=403, detail="meeting-scheduler access required")
+        return u
+
     def _hidden_and(request: Request, col: str = "COALESCE(c.bde_name, c.bde_extension)"):
         """(sql, params) appended to an ALL/list WHERE so private BDEs' rows are dropped for a
         non-privileged viewer. Positional %s. Empty when nothing to hide (admins / the private BDE)."""
@@ -674,7 +700,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         u = getattr(request.state, "user", None) or {}
         return JSONResponse({"email": u.get("email"), "name": u.get("name"),
                              "role": u.get("role"), "bde_name": u.get("bde_name"),
-                             "is_admin": is_admin(u)})
+                             "is_admin": is_admin(u),
+                             # drives the "Meeting Scheduler" rail entry (admins + SCHEDULER_USERS)
+                             "scheduler_user": _can_schedule(request)})
 
     @app.get("/api/recent-bookings")
     def recent_bookings(request: Request) -> JSONResponse:
@@ -2555,8 +2583,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         next_scheduled = nxt[0] if nxt else None
         if next_scheduled:
             next_scheduled["bde_name"] = _mask_bde(request, next_scheduled.get("bde_name"))
+        # AI-agent call (Lisa 1 / Lisa 4): the FULL story for the call page — booking, reveal event,
+        # the BUILT website preview, pool bucket/issue, and the SMS thread. Human calls skip this.
+        ai_call = None
+        _lrow = q("SELECT company_name, call_outcome, meeting_agreed, agreed_day_time, callback_when, "
+                  "  call_summary, recording_url, duration_ms, brief, from_number, to_number, dest9 "
+                  "FROM lisa_calls WHERE call_id=%s", (call_id,))
+        if _lrow:
+            _lr = dict(_lrow[0])
+            _d9x = _lr.get("dest9") or ""
+            _agent = "Lisa 4" if (_lr.get("from_number") or "") in (settings.lisa4_numbers or []) else "Lisa"
+            _ev4 = q("SELECT id, title, status, start_at FROM calendar_events WHERE type='reveal' AND "
+                     "right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s "
+                     "ORDER BY id DESC LIMIT 1", (_d9x,))
+            _site = q("SELECT id, status, domain, company, built_at FROM lisa4_sites WHERE dest9=%s "
+                      "AND status IN ('built','building','queued') ORDER BY id DESC LIMIT 1", (_d9x,))
+            _p4 = q("SELECT company, title, domain, bucket, issue FROM lisa4_pool WHERE dest9=%s", (_d9x,))
+            _sms4 = q("SELECT direction, body, created_at FROM lisa_sms WHERE dest9=%s "
+                      "ORDER BY created_at DESC LIMIT 8", (_d9x,))
+            _nm = (_lr.get("company_name") or (_p4[0].get("title") if _p4 else None)
+                   or (_p4[0].get("company") if _p4 else None) or (_p4[0].get("domain") if _p4 else None)
+                   or _lr.get("to_number"))
+            _agent_nums = list(settings.lisa_numbers or []) + list(settings.lisa4_numbers or [])
+            _pn = _lr.get("to_number") if (_lr.get("from_number") in _agent_nums) else _lr.get("from_number")
+            ai_call = {"agent": _agent, "display_name": _nm, "prospect_number": _pn, "call": _lr,
+                       "reveal": (_ev4[0] if _ev4 else None), "site": (_site[0] if _site else None),
+                       "pool": (_p4[0] if _p4 else None), "sms": _sms4}
         # jsonable_encoder converts numeric->float and datetime->iso so confidences serialize.
         return JSONResponse(jsonable_encoder({
+            "ai_call": ai_call,
             "call": call,
             "transcript": tr[0] if tr else None,
             "next_scheduled": next_scheduled,   # {type,start_at,bde_name,title} or None
@@ -3406,6 +3461,141 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return dm or {}
         return JSONResponse(jsonable_encoder(_do()))
 
+    @app.get("/api/prospect/{key}/phone-contacts")
+    def prospect_phone_contacts(request: Request, key: str) -> JSONResponse:
+        """Every known person/contact for this prospect, one merged list — union of the
+        Lisa-resolved decision-maker (lisa_dm), Apollo decision-makers (free tier: name+title,
+        phone/email are credit-gated flags), given business-data contacts (companies.contacts)
+        and call-captured details (lisa_calls.brief + BDE classifications). Keyed by the
+        prospect's domain + all of its known numbers (dest9). Any signed-in user."""
+        master, domain, norm = _resolve_prospect(key)
+
+        # All dest9s that belong to this prospect (master numbers + Lisa/BDE call matches).
+        d9s: set = set()
+        if norm:
+            d9s.add(norm)
+        for p in (master or {}).get("phones_norm") or []:
+            if p:
+                d9s.add(p)
+        if domain:
+            for r in q("SELECT DISTINCT dest9 FROM lisa_calls "
+                       "WHERE lower(COALESCE(domain,''))=%s AND COALESCE(dest9,'')<>''", (domain,)):
+                d9s.add(r["dest9"])
+            for r in q("SELECT DISTINCT right(regexp_replace(COALESCE(c.dest_number,''),"
+                       "'[^0-9]','','g'),9) AS d9 "
+                       "FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+                       "WHERE cl.prospect_website=%s", (domain,)):
+                if r.get("d9"):
+                    d9s.add(r["d9"])
+
+        rows: list[dict] = []
+
+        def _add(name, title, phone, email, source, note=None):
+            name = (str(name).strip() if name else "") or None
+            title = (str(title).strip() if title else "") or None
+            phone = (str(phone).strip() if phone else "") or None
+            email = (str(email).strip() if email else "") or None
+            if name or phone or email:
+                rows.append({"name": name, "title": title, "phone": phone,
+                             "email": email, "source": source, "note": note})
+
+        # 1) Lisa's resolved TRUE decision-maker (call-intel + BD + Apollo cross-checked).
+        if domain:
+            for r in q("SELECT dm_name, dm_title, dm_phone, dm_email FROM lisa_dm "
+                       "WHERE domain=%s ORDER BY resolved_at DESC NULLS LAST LIMIT 1", (domain,)):
+                _add(r.get("dm_name"), r.get("dm_title"), r.get("dm_phone"),
+                     r.get("dm_email"), "lisa_dm")
+
+        # 2) Given business-data contacts (companies.contacts jsonb: name + role).
+        if domain:
+            for co in q("SELECT contacts FROM companies WHERE domain=%s "
+                        "AND contacts IS NOT NULL", (domain,)):
+                for ct in (co.get("contacts") or []):
+                    if isinstance(ct, dict):
+                        _add(ct.get("name"), ct.get("role") or ct.get("title"),
+                             ct.get("mobile") or ct.get("phone"), ct.get("email"), "companies")
+
+        # 3) BDE call-intel captures (classifications for this prospect's numbers).
+        if d9s:
+            for r in q("SELECT cl.prospect_contact_name, cl.prospect_mobile, cl.prospect_email "
+                       "FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+                       f"WHERE c.in_scope AND {_DEST9} = ANY(%(d9)s) "
+                       "AND (COALESCE(cl.prospect_contact_name,'')<>'' "
+                       "     OR COALESCE(cl.prospect_mobile,'')<>'' "
+                       "     OR COALESCE(cl.prospect_email,'')<>'') "
+                       "ORDER BY c.started_at DESC LIMIT 60", {"d9": list(d9s)}):
+                _add(r.get("prospect_contact_name"), None, r.get("prospect_mobile"),
+                     r.get("prospect_email"), "call_intel")
+
+        # 4) Lisa call captures — brief (what the dialer was handed) + confirmed-on-call details.
+        if d9s or domain:
+            lconds, lp = [], {}
+            if d9s:
+                lconds.append("dest9 = ANY(%(d9)s)")
+                lp["d9"] = list(d9s)
+            if domain:
+                lconds.append("lower(COALESCE(domain,''))=%(dom)s")
+                lp["dom"] = domain
+            for r in q("SELECT prospect_name, prospect_email, confirmed_email, to_number, brief "
+                       "FROM lisa_calls WHERE " + " OR ".join(lconds) +
+                       " ORDER BY created_at DESC LIMIT 40", lp):
+                br = r.get("brief") if isinstance(r.get("brief"), dict) else {}
+                _add(br.get("prospect_name") or r.get("prospect_name"), None,
+                     r.get("to_number"),
+                     r.get("confirmed_email") or br.get("prospect_email") or r.get("prospect_email"),
+                     "lisa_call")
+
+        # 5) Apollo decision-makers (free data: name + title; phone/email shown as flags).
+        if domain:
+            er = q("SELECT apollo FROM enrichment WHERE domain=%s", (domain,))
+            ap = (er[0].get("apollo") if er else None) or {}
+            for p in (ap.get("people") or []) if isinstance(ap, dict) else []:
+                if not isinstance(p, dict):
+                    continue
+                flags = [f for f in (("phone" if p.get("has_phone") else None),
+                                     ("email" if p.get("has_email") else None)) if f]
+                _add(p.get("name"), p.get("title"), None, None, "apollo",
+                     note=(" / ".join(flags) + " on file — credits to reveal") if flags else None)
+
+        # Merge duplicates across sources: same person name, same phone (last 9 digits) or
+        # same email = one row; missing fields fill in, every contributing source is kept.
+        def _namekey(n):
+            toks = re.sub(r"[^a-z ]", "", (n or "").lower()).split()
+            return " ".join(toks) or None
+
+        merged: list[dict] = []
+        for r in rows:
+            nk = _namekey(r["name"])
+            pd = re.sub(r"\D", "", r["phone"] or "")
+            pk = pd[-9:] if len(pd) >= 8 else None
+            ek = (r["email"] or "").lower() or None
+            hit = None
+            for m in merged:
+                if (nk and nk == m["_nk"]) or (pk and pk == m["_pk"]) or (ek and ek == m["_ek"]):
+                    hit = m
+                    break
+            if hit:
+                for f in ("name", "title", "phone", "email"):
+                    if not hit[f] and r[f]:
+                        hit[f] = r[f]
+                if r["source"] not in hit["sources"]:
+                    hit["sources"].append(r["source"])
+                if r.get("note") and r["note"] not in hit["notes"]:
+                    hit["notes"].append(r["note"])
+                hit["_nk"] = hit["_nk"] or nk
+                hit["_pk"] = hit["_pk"] or pk
+                hit["_ek"] = hit["_ek"] or ek
+            else:
+                merged.append({"name": r["name"], "title": r["title"], "phone": r["phone"],
+                               "email": r["email"], "sources": [r["source"]],
+                               "notes": [r["note"]] if r.get("note") else [],
+                               "_nk": nk, "_pk": pk, "_ek": ek})
+        for m in merged:
+            m.pop("_nk", None)
+            m.pop("_pk", None)
+            m.pop("_ek", None)
+        return JSONResponse(jsonable_encoder({"contacts": merged, "domain": domain}))
+
     @app.post("/api/prospect/{key}/enrich-website")
     async def prospect_enrich_website(request: Request, key: str) -> JSONResponse:
         """FREE 'Enrich now' — fill every FREE prospect tab in one go: website intelligence
@@ -3829,6 +4019,78 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return RedirectResponse("/", status_code=302)
         return HTMLResponse(_static("database.html"), headers=_NOCACHE)
 
+    @app.get("/lisa-data", response_class=HTMLResponse)
+    def lisa_data_page(request: Request):
+        u = getattr(request.state, "user", None) or {}
+        if not (is_admin(u) or u.get("role") == "bdm"):
+            return RedirectResponse("/", status_code=302)
+        return HTMLResponse(_static("lisa-data.html"), headers=_NOCACHE)
+
+    @app.get("/api/lisa/pool")
+    def lisa_pool_data(request: Request, agent: str = "lisa4", search: str = "",
+                       bucket: str = "", gap: str = "", limit: int = 100, offset: int = 0) -> JSONResponse:
+        """Fast, transparent view of a Lisa dialing pool (small table): the SPOKEN name Lisa will actually
+        say (via the real dialer name-resolution), the finding, RPC/decision-maker coverage, and
+        data-completeness gaps. Admin/BDM only. Reads the small pool tables so it stays fast."""
+        _require_db_access(request)
+        tbl = "lisa5_pool" if agent == "lisa5" else "lisa4_pool"
+        limit = max(1, min(limit, 500))
+        conds: list = []
+        params: dict = {"lim": limit, "off": offset}
+        if search:
+            conds.append("(COALESCE(p.company,'') ILIKE %(s)s OR COALESCE(p.domain,'') ILIKE %(s)s "
+                         "OR p.dest9 ILIKE %(s)s)")
+            params["s"] = f"%{search}%"
+        if bucket:
+            conds.append("p.bucket = %(b)s")
+            params["b"] = bucket
+        if gap == "no_email":
+            conds.append("COALESCE(p.email,'')=''")
+        elif gap == "no_issue":
+            conds.append("COALESCE(p.issue,'')=''")
+        elif gap == "no_domain":
+            conds.append("COALESCE(p.domain,'')=''")
+        elif gap == "no_rpc":
+            conds.append("dm.dm_first IS NULL")
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        j = f"{tbl} p LEFT JOIN lisa_dm dm ON dm.domain = p.domain"
+        total = q(f"SELECT count(*) n FROM {j} {where}", params)[0]["n"]
+        rows = q(f"SELECT p.dest9, p.dest_number, p.company, p.domain, p.bucket, p.issue, p.title, p.email, "
+                 f"  dm.dm_first, dm.dm_name, dm.dm_email, dm.dm_title, dm.apollo_extra FROM {j} {where} "
+                 f"ORDER BY p.dest9 LIMIT %(lim)s OFFSET %(off)s", params)
+        from ..lisa4 import _pick_name, _owner_first_from_company
+        def _owner(company, bucket, dm_first):
+            own = (dm_first or "").strip()
+            if not own and agent != "lisa5" and (bucket or "no_website") == "no_website":
+                own = _owner_first_from_company(company)
+            return own
+        for r in rows:
+            r["spoken_name"] = _pick_name(r.get("company"), r.get("title"), r.get("domain"))
+            r["spoken_owner"] = _owner(r.get("company"), r.get("bucket"), r.get("dm_first"))
+            ex = r.get("apollo_extra") or {}
+            r["role"] = (r.get("dm_title") or ex.get("role") or "").strip()
+            r["seniority"] = ex.get("seniority") or ""
+            r["linkedin"] = ex.get("linkedin") or ""
+            # a compact company-context string for the call (industry · size · founded)
+            bits = [x for x in [ex.get("industry"),
+                                (f"{ex.get('employees')} staff" if ex.get("employees") else None),
+                                (f"est {ex.get('founded_year')}" if ex.get("founded_year") else None),
+                                (f"${ex.get('revenue')}" if ex.get("revenue") else None)] if x]
+            r["context"] = " · ".join(bits)
+            r.pop("apollo_extra", None)
+        st = q(f"SELECT count(*) total, "
+               f"  count(*) FILTER (WHERE COALESCE(issue,'')<>'') has_issue, "
+               f"  count(*) FILTER (WHERE COALESCE(email,'')<>'') has_email, "
+               f"  count(*) FILTER (WHERE COALESCE(domain,'')<>'') has_domain, "
+               f"  count(*) FILTER (WHERE left(right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9),1)='4') has_mobile "
+               f"FROM {tbl}")[0]
+        # 'opens with a name' = the owner name Lisa ACTUALLY says (Apollo DM OR sole-trader name), not just lisa_dm
+        _allc = q(f"SELECT p.company, p.bucket, dm.dm_first FROM {tbl} p LEFT JOIN lisa_dm dm ON dm.domain=p.domain")
+        st["has_rpc"] = sum(1 for a in _allc if _owner(a.get("company"), a.get("bucket"), a.get("dm_first")))
+        buckets = {r["bucket"]: r["n"] for r in q(f"SELECT COALESCE(bucket,'(none)') bucket, count(*) n FROM {tbl} GROUP BY 1")}
+        return JSONResponse(jsonable_encoder({"total": total, "rows": rows, "stats": st,
+                                              "buckets": buckets, "agent": agent, "limit": limit, "offset": offset}))
+
     # coverage facet -> `ge` boolean column. Multiple selected facets combine with AND.
     _COV = {"scanned": "ge.scanned", "gate": "ge.gate_pass", "apollo": "ge.has_apollo",
             "intel": "ge.has_intel", "whois": "ge.has_whois", "dataforseo": "ge.has_dataforseo",
@@ -3859,7 +4121,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _db_cte(search: str, source: str, enriched: str, paid_ads: str, revenue: str = "",
                 tracking: str = "", transparency: str = "", industry: str = "", state: str = "",
                 website: str = "", multilocation: str = "", agency: str = "",
-                pipeline: str = "", p4sub: str = "", rev_min: str = "", rev_max: str = ""):
+                pipeline: str = "", p4sub: str = "", rev_min: str = "", rev_max: str = "",
+                called: str = "", pool: str = ""):
         """Shared companies+enrichment CTE for the Database browser. Returns
         (cte_sql, params, base_conds) for the NON-coverage filters: search/source bake
         into the CTE; the rest come back as `ge` conditions. Coverage filters are added by
@@ -3878,7 +4141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 sn += " OR co.phone_norm LIKE %(qd)s"
             sd += ")"; sn += ")"
         src = ""
-        if source in ("raghav", "raven", "3cx_calls"):
+        if source in ("raghav", "raven", "3cx_calls", "gmaps"):
             src = " AND co.source = %(src)s"
             params["src"] = source
         conds = []
@@ -3950,8 +4213,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if p4sub in ("fresh_ads", "fresh_unscanned", "captured_3cx", "captured_aircall", "attempted", "dead"):
             conds.append("ge.p4_sub = %(p4sub)s")
             params["p4sub"] = p4sub
+        # Calling-pool membership — is the prospect currently in Lisa-4's / Lisa-5's outbound
+        # dialing pool? Matched on last-9 (dest9), the PK of lisa4_pool / lisa5_pool. The
+        # existence flags are computed on `ge` (see the pool LEFT JOINs below); for the
+        # lisa4/lisa5 views we also restrict `g` to matched companies so the grouped set is
+        # tiny (a few hundred rows), never a full-table pass.
+        if pool in ("lisa4", "lisa5", "none"):
+            conds.append({"lisa4": "ge.in_lisa4_pool", "lisa5": "ge.in_lisa5_pool",
+                          "none": "NOT ge.in_lisa4_pool AND NOT ge.in_lisa5_pool"}[pool])
+        # "Called today" — prospects one of the Lisa lines actually dialed today (Melbourne day).
+        # `td` aggregates the ACTUAL dialed number + call-time contact (from lisa_calls.brief) so the
+        # user can eyeball that the dialer saved the right mobile/name/email. When active it restricts
+        # `g` to the matched companies (fast) and LATERAL-joins the dialed contact into `ge`.
+        td_cte = td_gd = td_gn = td_join = td_select = ""
+        if called in ("lisa_today", "lisa4_today", "lisa1_today"):
+            # A call belongs to Lisa-4 when EITHER side is the Lisa-4 number (outbound: from_number;
+            # inbound: to_number). Everything else in lisa_calls is a Lisa-1 line call.
+            _l4 = ("(COALESCE(lc.from_number,'') LIKE '%%468030256' "
+                   "OR COALESCE(lc.to_number,'') LIKE '%%468030256')")
+            line = {"lisa4_today": f" AND {_l4}",
+                    "lisa1_today": f" AND NOT {_l4}"}.get(called, "")
+            td_cte = (
+                "td AS (SELECT lc.dest9, NULLIF(lower(lc.domain),'') AS dom, "
+                "  (array_agg(lc.to_number ORDER BY lc.created_at DESC))[1] AS dialed_number, "
+                "  (array_agg(NULLIF(lc.company_name,'') ORDER BY lc.created_at DESC) "
+                "     FILTER (WHERE NULLIF(lc.company_name,'') IS NOT NULL))[1] AS called_name, "
+                "  (array_agg(lc.brief ORDER BY lc.created_at DESC))[1] AS brief "
+                " FROM lisa_calls lc WHERE lc.created_at >= date_trunc('day', now() AT TIME ZONE "
+                "'Australia/Melbourne') AT TIME ZONE 'Australia/Melbourne'" + line +
+                " GROUP BY lc.dest9, NULLIF(lower(lc.domain),'')), ")
+            _match = ("(right(regexp_replace(COALESCE(co.phone,''),'[^0-9]','','g'),9) IN (SELECT dest9 FROM td)"
+                      " OR (co.domain IS NOT NULL AND lower(co.domain) IN (SELECT dom FROM td WHERE dom IS NOT NULL)))")
+            td_gd = " AND " + _match
+            td_gn = " AND right(regexp_replace(COALESCE(co.phone,''),'[^0-9]','','g'),9) IN (SELECT dest9 FROM td)"
+            td_join = (
+                " LEFT JOIN LATERAL (SELECT t.dialed_number, t.called_name, t.brief FROM td t "
+                "   WHERE (g.domain IS NOT NULL AND t.dom = g.domain) "
+                "      OR t.dest9 = right(regexp_replace(COALESCE(g.phone,''),'[^0-9]','','g'),9) "
+                "   ORDER BY (g.domain IS NOT NULL AND t.dom = g.domain) DESC LIMIT 1) tdc ON true")
+            td_select = (", tdc.dialed_number, tdc.called_name, "
+                         "(tdc.brief->>'prospect_email') AS called_email, "
+                         "(tdc.brief->>'prospect_name') AS called_contact_name")
+        # Calling-pool LEFT JOINs (always present): match each company's last-9 against the
+        # small, PK-indexed lisa4_pool / lisa5_pool. dest9 is the PK on both, so there is no
+        # fan-out — this is a light hash join on a few-hundred-row table, never the heavy
+        # "companies-vs-pool" full join. The flags roll up per domain via bool_or.
+        _d9 = "right(regexp_replace(COALESCE(co.phone,''),'[^0-9]','','g'),9)"
+        pool_join = (f" LEFT JOIN lisa4_pool l4 ON l4.dest9 = {_d9}"
+                     f" LEFT JOIN lisa5_pool l5 ON l5.dest9 = {_d9}")
+        # For the lisa4/lisa5 views, require a pool match up-front so `g` groups only the
+        # matched companies (tiny set). "In neither" can't be pre-restricted (it's a negation),
+        # so it falls back to the base grouped set + the ge condition above.
+        pool_gd = pool_gn = ""
+        if pool == "lisa4":
+            pool_gd = pool_gn = " AND l4.dest9 IS NOT NULL"
+        elif pool == "lisa5":
+            pool_gd = pool_gn = " AND l5.dest9 IS NOT NULL"
         cte = f"""
-        WITH kd AS (   -- domain -> pipeline rollup computed ONCE (set-wise), not per output row.
+        WITH {td_cte}kd AS (   -- domain -> pipeline rollup computed ONCE (set-wise), not per output row.
           SELECT substring(cl.company_key from 5) AS domain,
                  bool_or(cl.pipeline_stage='p5')                  AS k_booked,
                  bool_or(cl.pipeline='pipeline2_existing_agency') AS k_agency,
@@ -3976,17 +4295,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  -- (social, free hosts, gov portals, CDN junk) where many UNRELATED firms list
                  -- the same domain and would otherwise be falsely flagged multi-location.
                  (COALESCE(bool_or(co.branches ~ '[1-9]'), false)
-                  OR (count(*) > 1 AND co.domain !~* '(^|\\.)(facebook|instagram|wix|wixsite|squarespace|godaddy|000webhost|weebly|blogspot|linktr|perfdrive|communityguide)\\.|\\.gov\\.au$')) AS multiloc
-          FROM companies co WHERE co.domain IS NOT NULL {sd}{src}
+                  OR (count(*) > 1 AND co.domain !~* '(^|\\.)(facebook|instagram|wix|wixsite|squarespace|godaddy|000webhost|weebly|blogspot|linktr|perfdrive|communityguide)\\.|\\.gov\\.au$')) AS multiloc,
+                 bool_or(l4.dest9 IS NOT NULL) AS in_lisa4_pool,
+                 bool_or(l5.dest9 IS NOT NULL) AS in_lisa5_pool,
+                 bool_or(COALESCE(co.phone_is_mobile, false)) AS is_mobile,
+                 max(co.gmaps_reviews) AS review_count
+          FROM companies co{pool_join} WHERE co.domain IS NOT NULL {sd}{src}{td_gd}{pool_gd}
           GROUP BY co.domain
           UNION ALL
           SELECT NULL, 'nodomain', 1, co.revenue_musd, co.employees, co.company_name, co.industry, co.sub_industry,
                  NULLIF(concat_ws(', ', co.suburb, co.state), ''), co.phone_norm,
                  jsonb_array_length(COALESCE(co.contacts, '[]'::jsonb)), co.source,
-                 COALESCE(co.branches ~ '[1-9]', false)
-          FROM companies co WHERE co.domain IS NULL {sn}{src}
+                 COALESCE(co.branches ~ '[1-9]', false),
+                 (l4.dest9 IS NOT NULL), (l5.dest9 IS NOT NULL),
+                 COALESCE(co.phone_is_mobile, false), co.gmaps_reviews
+          FROM companies co{pool_join} WHERE co.domain IS NULL {sn}{src}{td_gn}{pool_gn}
         ), ge AS (
-          SELECT g.*, (e.status IS NOT NULL) AS enriched,
+          SELECT g.*, dm.dm_name, dm.dm_title, dm.dm_phone, dm.dm_email{td_select},
+                 (e.status IS NOT NULL) AS enriched,
                  (e.website IS NOT NULL) AS scanned,
                  ((e.website->>'runs_paid_ads') = 'true') AS runs_paid_ads,
                  (((e.website->>'runs_paid_ads')='true')
@@ -4029,6 +4355,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           LEFT JOIN enrichment e ON e.domain = g.domain
           LEFT JOIN prospects pr ON pr.domain = g.domain
           LEFT JOIN kd k ON k.domain = g.domain
+          LEFT JOIN (SELECT DISTINCT ON (domain) domain, dm_name, dm_title, dm_phone, dm_email
+                     FROM lisa_dm ORDER BY domain, resolved_at DESC NULLS LAST) dm ON dm.domain = g.domain
+          {td_join}
         )
         """
         return cte, params, conds
@@ -4048,7 +4377,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            source: str = "", coverage: str = "", revenue: str = "",
                            tracking: str = "", transparency: str = "", industry: str = "",
                            state: str = "", website: str = "", multilocation: str = "", agency: str = "",
-                           rev_min: str = "", rev_max: str = "",
+                           rev_min: str = "", rev_max: str = "", called: str = "", pool: str = "",
                            sort: str = "revenue", dir: str = "desc") -> JSONResponse:
         """The Database browser: the GIVEN business data (companies), STATIC columns only,
         GROUPED BY DOMAIN with SUMMED revenue (many businesses can share one domain).
@@ -4060,7 +4389,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cte, params, conds = _db_cte(search, source, enriched, paid_ads, revenue,
                                      tracking, transparency, industry, state, website=website,
                                      multilocation=multilocation, agency=agency,
-                                     pipeline=pipeline, p4sub=p4sub, rev_min=rev_min, rev_max=rev_max)
+                                     pipeline=pipeline, p4sub=p4sub, rev_min=rev_min, rev_max=rev_max,
+                                     called=called, pool=pool)
         params["lim"] = limit
         params["off"] = offset
         conds += _coverage_conds(coverage)
@@ -4084,7 +4414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        revenue: str = "", tracking: str = "", transparency: str = "",
                        industry: str = "", state: str = "", website: str = "",
                        multilocation: str = "", agency: str = "",
-                       rev_min: str = "", rev_max: str = "") -> JSONResponse:
+                       rev_min: str = "", rev_max: str = "", called: str = "", pool: str = "") -> JSONResponse:
         _require_db_access(request)
         r = q("SELECT (SELECT count(*) FROM companies) AS businesses, "
               "(SELECT count(DISTINCT domain) FROM companies WHERE domain IS NOT NULL) AS domains, "
@@ -4098,7 +4428,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # collapsing to the active filter. The result-bar total (/prospects.total) reflects
         # the FULL filter; these cards are reference + one-click shortcuts.
         cte, params, conds = _db_cte(search, source, "", "", revenue, "", "", industry, state, website=website,
-                                     multilocation=multilocation, agency=agency, rev_min=rev_min, rev_max=rev_max)
+                                     multilocation=multilocation, agency=agency, rev_min=rev_min, rev_max=rev_max,
+                                     called=called, pool=pool)
         base = ("WHERE " + " AND ".join(conds)) if conds else ""
         cov = q(cte + f"""SELECT
             count(*) FILTER (WHERE ge.scanned) AS scanned,
@@ -4406,6 +4737,258 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"ok": ok})
 
     # ------------------------------------------------------------------ #
+    # Emma Collins — AI staff #3: MEETING SCHEDULER. Everything AFTER the booking: one unified
+    # queue of EVERY booked meeting (Lisa-1 + Lisa-4 AI bookings AND human-BDE bookings), each
+    # pre-drafted as a calendar invite behind a MANDATORY human approval gate — NOTHING sends
+    # without "Approve & schedule". Sending = Microsoft Graph app-only Teams invites from
+    # SCHEDULER_MAILBOX; until MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET / SCHEDULER_MAILBOX
+    # are set, approvals queue as 'approved-awaiting-creds' and go out the moment creds land.
+    # Engine lives in ..emma (Graph client, queue sync, RSVP/reply/pixel tracking, reminders);
+    # the background emma_tick runs from cli.py's lisa-dial loop. Access = admins PLUS the
+    # SCHEDULER_USERS allow-list (kiran@ / vysakh@ / raj@).
+    # ------------------------------------------------------------------ #
+    from .. import emma as _emma
+
+    @app.get("/meetings", response_class=HTMLResponse)
+    def emma_page(request: Request):
+        if not _can_schedule(request):
+            # Same behaviour as /admin: non-allowed users are bounced to the dashboard.
+            return RedirectResponse("/", status_code=302)
+        return HTMLResponse(_static("meetings.html"), headers=_NOCACHE)
+
+    @app.get("/emma")
+    def emma_alias(request: Request):
+        """Friendly alias — Emma's console lives at /meetings."""
+        return RedirectResponse("/meetings", status_code=302)
+
+    @app.get("/api/emma/queue")
+    def emma_queue(request: Request) -> JSONResponse:
+        """Emma's console feed: every booked meeting as one invite row (draft → … → accepted)
+        plus her day counts. Re-syncs the queue from the three booking sources first (self-
+        throttled inside sync_queue, so polling the console stays cheap)."""
+        _require_scheduler(request)
+        _emma.ensure_emma_tables(pool)
+        try:
+            _emma.sync_queue(pool, settings)
+        except Exception:
+            pass   # the console still serves the last-synced rows
+        rows = q(
+            "SELECT id, dest9, source, bde, call_id, company, contact_name, domain,"
+            "       attendee_email, agreed_text, start_at, duration_min, title, notes, summary,"
+            "       start_at_parsed_from, cc_emails,"
+            "       status, attendee_response, teams_join_url,"
+            "       (graph_event_id IS NOT NULL) AS has_event,"
+            "       pixel_opened_at, confirmation_sent_at, last_reply, last_reply_at,"
+            "       reminder_sent_at, reminders_enabled, approved_by, approved_at, error, booked_at"
+            " FROM emma_meetings ORDER BY COALESCE(start_at, booked_at) ASC")
+        hidden = set(_hidden_bdes(request))   # private-BDE bookings stay hidden for non-admins
+        if hidden:
+            rows = [r for r in rows if not (r.get("source") == "bde" and r.get("bde") in hidden)]
+        counts: dict = {}
+        for r in rows:
+            anchor = r.get("start_at") or r.get("booked_at")
+            r["day"] = str(anchor)[:10] if anchor else None
+            r["has_time"] = r.get("start_at") is not None
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        counts["opened"] = sum(1 for r in rows if r.get("pixel_opened_at"))
+        return JSONResponse(jsonable_encoder({
+            "rows": rows, "counts": counts,
+            "graph_configured": settings.graph_configured,
+            "missing_creds": _emma.missing_creds(settings),
+            "mailbox": settings.scheduler_mailbox or None,
+            "today": str(_dt.now(ZoneInfo(settings.tz)).date())}))
+
+    @app.get("/api/emma/meeting/{mid}")
+    def emma_meeting_detail(mid: int, request: Request) -> JSONResponse:
+        """Drill-down for one meeting card (the slide-over panel): the full row, a complete
+        timeline (drafted + every emma_events entry — approved/sent/opened(pixel: signal,
+        not proof)/accepted/declined/reschedule-requested/reminder-sent/…), the attendee's
+        Graph response state, invite details (time/attendees/Teams link), the booking-call
+        summary + transcript link, and the prospect's CRM note."""
+        _require_scheduler(request)
+        _emma.ensure_emma_tables(pool)
+        rows = q("SELECT * FROM emma_meetings WHERE id=%s", (mid,))
+        if not rows:
+            raise HTTPException(404, "meeting not found")
+        r = rows[0]
+        r.pop("pixel_token", None)   # the open-pixel token never leaves the server
+        if r.get("source") == "bde" and r.get("bde") in set(_hidden_bdes(request)):
+            raise HTTPException(404, "meeting not found")   # private BDEs stay invisible
+        # Timeline: the row's own creation is the 'drafted' step (pre-dates event logging),
+        # then the journal verbatim — the panel maps kinds to friendly labels.
+        timeline = [{"kind": "drafted", "at": r.get("created_at"),
+                     "detail": {"source": r.get("source"), "bde": r.get("bde")}}]
+        for ev in q("SELECT kind, detail, created_at FROM emma_events"
+                    " WHERE meeting_id=%s ORDER BY created_at ASC, id ASC", (mid,)):
+            timeline.append({"kind": ev["kind"], "at": ev["created_at"],
+                             "detail": ev.get("detail") or {}})
+        crm = None
+        try:   # booked_crm belongs to the Lisa subsystem — absent on some local DBs
+            c = q("SELECT status, note, updated_by, updated_at FROM booked_crm WHERE dest9=%s",
+                  (r.get("dest9"),))
+            crm = c[0] if c else None
+        except Exception:
+            pass
+        # Branded invite body EXACTLY as the prospect receives it (source-selected variant),
+        # for the console preview pane. The open pixel is omitted (a preview must never log a
+        # false open) and the pixel token stays server-side.
+        try:
+            body_preview = _emma.invite_body_preview(settings, r)
+        except Exception:
+            body_preview = None
+        return JSONResponse(jsonable_encoder({
+            "meeting": r, "timeline": timeline, "crm": crm, "body_preview": body_preview,
+            "call_url": f"/call/{r['call_id']}" if r.get("call_id") else None,
+            "prospect_url": f"/prospect/{r['dest9']}" if r.get("dest9") else None,
+            "graph_configured": settings.graph_configured}))
+
+    @app.post("/api/emma/cc")
+    async def emma_cc(request: Request) -> JSONResponse:
+        """Set the CC / extra-attendees list. Body: {id, cc} (comma emails; '' clears).
+        Pre-send rows just store it — it rides along on approve; a meeting with a live
+        Graph event gets the SAME event PATCHed, so the extras land on the existing
+        invite (Graph mails the update itself)."""
+        u = _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(
+                _emma.update_cc, pool, settings, int(b.get("id") or 0),
+                cc=str(b.get("cc") or ""), approver=u.get("email") or "?")
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"CC update failed: {str(exc)[:200]}")
+        return JSONResponse(res)
+
+    @app.post("/api/emma/approve")
+    async def emma_approve(request: Request) -> JSONResponse:
+        """THE approval gate — nothing sends without this click (Kiran). Body: {id, start_at,
+        attendee_email, title?, notes?, duration_min?} (time/email arrive edited from the card).
+        With Graph creds -> creates the Teams event + confirmation email (with open pixel);
+        without -> the row queues as 'approved-awaiting-creds' and sends when creds land."""
+        u = _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(
+                _emma.approve_meeting, pool, settings, int(b.get("id") or 0),
+                start_at=(str(b.get("start_at") or "").strip() or None),
+                attendee_email=(str(b.get("attendee_email") or "").strip() or None),
+                title=b.get("title"), notes=b.get("notes"),
+                duration_min=int(b["duration_min"]) if b.get("duration_min") else None,
+                cc_emails=(None if b.get("cc") is None else str(b.get("cc"))),
+                approver=u.get("email") or "?")
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"send failed: {str(exc)[:200]}")
+        return JSONResponse(res)
+
+    @app.post("/api/emma/reschedule")
+    async def emma_reschedule(request: Request) -> JSONResponse:
+        """Approve a NEW slot (the gate applies to changes too). Body: {id, start_at}. A live
+        Graph event is PATCHed in place — the attendee gets the update on the SAME invite."""
+        u = _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(
+                _emma.reschedule_meeting, pool, settings, int(b.get("id") or 0),
+                start_at=str(b.get("start_at") or "").strip(),
+                approver=u.get("email") or "?")
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"reschedule failed: {str(exc)[:200]}")
+        return JSONResponse(res)
+
+    @app.post("/api/emma/cancel")
+    async def emma_cancel(request: Request) -> JSONResponse:
+        """Cancel a meeting. Body: {id, reason?}. Cancels the live Graph event too (Graph
+        notifies the attendee)."""
+        u = _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(
+                _emma.cancel_meeting, pool, settings, int(b.get("id") or 0),
+                reason=str(b.get("reason") or "").strip(),
+                approver=u.get("email") or "?")
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"cancel failed: {str(exc)[:200]}")
+        return JSONResponse(res)
+
+    @app.post("/api/emma/decline")
+    async def emma_decline(request: Request) -> JSONResponse:
+        """Kiran's "Decline / don't send" for a PENDING invite (owner requirement). Body:
+        {id, reason_code, note?} — reason_code ∈ already-scheduled | not-proceeding | duplicate |
+        other. Sets status='cancelled' with the reason, drops it from Needs-approval, and NEVER
+        sends. A meeting whose invite already went out is rejected (cancel it instead)."""
+        u = _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(
+                _emma.decline_meeting, pool, settings, int(b.get("id") or 0),
+                reason_code=str(b.get("reason_code") or "").strip(),
+                note=str(b.get("note") or "").strip(),
+                approver=u.get("email") or "?")
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"decline failed: {str(exc)[:200]}")
+        return JSONResponse(res)
+
+    @app.post("/api/emma/reminders")
+    async def emma_reminders(request: Request) -> JSONResponse:
+        """Toggle automatic reminders for one meeting (owner requirement — per-card + drill-down
+        switch). Body: {id, enabled}. Reminders are the only approval-exempt sends; this removes a
+        meeting from that set without touching anything else."""
+        u = _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(
+                _emma.set_reminders, pool, settings, int(b.get("id") or 0),
+                enabled=bool(b.get("enabled")), approver=u.get("email") or "?")
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        except Exception as exc:
+            raise HTTPException(502, f"reminders toggle failed: {str(exc)[:200]}")
+        return JSONResponse(res)
+
+    @app.get("/api/emma/px/{token}")
+    def emma_pixel(token: str) -> Response:
+        """The 1×1 open-tracking gif embedded in Emma's confirmation email. PUBLIC — the
+        prospect's mail client fetches it (auth-exempt via _PUBLIC_PREFIXES). Logs the FIRST
+        open; surfaced in the console as SIGNAL, not proof."""
+        try:
+            _emma.record_pixel_open(pool, token)
+        except Exception:
+            pass
+        return Response(content=_emma.PIXEL_GIF, media_type="image/gif",
+                        headers={"Cache-Control": "no-store, max-age=0"})
+
+    @app.post("/api/emma/test")
+    async def emma_test(request: Request) -> JSONResponse:
+        """Validate the 4 Graph env values END-TO-END: fetch an app-only token and send a REAL
+        test Teams invite to the given address. Body: {email}. Without creds it returns the
+        exact env names still missing."""
+        _require_scheduler(request)
+        b = await request.json()
+        try:
+            res = await run_in_threadpool(_emma.send_test_invite, pool, settings,
+                                          str(b.get("email") or "").strip())
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=502)
+        return JSONResponse(res)
+
+    # ------------------------------------------------------------------ #
     # Lisa-1 — AI cold-caller subsystem. Console + funnel are ADMIN-ONLY (Raj/Vysakh); the post-call
     # webhook is token-guarded (Retell posts to it, no session). Fully isolated from the 3CX funnel.
     # ------------------------------------------------------------------ #
@@ -4418,6 +5001,157 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "<h1 style='font-size:20px;margin:0 0 8px'>No access</h1>"
         "<p style='color:#8b96a6;margin:0 0 18px'>The Lisa console is restricted to authorised accounts only.</p>"
         "<a href='/' style='color:#5b8cff;text-decoration:none'>← Back to dashboard</a></div></div>")
+
+    @app.get("/lisa-crm", response_class=HTMLResponse)
+    def lisa_crm_page(request: Request):
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        return HTMLResponse(_static("lisa-crm.html"), headers=_NOCACHE)
+
+    @app.get("/api/lisa/crm")
+    def lisa_crm_data(request: Request) -> JSONResponse:
+        """Booked-prospects CRM: one row per prospect that has EVER agreed to a meeting on a Lisa
+        line — booking evidence, meeting schedule, reveal-site state, last touches, autopilot and
+        a manual status (booked_crm). Admin-only."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        closers = list(getattr(settings, "reveal_closers", []) or []) or ["__none__"]
+        rows = q("""
+            WITH booked AS (
+              SELECT DISTINCT ON (dest9) dest9, call_id, company_name, agreed_day_time,
+                     created_at AS booked_at,
+                     (right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) AS inbound,
+                     -- business line: Lisa-4 sells WEBSITES on +61468030256; everything else is
+                     -- Lisa-1 selling organic & paid marketing.
+                     (from_number='+61468030256' OR to_number='+61468030256') AS is_lisa4
+              FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
+              ORDER BY dest9, created_at ASC)
+            SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
+                   CASE WHEN b.is_lisa4 THEN 'lisa4' ELSE 'lisa1' END AS agent,
+                   COALESCE(NULLIF(b.company_name,''), lp.company, lb.company_name, '(unknown)') AS company,
+                   COALESCE(lp.domain, lb.domain) AS domain,
+                   (SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='outbound') AS last_out,
+                   (SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound')  AS last_in,
+                   (SELECT count(*) FROM lisa_calls lc WHERE lc.dest9=b.dest9) AS total_calls,
+                   (SELECT ce.start_at FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
+                      AND ce.type='reveal' ORDER BY (ce.status='pending') DESC, ce.start_at DESC LIMIT 1) AS meeting_at,
+                   (SELECT ce.status  FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
+                      AND ce.type='reveal' ORDER BY (ce.status='pending') DESC, ce.start_at DESC LIMIT 1) AS meeting_status,
+                   (SELECT count(*) FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
+                      AND ce.status='pending' AND ce.created_by='raj-autopilot') AS autopilot_pending,
+                   st.status AS site_status, st.share_token,
+                   bc.status AS crm_status, bc.note AS crm_note, bc.updated_by AS crm_by,
+                   (SELECT left(body,160) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound'
+                    ORDER BY created_at DESC LIMIT 1) AS last_in_body,
+                   ((SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound')
+                    > COALESCE(bc.replies_seen_at, 'epoch'::timestamptz)) AS unread,
+                   -- CALL ANALYSIS in the CRM: the booking call's summary + the human REVEAL call's
+                   -- (Manoj) outcome + summary, straight from the classifier.
+                   (SELECT call_summary FROM lisa_calls WHERE call_id=b.call_id) AS booking_summary,
+                   rv.bde_name AS reveal_by, rv.started_at AS reveal_at, rv.mins AS reveal_mins,
+                   rv.call_outcome AS reveal_outcome, rv.reveal_summary AS reveal_summary
+            FROM booked b
+            LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
+            LEFT JOIN lisa_briefs lb ON lb.dest9=b.dest9
+            LEFT JOIN LATERAL (SELECT status, share_token FROM lisa4_sites s
+                               WHERE s.dest9=b.dest9 ORDER BY id DESC LIMIT 1) st ON true
+            LEFT JOIN LATERAL (
+              SELECT c.bde_name, c.started_at, round(COALESCE(c.talk_seconds,0)/60.0)::int AS mins,
+                     cl.call_outcome, COALESCE(NULLIF(cl.problem_summary,''),'') AS reveal_summary
+              FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id
+              WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
+                AND c.answered AND COALESCE(c.talk_seconds,0) >= 60
+                AND c.bde_name = ANY(%s)   -- ONLY the website-reveal closer(s), e.g. Immanule Manoj (not the AI booking call or an unrelated BDE)
+              ORDER BY c.started_at DESC LIMIT 1) rv ON true
+            LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
+            ORDER BY b.booked_at DESC""", (closers,))
+        return JSONResponse(jsonable_encoder({"rows": rows}))
+
+    @app.post("/api/lisa/crm/status")
+    async def lisa_crm_status(request: Request) -> JSONResponse:
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        body = await request.json()
+        d9 = re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "dest9 required")
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO booked_crm (dest9, status, note, updated_by, updated_at)
+                           VALUES (%s,%s,%s,%s,now())
+                           ON CONFLICT (dest9) DO UPDATE SET status=EXCLUDED.status,
+                             note=EXCLUDED.note, updated_by=EXCLUDED.updated_by, updated_at=now()""",
+                        (d9, (body.get("status") or "")[:40], (body.get("note") or "")[:400], who))
+            conn.commit()
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/lisa/crm/seen")
+    async def lisa_crm_seen(request: Request) -> JSONResponse:
+        """Mark a booked prospect's inbound replies as read (per-prospect cursor on booked_crm)."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        body = await request.json()
+        d9 = re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "dest9 required")
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO booked_crm (dest9, replies_seen_at) VALUES (%s, now())
+                           ON CONFLICT (dest9) DO UPDATE SET replies_seen_at=now()""", (d9,))
+            conn.commit()
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/notifications")
+    def api_notifications(request: Request) -> JSONResponse:
+        """In-app notification feed (admin-only — items reference Lisa activity). DERIVED, not stored:
+        inbound SMS replies, new bookings and autopilot sends from the last 72h, newest first, plus the
+        caller's unread count against their notif_seen watermark."""
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            return JSONResponse({"items": [], "unread": 0})
+        items = q("""
+            SELECT * FROM (
+              SELECT 'reply' AS kind, s.created_at AT TIME ZONE 'UTC' AS at,
+                     COALESCE(NULLIF(lc.company_name,''), lp.company, '0'||s.dest9) AS who,
+                     left(s.body,140) AS body, '/lisa-crm' AS link, s.dest9
+              FROM lisa_sms s
+              LEFT JOIN lisa4_pool lp ON lp.dest9=s.dest9
+              LEFT JOIN LATERAL (SELECT company_name FROM lisa_calls c WHERE c.dest9=s.dest9
+                                 AND COALESCE(c.company_name,'')<>'' LIMIT 1) lc ON true
+              WHERE s.direction='inbound' AND s.created_at > now() - interval '72 hours'
+              UNION ALL
+              SELECT 'booking', c.created_at AT TIME ZONE 'UTC',
+                     COALESCE(NULLIF(c.company_name,''), lp2.company, '0'||c.dest9),
+                     'New meeting booked — '||COALESCE(NULLIF(c.agreed_day_time,''),'time TBC'),
+                     '/call/'||c.call_id, c.dest9
+              FROM lisa_calls c LEFT JOIN lisa4_pool lp2 ON lp2.dest9=c.dest9
+              WHERE COALESCE(c.meeting_agreed,false) AND c.created_at > now() - interval '72 hours'
+              UNION ALL
+              SELECT 'autopilot', ce.start_at AT TIME ZONE 'UTC',
+                     COALESCE(lp3.company, ce.dest_number),
+                     'Autopilot sent: '||COALESCE(ce.title,''), '/lisa-crm',
+                     right(regexp_replace(COALESCE(ce.dest_number,''),'[^0-9]','','g'),9)
+              FROM calendar_events ce
+              LEFT JOIN lisa4_pool lp3 ON lp3.dest9=right(regexp_replace(COALESCE(ce.dest_number,''),'[^0-9]','','g'),9)
+              WHERE ce.type='sms' AND ce.status='done' AND ce.created_by LIKE '%%autopilot%%'
+                AND ce.start_at > now() - interval '72 hours'
+            ) x ORDER BY at DESC LIMIT 40""")
+        seen = q("SELECT seen_at FROM notif_seen WHERE user_email=%s", ((u.get("email") or "").lower(),))
+        watermark = seen[0]["seen_at"] if seen else None
+        unread = sum(1 for i in items if (watermark is None or (i["at"] and i["at"].replace(tzinfo=None) > watermark.replace(tzinfo=None))))
+        return JSONResponse(jsonable_encoder({"items": items, "unread": unread}))
+
+    @app.post("/api/notifications/seen")
+    def api_notifications_seen(request: Request) -> JSONResponse:
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(403, "admin only")
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO notif_seen (user_email, seen_at) VALUES (%s, now())
+                           ON CONFLICT (user_email) DO UPDATE SET seen_at=now()""",
+                        ((u.get("email") or "").lower(),))
+            conn.commit()
+        return JSONResponse({"ok": True})
 
     @app.get("/lisa", response_class=HTMLResponse)
     def lisa_page(request: Request):
@@ -4476,11 +5210,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(jsonable_encoder(r))
 
     @app.get("/api/lisa/calls")
-    def lisa_calls(request: Request, limit: int = 100) -> JSONResponse:
+    def lisa_calls(request: Request, limit: int = 100, agent: str | None = None,
+                   booked: bool = False, date: str | None = None) -> JSONResponse:
+        """Recent Lisa calls. agent=lisa1|lisa4 / booked=1 / date=today|7d filter SERVER-side
+        (either-leg line attribution — from_number OR to_number identifies the Lisa-4 line), so
+        a filtered view returns ALL matching rows for the period, not just those that happen to
+        fall inside the most-recent-N window (inbound bookings were being dropped)."""
         if not is_admin(getattr(request.state, "user", None) or {}):
             raise HTTPException(403, "admin only")
         from .. import lisa as _lisa
-        return JSONResponse(jsonable_encoder({"calls": _lisa.recent_calls(pool, limit=limit)}))
+        # inbound = a call whose caller-ID is NONE of our agents' outbound numbers.
+        # Must include BOTH Lisa-1 and Lisa-4 numbers, else every Lisa-4 outbound
+        # call gets mislabeled inbound. ALSO include every line Lisa-4 has EVER owned
+        # (registry) — a rested rotation number's historical outbound rows stay ours.
+        from ..lisa4 import L4_LINE_DIGITS_ALL
+        agent_nums = list(dict.fromkeys(
+            list(settings.lisa_numbers or []) + list(settings.lisa4_numbers or [])
+            + ["+61" + d for d in L4_LINE_DIGITS_ALL]))
+        return JSONResponse(jsonable_encoder(
+            {"calls": _lisa.recent_calls(pool, limit=limit, from_numbers=agent_nums,
+                                         agent=agent, booked=booked, date=date)}))
 
     @app.post("/api/lisa/call")
     async def lisa_start_call(request: Request) -> JSONResponse:
@@ -4511,15 +5260,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/lisa/webcall")
     async def lisa_webcall(request: Request) -> JSONResponse:
         """Create a Retell WEB call so anyone with console access can talk to Lisa live in the browser
-        (the 'Voice Orb'). Returns an access token the page feeds to the Retell web SDK."""
+        (the 'Voice Orb'). Returns an access token the page feeds to the Retell web SDK. An optional
+        agent_id lets the orb picker A/B a specific agent (e.g. old v89 vs the rebuilt Lisa)."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        agent_id = (body or {}).get("agent_id") or None
+        from .. import lisa as _lisa
+        try:
+            r = await run_in_threadpool(_lisa.create_web_call, settings, agent_id)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)[:200]}, status_code=502)
+        return JSONResponse({"access_token": r.get("access_token"), "call_id": r.get("call_id")})
+
+    @app.get("/api/lisa/agents")
+    async def lisa_agents(request: Request) -> JSONResponse:
+        """List the Retell agents the Voice Orb can talk to (id, name, is_live) so the page can offer an
+        agent picker for A/B testing an old vs rebuilt Lisa."""
         if not is_admin(getattr(request.state, "user", None) or {}):
             raise HTTPException(403, "admin only")
         from .. import lisa as _lisa
         try:
-            r = await run_in_threadpool(_lisa.create_web_call, settings)
+            agents = await run_in_threadpool(_lisa.list_lisa_agents, settings)
         except Exception as exc:
             return JSONResponse({"error": str(exc)[:200]}, status_code=502)
-        return JSONResponse({"access_token": r.get("access_token"), "call_id": r.get("call_id")})
+        return JSONResponse({"agents": agents})
+
+    @app.post("/api/lisa/apollo-phone")
+    async def lisa_apollo_phone(request: Request) -> JSONResponse:
+        """Async webhook: Apollo delivers a revealed decision-maker phone here (phone reveal is async).
+        Guarded by the shared token; the prospect is matched via the ?domain= query param."""
+        if (request.query_params.get("token") or "") != (settings.lisa_webhook_token or ""):
+            raise HTTPException(403, "bad token")
+        domain = request.query_params.get("domain") or ""
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        from .. import lisa as _lisa
+        n = await run_in_threadpool(_lisa.store_apollo_phone, pool, domain, payload)
+        return JSONResponse({"ok": True, "updated": n})
 
     @app.post("/api/lisa/postcall")
     async def lisa_postcall(request: Request) -> JSONResponse:
@@ -4535,6 +5318,182 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(400, "bad payload")
         r = await run_in_threadpool(_lisa.handle_postcall, pool, settings, payload)
         return JSONResponse(jsonable_encoder(r))
+
+    @app.post("/api/lisa4/postcall")
+    async def lisa4_postcall(request: Request) -> JSONResponse:
+        """Lisa 4 (website-selling) post-call webhook — SEPARATE from Lisa-1. Records the outcome and, on a
+        booked reveal, queues the AI designer to build the site. Token-guarded (?token=)."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa4 as _l4
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(400, "bad payload")
+        r = await run_in_threadpool(_l4.handle_lisa4_postcall, pool, settings, payload)
+        return JSONResponse(jsonable_encoder(r))
+
+    @app.post("/api/lisa4/inbound")
+    async def lisa4_inbound(request: Request) -> JSONResponse:
+        """Retell INBOUND webhook for Lisa-4's number: the caller is (almost always) returning her missed
+        call / minimal SMS. Look them up by caller number and hand Lisa the exact brief — she answers
+        knowing who's ringing back. Token-guarded (?token=)."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa4 as _l4
+        from .. import lisa as _lisa
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        frm = ((body or {}).get("call_inbound") or {}).get("from_number") or ""
+        d9 = _lisa._d9(frm)
+        dyn = {"is_inbound_callback": "yes",
+               "phone_is_mobile": "yes" if str(frm).startswith("+614") else "no"}
+        try:
+            if d9:
+                brief = await run_in_threadpool(_l4.build_brief_lisa4, pool, d9)
+                dyn.update({k: ("" if v is None else str(v)) for k, v in brief.items()})
+        except Exception:
+            pass
+        dyn["is_inbound_callback"] = "yes"
+        return JSONResponse({"call_inbound": {"dynamic_variables": dyn}})
+
+    @app.post("/api/lisa5/postcall")
+    async def lisa5_postcall(request: Request) -> JSONResponse:
+        """Lisa 5 (growth-audit cold-caller) post-call webhook — SEPARATE from Lisa-1/4. Records the outcome,
+        mirrors it into the funnel as her own BDE, and on a non-booked call schedules her next move: the
+        missed-call SMS bait + voicemail/no-answer retries (via handle_lisa5_postcall). Token-guarded (?token=)."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa5 as _l5
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(400, "bad payload")
+        r = await run_in_threadpool(_l5.handle_lisa5_postcall, pool, settings, payload)
+        return JSONResponse(jsonable_encoder(r))
+
+    @app.post("/api/lisa5/inbound")
+    async def lisa5_inbound(request: Request) -> JSONResponse:
+        """Retell INBOUND webhook for Lisa-5's numbers: the caller is (almost always) returning her missed
+        call / minimal SMS. Look them up by caller number and hand Lisa the exact brief — she answers
+        knowing who's ringing back (warm 'thanks for calling back' + their company/context). Mirrors
+        /api/lisa4/inbound. Token-guarded (?token=)."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa5 as _l5
+        from .. import lisa as _lisa
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        frm = ((body or {}).get("call_inbound") or {}).get("from_number") or ""
+        d9 = _lisa._d9(frm)
+        dyn = {"is_inbound_callback": "yes",
+               "phone_is_mobile": "yes" if str(frm).startswith("+614") else "no"}
+        try:
+            if d9:
+                brief = await run_in_threadpool(_l5.build_brief_lisa5, pool, d9)
+                dyn.update({k: ("" if v is None else str(v)) for k, v in brief.items()})
+        except Exception:
+            pass
+        dyn["is_inbound_callback"] = "yes"
+        return JSONResponse({"call_inbound": {"dynamic_variables": dyn}})
+
+    @app.get("/api/lisa4/site/asset/{dest9}/{key}")
+    def lisa4_site_asset(request: Request, dest9: str, key: str) -> Response:
+        """Image assets for Lisa-4 built sites — served separately so site HTML stays small and photos
+        load in parallel at full retina quality (cached for a year)."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        rows = q("SELECT bytes FROM lisa4_assets WHERE dest9=%s AND key=%s", (dest9, key.replace('.jpg','')))
+        if not rows:
+            raise HTTPException(404, "asset not found")
+        return Response(content=bytes(rows[0]["bytes"]), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    @app.get("/api/lisa4/site/public/asset/{dest9}/{key}")
+    def lisa4_site_public_asset(dest9: str, key: str) -> Response:
+        """PUBLIC (no login): image assets under a shared reveal-site link — same bytes as the admin route.
+        The site HTML references assets relatively, so a page opened via /site/public/{token} resolves here."""
+        rows = q("SELECT bytes FROM lisa4_assets WHERE dest9=%s AND key=%s", (dest9, key.replace('.jpg', '')))
+        if not rows:
+            raise HTTPException(404, "asset not found")
+        return Response(content=bytes(rows[0]["bytes"]), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    @app.get("/api/lisa4/site/public/{token}")
+    def lisa4_site_public(token: str) -> HTMLResponse:
+        """PUBLIC (no login): serve a built Lisa-4 site by its unguessable share token so the closer
+        team (and the prospect, post-reveal) can open it without a dashboard login."""
+        if len(token) < 12:
+            raise HTTPException(404, "not found")
+        rows = q("SELECT html FROM lisa4_sites WHERE share_token=%s AND status='built'", (token,))
+        if not rows or not rows[0]["html"]:
+            raise HTTPException(404, "not found")
+        return HTMLResponse(rows[0]["html"])
+
+    @app.get("/api/lisa/floor")
+    async def lisa_floor(request: Request) -> JSONResponse:
+        """Rep-rail snapshot: per-agent (Lisa 1 + Lisa 4) live status, today's numbers, in-flight call,
+        pool/queue, autodial state, heartbeat, Lisa 4 build pipeline. Powers the Outbound-Intelligence rail."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa4 as _l4
+        snap = await run_in_threadpool(_l4.floor_snapshot, pool, settings)
+        return JSONResponse(jsonable_encoder(snap))
+
+    @app.post("/api/lisa4/autodial")
+    async def lisa4_autodial_toggle(request: Request) -> JSONResponse:
+        """Turn Lisa 4's auto-dialer on/off (DB toggle — the console switch on her rep card)."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa4 as _l4
+        body = await request.json()
+        on = bool(body.get("on"))
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "console")[:60]
+        await run_in_threadpool(_l4.set_lisa4_autodial, pool, on, who)
+        return JSONResponse({"ok": True, "autodial": on})
+
+    @app.post("/api/lisa5/autodial")
+    async def lisa5_autodial_toggle(request: Request) -> JSONResponse:
+        """Turn Lisa 5's auto-dialer on/off (DB toggle — the console switch on her rep card)."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        body = await request.json()
+        on = bool(body.get("on"))
+        def _set5():
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("CREATE TABLE IF NOT EXISTS lisa5_control (id int primary key, autodial boolean default false, heavy_at timestamptz)")
+                cur.execute("INSERT INTO lisa5_control (id, autodial) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET autodial=%s", (on, on))
+                conn.commit()
+        await run_in_threadpool(_set5)
+        return JSONResponse({"ok": True, "autodial": on})
+
+    @app.get("/api/lisa4/sites")
+    async def lisa4_sites(request: Request, limit: int = 50) -> JSONResponse:
+        """Lisa 4's AI-designed sites (meta only) for the reveal pipeline / preview list."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa4 as _l4
+        rows = await run_in_threadpool(_l4.list_sites, pool, limit)
+        return JSONResponse(jsonable_encoder({"sites": rows}))
+
+    @app.get("/api/lisa4/site/{site_id}")
+    async def lisa4_site_html(request: Request, site_id: int) -> HTMLResponse:
+        """Serve one AI-designed site's HTML for the in-dashboard preview iframe. Admin-only."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "admin only")
+        from .. import lisa4 as _l4
+        html = await run_in_threadpool(_l4.get_site_html, pool, site_id)
+        if not html:
+            raise HTTPException(404, "site not found or not built yet")
+        return HTMLResponse(html)
 
     @app.post("/api/lisa/inbound")
     async def lisa_inbound(request: Request) -> JSONResponse:
@@ -4553,6 +5512,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         r = await run_in_threadpool(_lisa.inbound_variables, pool, settings, frm)
         return JSONResponse({"call_inbound": r})
 
+    async def _twilio_form(request: Request) -> tuple[str, str, str]:
+        """Parse Twilio's urlencoded webhook body WITHOUT python-multipart (starlette's form() needs it and
+        fails silently here) — the reason every prospect SMS reply was being dropped. Returns (From, Body, To);
+        `To` is the exact number of ours that was texted (used to reply from the same Lisa-5 line)."""
+        try:
+            import urllib.parse as _up
+            raw = (await request.body()).decode("utf-8", "ignore")
+            q = _up.parse_qs(raw, keep_blank_values=True)
+            return (q.get("From") or [""])[0], (q.get("Body") or [""])[0], (q.get("To") or [""])[0]
+        except Exception:
+            return "", "", ""
+
     @app.post("/api/lisa/sms-inbound")
     async def lisa_sms_inbound(request: Request) -> Response:
         """Twilio inbound-SMS webhook (827). A prospect texted back → capture it + Lisa replies. Token-guarded."""
@@ -4560,14 +5531,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if tok and request.query_params.get("token") != tok:
             raise HTTPException(403, "bad token")
         from .. import lisa as _lisa
-        try:
-            form = await request.form()
-        except Exception:
-            form = {}
-        frm = form.get("From") or ""
-        body = form.get("Body") or ""
+        frm, body, _to = await _twilio_form(request)
         if frm:
             await run_in_threadpool(_lisa.handle_inbound_sms, pool, settings, frm, body)
+        return Response(content="<Response></Response>", media_type="application/xml")
+
+    @app.post("/api/lisa4/sms-inbound")
+    async def lisa4_sms_inbound(request: Request) -> Response:
+        """Twilio inbound-SMS webhook for LISA-4's number: a prospect texted back → capture, queue an ASAP
+        callback, one minimal human reply. Token-guarded."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa4 as _l4
+        frm, body, _to = await _twilio_form(request)
+        if frm:
+            await run_in_threadpool(_l4.handle_lisa4_inbound_sms, pool, settings, frm, body)
+        return Response(content="<Response></Response>", media_type="application/xml")
+
+    @app.post("/api/lisa5/sms-inbound")
+    async def lisa5_sms_inbound(request: Request) -> Response:
+        """Twilio inbound-SMS webhook for LISA-5's numbers (growth-audit line): a prospect texted back →
+        capture + one intelligent, purpose-free human reply via the SHARED responder, replying from the exact
+        Lisa-5 number they texted. Mirrors /api/lisa4/sms-inbound. Token-guarded."""
+        tok = settings.lisa_webhook_token or ""
+        if tok and request.query_params.get("token") != tok:
+            raise HTTPException(403, "bad token")
+        from .. import lisa5 as _l5
+        frm, body, to = await _twilio_form(request)
+        if frm:
+            await run_in_threadpool(_l5.handle_lisa5_inbound_sms, pool, settings, frm, body, to)
         return Response(content="<Response></Response>", media_type="application/xml")
 
     return app

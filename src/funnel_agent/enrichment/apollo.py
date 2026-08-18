@@ -34,20 +34,34 @@ _SENIORITIES = ["owner", "founder", "c_suite", "partner", "vp", "head", "directo
 
 
 def _dm_rank(title: str | None, seniority: str | None) -> int:
-    """Decision-maker priority (lower = higher): Founder/Owner → Directors → CEO/CFO/C-suite
-    → Marketing & Sales heads → everyone else. Used to surface the REAL decision-makers first
-    (not every Apollo contact is one)."""
+    """Decision-maker priority for a MARKETING/ADVERTISING pitch (lower = higher). The person who decides on
+    Google Ads spend is the OWNER/Managing Director/CEO, or the MARKETING head (CMO / Marketing
+    Director/Manager) — NOT a Sales/IT/Ops/Finance lead. Sales & other functional roles are deliberately
+    demoted so we never reveal/target the wrong person. rank<=3 = a real target; rank 6 = do not reveal."""
     t = (title or "").lower(); s = (seniority or "").lower()
-    if s in ("owner", "founder") or any(k in t for k in ("founder", "owner", "proprietor", "principal")):
+    # functional roles that do NOT own the marketing/advertising budget
+    _NONMKT = ("sales", "account manager", "account executive", "account director", "business development",
+               "it ", "information tech", "software", "engineer", "developer", "product", "operations",
+               "finance", "accountant", "accounts", "hr", "human resources", "legal", "procurement",
+               "logistics", "warehouse", "customer service", "customer support", "support", "administrat")
+    _MKT = ("marketing", "cmo", "brand", "digital", "growth", "ecommerce", "e-commerce", "advertising",
+            "demand gen", "comms", "communications")
+    is_mkt = any(k in t for k in _MKT)
+    # 0 — the OWNER / boss: controls all budget, including marketing
+    if s in ("owner", "founder") or any(k in t for k in ("founder", "owner", "co-owner", "proprietor",
+                                                          "principal", "managing director")):
         return 0
-    if "director" in t:                       # incl. managing director — in AU SMBs usually the boss
+    # 1 — CEO / managing partner, OR a MARKETING leader (owns the advertising budget)
+    if any(k in t for k in ("chief executive", "ceo", "managing partner")):
         return 1
-    if s == "c_suite" or any(k in t for k in ("chief", "ceo", "cfo", "coo", "cmo", "managing partner")):
+    if is_mkt and any(h in t for h in ("chief", "cmo", "head", "director", "manager", "lead", "vp",
+                                       "gm", "general manager", "officer")):
+        return 1
+    # 2 — a general Director / General Manager (usually the boss at an SMB), but NOT a sales/functional role
+    if any(h in t for h in ("director", "general manager")) and not any(k in t for k in _NONMKT):
         return 2
-    if any(d in t for d in ("marketing", "sales", "growth", "commercial", "revenue", "business development")) \
-       and any(h in t for h in ("head", "director", "manager", "lead", "vp", "chief", "gm", "general manager")):
-        return 3
-    return 4
+    # 6 — sales-only, IT, ops, finance, HR, product, account management, etc. — do NOT reveal/target these
+    return 6
 
 
 class ApolloClient:
@@ -94,14 +108,18 @@ class ApolloClient:
         resp.raise_for_status()
         return resp.json()
 
-    def search_decision_makers(self, domain: str, org_id: str | None = None, limit: int = 10) -> list[dict]:
+    def search_decision_makers(self, domain: str, org_id: str | None = None, limit: int = 10,
+                               broad: bool = False) -> list[dict]:
         """Decision-maker NAMES + TITLES for a company — FREE (no email/phone reveal).
 
         Returns name/title/seniority/department/linkedin only. Email & phone are
-        intentionally NOT requested or read, so no Apollo credits are consumed."""
+        intentionally NOT requested or read, so no Apollo credits are consumed. broad=True drops the
+        seniority filter — a fallback for micro-companies whose sole owner isn't tagged senior."""
         # Fetch a WIDER candidate set (25) so the founder/director isn't missed when a company
         # has many managers, then rank by decision-maker priority and return the top `limit`.
-        body = {"page": 1, "per_page": 25, "person_seniorities": _SENIORITIES}
+        body = {"page": 1, "per_page": 25}
+        if not broad:
+            body["person_seniorities"] = _SENIORITIES
         if org_id:
             body["organization_ids"] = [org_id]
         else:
@@ -120,6 +138,7 @@ class ApolloClient:
             name = (first + " " + last).strip()
             title = p.get("title")
             out.append({
+                "id": p.get("id"),                             # Apollo person id → precise paid reveal
                 "name": name or None,
                 "title": title,                                # the designation (free)
                 "seniority": p.get("seniority"),
@@ -168,3 +187,44 @@ class ApolloClient:
             "keywords": (org.get("keywords") or [])[:12],
             "technologies": (org.get("technology_names") or [])[:20],
         }
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
+    def reveal_contact(self, first_name: str, last_name: str, *, apollo_id: str | None = None,
+                       organization_name: str | None = None, domain: str | None = None,
+                       webhook_url: str | None = None) -> dict:
+        """PAID: reveal ONE decision-maker's email + phone. Email comes back SYNC; the mobile/direct phone
+        is delivered ASYNC to webhook_url (Apollo verifies numbers in real time). Costs Apollo credits —
+        callers MUST gate this behind settings.apollo_paid_reveal. Prefer matching by apollo_id (precise;
+        the free search obfuscates last names, so name-matching misses). Returns {email, phone, apollo_id}."""
+        body: dict = {"reveal_personal_emails": True}
+        if apollo_id:                                   # precise match by Apollo person id
+            body["id"] = apollo_id
+        else:
+            body["first_name"] = first_name or ""
+            body["last_name"] = last_name or ""
+        if organization_name:
+            body["organization_name"] = organization_name
+        if domain:
+            body["domain"] = domain
+        if webhook_url:                      # phone reveal is async — only requested when a callback exists
+            body["reveal_phone_number"] = True
+            body["webhook_url"] = webhook_url
+        resp = self._client.post(
+            "/api/v1/people/match", json=body,
+            headers={"X-Api-Key": self._key, "Content-Type": "application/json", "Cache-Control": "no-cache"})
+        resp.raise_for_status()
+        person = (resp.json() or {}).get("person") or {}
+        email = person.get("email") or ""
+        if not email:
+            for e in (person.get("personal_emails") or []):
+                if e:
+                    email = e; break
+        # a direct/mobile phone occasionally comes back sync; usually it arrives later via the webhook
+        phone = ""
+        for pn in (person.get("phone_numbers") or []):
+            num = (pn or {}).get("sanitized_number") or (pn or {}).get("raw_number")
+            if num:
+                phone = num
+                if (pn or {}).get("type") in ("mobile", "work_mobile"):
+                    break
+        return {"email": email, "phone": phone, "apollo_id": person.get("id")}

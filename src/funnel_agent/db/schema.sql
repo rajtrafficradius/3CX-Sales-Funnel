@@ -534,3 +534,67 @@ CREATE TABLE IF NOT EXISTS next_call_queue (
 CREATE INDEX IF NOT EXISTS idx_ncq_bde_score ON next_call_queue (assigned_bde, score DESC);
 CREATE INDEX IF NOT EXISTS idx_ncq_tier ON next_call_queue (tier);
 CREATE INDEX IF NOT EXISTS idx_ncq_nbt ON next_call_queue (next_best_time);
+
+-- ==================== Emma Collins (AI staff #3 — Meeting Scheduler) ====================
+-- One row per booked PROSPECT: the pre-drafted calendar invite for their meeting, advanced
+-- through draft | needs-info | approved-awaiting-creds | scheduled | accepted | declined |
+-- reschedule-requested | cancelled. NOTHING sends without a human approval (Kiran); sending is
+-- Microsoft Graph app-only Teams invites from SCHEDULER_MAILBOX. Reworked from the legacy
+-- meeting_invites table (absorbed by emma.ensure_emma_tables, which also creates these lazily
+-- so the feature works without re-running init-db).
+CREATE TABLE IF NOT EXISTS emma_meetings (
+  id                   bigserial PRIMARY KEY,
+  dest9                text UNIQUE NOT NULL, -- prospect identity (trailing-9), matches booked_crm
+  source               text,                 -- 'lisa1' | 'lisa4' | 'bde'
+  bde                  text,                 -- booking BDE (source='bde') — drives private-BDE hiding
+  call_id              text,                 -- the booking call
+  company              text,
+  contact_name         text,
+  domain               text,
+  attendee_email       text,                 -- editable before approval
+  agreed_text          text,                 -- free-text time agreed on the call
+  start_at             timestamptz,
+  duration_min         integer,
+  title                text,                 -- Emma's pre-drafted invite (editable)
+  notes                text,
+  summary              text,                 -- booking-call context shown on the card
+  status               text NOT NULL DEFAULT 'draft',
+  graph_event_id       text,
+  teams_join_url       text,
+  attendee_response    text,                 -- raw Graph RSVP incl 'tentative'
+  last_reply           text,
+  last_reply_at        timestamptz,
+  pixel_token          text UNIQUE,          -- /api/emma/px/{token} email-open tracking
+  pixel_opened_at      timestamptz,
+  confirmation_sent_at timestamptz,
+  reminder_sent_at     timestamptz,
+  response_checked_at  timestamptz,
+  approved_by          text,
+  approved_at          timestamptz,
+  error                text,
+  booked_at            timestamptz,
+  created_at           timestamptz DEFAULT now(),
+  updated_at           timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_emma_meetings_status ON emma_meetings (status);
+CREATE INDEX IF NOT EXISTS idx_emma_meetings_start ON emma_meetings (start_at);
+
+-- Full journal of everything Emma does / observes per meeting (approve/send/patch/cancel/
+-- response/reply/reminder/pixel-open/error/test).
+CREATE TABLE IF NOT EXISTS emma_events (
+  id         bigserial PRIMARY KEY,
+  meeting_id bigint,
+  kind       text,
+  detail     jsonb,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_emma_events_meeting ON emma_events (meeting_id, created_at);
+
+-- Single-row control: self-throttle watermarks for emma_tick's sub-tasks.
+CREATE TABLE IF NOT EXISTS emma_control (
+  id               integer PRIMARY KEY,
+  sync_at          timestamptz,
+  responses_at     timestamptz,
+  inbox_scanned_at timestamptz,
+  updated_at       timestamptz DEFAULT now()
+);

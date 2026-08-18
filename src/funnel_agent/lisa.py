@@ -44,7 +44,32 @@ _BLOCKED_FROM = {"+16592899020", "+17073589606"}
 # --------------------------------------------------------------------------- #
 # schema
 # --------------------------------------------------------------------------- #
-def ensure_tables(pool: ConnectionPool) -> None:
+_TABLES_READY = False
+
+
+def ensure_tables(pool: ConnectionPool, force: bool = False) -> None:
+    """Create/patch Lisa's tables. Runs the DDL ONCE per process then no-ops. CRITICAL: each
+    `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` grabs a brief AccessExclusiveLock on the table even when the
+    column already exists — running that on every autodial / orchestration / dashboard-API call DEADLOCKS
+    against the dashboard's constant concurrent reads (stalls the dial loop). force=True re-runs it."""
+    global _TABLES_READY
+    if _TABLES_READY and not force:
+        return
+    if not force:
+        # Cheap READ-ONLY schema probe: if the newest column already exists, the schema is current -> skip
+        # ALL CREATE/ALTER. `ADD COLUMN IF NOT EXISTS` takes an AccessExclusiveLock even as a no-op, which
+        # deadlocks the per-cycle refresh subprocess against the dashboard's constant reads. This probe uses
+        # only a shared lock. NOTE: when adding a NEW column below, bump the sentinel column here too.
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM information_schema.columns "
+                            "WHERE table_name='lisa_control' AND column_name='hos_heavy_at'")
+                current = cur.fetchone() is not None
+            if current:
+                _TABLES_READY = True
+                return
+        except Exception:
+            pass
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS lisa_calls ("
@@ -114,6 +139,9 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_control ("
                     "  id integer PRIMARY KEY, autodial boolean, updated_at timestamptz DEFAULT now(),"
                     "  updated_by text)")
+        # last time the HEAVY orchestration (pool-reserve, coach/QA, DM-enrichment, scheduling) ran — lets
+        # the dialer fire every cycle while the slow prep self-throttles to ~every few minutes (fast cadence).
+        cur.execute("ALTER TABLE lisa_control ADD COLUMN IF NOT EXISTS hos_heavy_at timestamptz")
         # two-way SMS log — every outbound curiosity SMS + every inbound reply (so prospect replies are
         # captured, threaded, and Lisa can reply). Was previously lost (Twilio had them, we didn't).
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_sms ("
@@ -125,8 +153,12 @@ def ensure_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE TABLE IF NOT EXISTS lisa_dm ("
                     "  domain text PRIMARY KEY, dm_name text, dm_first text, dm_title text, dm_phone text,"
                     "  dm_is_mobile boolean, source text, confidence integer, candidates jsonb,"
+                    "  dm_email text, trading_name text,"
                     "  resolved_at timestamptz DEFAULT now())")
+        cur.execute("ALTER TABLE lisa_dm ADD COLUMN IF NOT EXISTS dm_email text")
+        cur.execute("ALTER TABLE lisa_dm ADD COLUMN IF NOT EXISTS trading_name text")
         conn.commit()
+    _TABLES_READY = True   # DDL done — future calls skip the deadlock-prone ALTERs (see docstring)
     ensure_lisa_agent(pool)
 
 
@@ -211,6 +243,24 @@ def _wants_report(cad: dict) -> bool:
     return any(w in blob for w in _REPORT_WORDS)
 
 
+# "text me" phrasings — the prospect asked for the link BY SMS (vs email). Checked on the DNC path so a
+# "text it to me, then don't call again" still gets the link BEFORE the do-not-call suppression lands.
+_SMS_WORDS = ("text me", "text it", "text that", "text the link", "text through", "send a text",
+              "send me a text", "sms me", "by sms", "via sms", "by text", "via text",
+              "shoot me a text", "flick me a text", "message me")
+
+
+def _wants_sms_link(cad: dict) -> bool:
+    """True if the prospect asked to be TEXTED the link/details on this call — the classifier's SMS flag
+    first, else a 'text me' phrasing in the analysis text."""
+    if not isinstance(cad, dict):
+        return False
+    if any(cad.get(k) in (True, "true", "yes", "1") for k in ("sms_requested", "requested_sms", "sms_request")):
+        return True
+    blob = " ".join(str(cad.get(k) or "") for k in ("main_objection", "callback_when", "call_summary")).lower()
+    return any(w in blob for w in _SMS_WORDS)
+
+
 def _e164_au(num: str | None) -> str:
     """Normalise a phone number to E.164 (Retell requires it — it 400s on '0433…' or spaced numbers).
     Handles the AU formats people actually type: '0433 136 022' → '+61433136022', '61…' → '+61…',
@@ -235,7 +285,22 @@ def _first_name(name: str | None) -> str:
     or a wrong/mixed full name. Empty string if we have no usable name (Lisa then greets without one)."""
     n = re.sub(r"\b(mr|mrs|ms|dr|miss|mx)\b\.?", "", (name or "").strip(), flags=re.I).strip()
     parts = [p for p in re.split(r"[ ,]+", n) if p and p.isalpha()]
-    return parts[0][:40].capitalize() if parts else ""
+    first = parts[0][:40].capitalize() if parts else ""
+    # an article/role leaked in as a "name" ('The' from 'The Owner') would make her say "Hi The" — never that
+    return "" if first.lower() in ("the", "a", "owner", "team", "unknown") else first
+
+
+def _clean_company(name: str | None) -> str:
+    """Spoken-friendly company name: drop trailing legal suffixes and fix SHOUTING-CAPS so Lisa says
+    'Smith Plumbing', never 'SMITH PLUMBING PTY LTD' (an instant robocall tell)."""
+    n = (name or "").strip()
+    toks = n.split()
+    while toks and toks[-1].strip(".,()").lower() in ("pty", "ltd", "limited", "p/l"):
+        toks.pop()
+    n = " ".join(toks).strip(" ,.")
+    if n and n == n.upper() and any(c.isalpha() for c in n):
+        n = n.title()
+    return n
 
 
 # --------------------------------------------------------------------------- #
@@ -294,11 +359,19 @@ def _spoken_findings(audit: dict, niche: str) -> dict:
 
 
 def _domain_for(pool: ConnectionPool, d9: str) -> str | None:
-    """Best-known domain for a prospect (from the reserved pool or a saved brief)."""
+    """Best-known domain for a prospect (reserved pool, a saved brief, or the master companies DB by phone)."""
     for tbl in ("lisa_pool", "lisa_briefs"):
         r = _fetch(pool, f"SELECT domain FROM {tbl} WHERE dest9=%s AND NULLIF(domain,'') IS NOT NULL LIMIT 1", (d9,))
         if r:
             return r[0]["domain"]
+    # fallback: match the prospect's phone to a company in the master companies DB — fixes fresh-queue
+    # prospects seeded straight onto the calendar (not in lisa_pool/lisa_briefs), which otherwise get an
+    # empty brief (no company name, runs_google_ads=false).
+    r = _fetch(pool,
+        "SELECT domain FROM companies WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),9)=%s "
+        "AND NULLIF(domain,'') IS NOT NULL ORDER BY COALESCE(revenue_musd,0) DESC LIMIT 1", (d9,))
+    if r:
+        return r[0]["domain"]
     return None
 
 
@@ -344,6 +417,57 @@ def ensure_audit(pool: ConnectionPool, settings: Settings, domain: str) -> bool:
 _DM_TITLES = ["owner", "founder", "co-founder", "director", "managing director", "chief marketing",
               "cmo", "head of marketing", "marketing manager", "marketing director", "ceo",
               "general manager", "principal", "proprietor"]
+
+
+# D&B sector labels are catalogue strings ("Specialty Contractors", "Management of Companies &
+# Enterprises") — spoken aloud they're an instant robot tell. Map each to a plain spoken phrase;
+# labels deliberately absent (Management of Companies & Enterprises, Religious/Membership
+# Organizations, Private Households, Government) blank out — better nameless than robotic.
+_DNB_SECTOR_SPOKEN = {
+    "professional services sector": "professional services",
+    "finance & insurance sector": "finance and insurance",
+    "specialty contractors": "trades and contracting",
+    "retail sector": "retail",
+    "restaurants, bars & food services": "hospitality",
+    "consumer services": "consumer services",
+    "business services sector": "business services",
+    "health care sector": "healthcare",
+    "manufacturing sector": "manufacturing",
+    "arts, entertainment & recreation sector": "arts and entertainment",
+    "wholesale sector": "wholesale",
+    "real estate": "real estate",
+    "transportation services sector": "transport",
+    "education sector": "education",
+    "residential construction contractors": "residential building",
+    "lodging": "accommodation",
+    "agriculture & forestry sector": "agriculture and farming",
+    "nonresidential building construction": "commercial construction",
+    "media": "media",
+    "heavy & civil engineering construction": "civil construction",
+    "rental & leasing": "equipment rental and hire",
+    "nonprofit institutions": "not-for-profit",
+    "mining": "mining",
+    "water & sewer utilities": "utilities",
+    "electric utilities": "utilities",
+    "oil & gas field services": "oil and gas services",
+    "natural gas distribution & marketing": "gas distribution",
+    "oil & gas well drilling": "oil and gas",
+    "oil & gas exploration & production": "oil and gas",
+}
+
+
+def _humanize_sector(label: str | None) -> str:
+    """A speakable industry phrase from a D&B sector label; '' when unmappable. Already-plain labels
+    (gmaps 'physiotherapist', BDE-classified 'plumbing') pass through untouched."""
+    s = (label or "").strip()
+    if not s:
+        return ""
+    key = s.lower()
+    if key in _DNB_SECTOR_SPOKEN:
+        return _DNB_SECTOR_SPOKEN[key]
+    if " sector" in key or "&" in s or (s != s.lower() and len(s.split()) > 1):
+        return ""            # unmapped catalogue-style label → blank (brief falls back to "your industry")
+    return s
 
 
 def _prospect_facts(pool: ConnectionPool, domain: str) -> dict:
@@ -448,21 +572,197 @@ def resolve_decision_maker(pool: ConnectionPool, settings: Settings, domain: str
             "dm_phone": _e164_au(best) if best else "", "dm_is_mobile": _is_mobile_au(best), "confidence": conf}
 
 
+def apollo_resolve_dm(pool: ConnectionPool, settings: Settings, domain: str) -> dict:
+    """Domain -> Apollo (PAID): the real trading business NAME + the top decision-maker + their EMAIL
+    (sync) and PHONE (async via webhook). Stores into lisa_dm (trading_name, dm_email, dm_phone). Gated by
+    settings.apollo_paid_reveal + a daily credit cap. Best-effort; never raises."""
+    if not domain or not getattr(settings, "apollo_paid_reveal", False) or not getattr(settings, "apollo_api_key", ""):
+        return {}
+    ensure_tables(pool)
+    try:
+        used = _fetch(pool, "SELECT count(*) n FROM lisa_dm WHERE source='apollo_reveal' "
+                      "AND (resolved_at AT TIME ZONE %s)::date=(now() AT TIME ZONE %s)::date",
+                      (settings.tz, settings.tz))[0]["n"]
+        if used >= int(getattr(settings, "apollo_reveal_max_per_day", 300)):
+            return {"skipped": "daily reveal cap"}
+    except Exception:
+        pass
+    nm = trading = email = phone = ""
+    title = None
+    try:
+        from .enrichment.apollo import ApolloClient
+        with ApolloClient(settings) as ac:
+            org = ac.enrich_organization(domain) or {}
+            org_id = org.get("id"); trading = (org.get("name") or "").strip()
+            emp = org.get("employees")
+            # BIG-COMPANY GUARD — catches big companies the null-revenue D&B filter misses (e.g. Winc):
+            # drop from the pool + cancel its queued calls so Lisa never dials one.
+            if isinstance(emp, int) and emp > 200:
+                try:
+                    with pool.connection() as conn, conn.cursor() as cur:
+                        cur.execute("DELETE FROM lisa_pool WHERE domain=%s", (domain,))
+                        cur.execute(
+                            "UPDATE calendar_events SET status='cancelled' WHERE bde_name='Lisa' AND status='pending' "
+                            "AND type IN ('fresh_call','retry','callback') AND "
+                            "right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) IN "
+                            "(SELECT right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),9) FROM companies WHERE domain=%s)",
+                            (domain,))
+                        # cache a too_big marker so the fast dial-path aborts without any Apollo call
+                        cur.execute(
+                            "INSERT INTO lisa_dm (domain,source,trading_name,confidence,resolved_at) "
+                            "VALUES (%s,'too_big',%s,0,now()) ON CONFLICT (domain) DO UPDATE SET source='too_big', "
+                            "trading_name=COALESCE(NULLIF(EXCLUDED.trading_name,''),lisa_dm.trading_name), resolved_at=now()",
+                            (domain, trading))
+                        conn.commit()
+                except Exception:
+                    pass
+                log.info("apollo_skip_big_company", domain=domain, employees=emp)
+                return {"skipped": "too_big", "employees": emp, "domain": domain}
+            dms = ac.search_decision_makers(domain, org_id, limit=5) or []
+            top = next((d for d in dms if d.get("rank", 4) <= 3), None)   # only a REAL decision-maker
+            if top is None and (emp is None or (isinstance(emp, int) and emp <= 10)):
+                # micro-company: the sole owner often isn't tagged senior — take the best available person
+                # (prefer non-sales) so we still get a NAME + contact; at a 1-person shop that IS the DM.
+                broad = ac.search_decision_makers(domain, org_id, limit=8, broad=True) or []
+                top = next((d for d in broad if "sales" not in (d.get("title") or "").lower()), (broad[0] if broad else None))
+            if top:
+                nm = (top.get("name") or "").strip(); title = top.get("title")
+                parts = nm.split()
+                first = parts[0] if parts else ""
+                last = " ".join(parts[1:]) if len(parts) > 1 else ""
+                if top.get("id") or first:
+                    base = (getattr(settings, "public_base_url", "") or "").rstrip("/")
+                    tok = getattr(settings, "lisa_webhook_token", "") or ""
+                    webhook = f"{base}/api/lisa/apollo-phone?token={tok}&domain={domain}" if base else None
+                    try:
+                        rev = ac.reveal_contact(first, last, apollo_id=top.get("id"),
+                                                organization_name=trading or None, domain=domain, webhook_url=webhook)
+                        email = rev.get("email") or ""; phone = rev.get("phone") or ""
+                    except Exception as exc:
+                        log.warning("apollo_reveal_failed", domain=domain, error=str(exc)[:160])
+    except Exception as exc:
+        log.warning("apollo_resolve_dm_failed", domain=domain, error=str(exc)[:160]); return {}
+    if not (trading or nm or email or phone):
+        return {}
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lisa_dm (domain,dm_name,dm_first,dm_title,dm_phone,dm_is_mobile,dm_email,trading_name,"
+            "  source,confidence,resolved_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'apollo_reveal',%s,now()) "
+            "ON CONFLICT (domain) DO UPDATE SET "
+            "  dm_name=COALESCE(NULLIF(EXCLUDED.dm_name,''),lisa_dm.dm_name), "
+            "  dm_first=COALESCE(NULLIF(EXCLUDED.dm_first,''),lisa_dm.dm_first), "
+            "  dm_title=COALESCE(NULLIF(EXCLUDED.dm_title,''),lisa_dm.dm_title), "
+            "  dm_phone=COALESCE(NULLIF(EXCLUDED.dm_phone,''),lisa_dm.dm_phone), "
+            "  dm_is_mobile=(EXCLUDED.dm_is_mobile OR lisa_dm.dm_is_mobile), "
+            "  dm_email=COALESCE(NULLIF(EXCLUDED.dm_email,''),lisa_dm.dm_email), "
+            "  trading_name=COALESCE(NULLIF(EXCLUDED.trading_name,''),lisa_dm.trading_name), "
+            "  source='apollo_reveal', resolved_at=now()",
+            (domain, nm, _first_name(nm), title or "", _e164_au(phone) if phone else "",
+             _is_mobile_au(phone), email, trading, 80))
+        conn.commit()
+    return {"domain": domain, "dm_first": _first_name(nm), "dm_name": nm, "dm_title": title,
+            "dm_email": email, "dm_phone": _e164_au(phone) if phone else "", "trading_name": trading}
+
+
+def store_apollo_phone(pool: ConnectionPool, domain: str, payload) -> int:
+    """Parse a phone out of an Apollo async phone-reveal webhook payload and save it to lisa_dm for
+    `domain`. Never raises."""
+    if not domain:
+        return 0
+    phone = ""
+    try:
+        if isinstance(payload, dict):
+            people = payload.get("people") or ([payload.get("person")] if payload.get("person") else [payload])
+        elif isinstance(payload, list):
+            people = payload
+        else:
+            people = []
+        # Take the BEST available number: mobile first, then a direct work line, then anything. Apollo's
+        # webhook payload uses `type_cd` ('mobile' | 'work_direct' | …); older/sync shapes use `type`.
+        _rank = {"mobile": 0, "work_mobile": 0, "direct": 1, "work_direct": 1, "work": 2}
+        best_rank = 99
+        for p in people:
+            if not isinstance(p, dict):
+                continue
+            for pn in (p.get("phone_numbers") or []):
+                num = (pn or {}).get("sanitized_number") or (pn or {}).get("raw_number")
+                if not num:
+                    continue
+                tc = ((pn or {}).get("type_cd") or (pn or {}).get("type") or "").lower()
+                r = _rank.get(tc, 3)
+                if r < best_rank:
+                    best_rank, phone = r, num
+                if best_rank == 0:
+                    break
+            if best_rank == 0:
+                break
+    except Exception:
+        pass
+    if not phone:
+        return 0
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE lisa_dm SET dm_phone=%s, dm_is_mobile=%s, resolved_at=now() WHERE domain=%s",
+                        (_e164_au(phone), _is_mobile_au(phone), domain))
+            conn.commit()
+            return cur.rowcount
+    except Exception as exc:
+        log.warning("apollo_phone_store_failed", domain=domain, error=str(exc)[:120])
+        return 0
+
+
 def get_decision_maker(pool: ConnectionPool, domain: str) -> dict:
     if not domain:
         return {}
-    r = _fetch(pool, "SELECT domain,dm_name,dm_first,dm_title,dm_phone,dm_is_mobile,source,confidence,"
+    r = _fetch(pool, "SELECT domain,dm_name,dm_first,dm_title,dm_phone,dm_is_mobile,dm_email,trading_name,source,confidence,"
                "(resolved_at AT TIME ZONE 'Australia/Melbourne') resolved_local FROM lisa_dm WHERE domain=%s", (domain,))
     return dict(r[0]) if r else {}
 
 
 def refresh_decision_makers(pool: ConnectionPool, settings: Settings, limit: int = 40) -> dict:
-    """Resolve the DM for any pooled prospect that doesn't have one yet (a batch per cycle). Automatic."""
+    """Resolve the DM for pooled prospects (a batch per cycle). Free pass = call-intel + BD + Apollo names.
+    When apollo_paid_reveal is on, ALSO run the paid domain->Apollo resolve (trading name + DM email/phone)
+    for a few per cycle (Apollo rate-limits bursts; a daily credit cap applies inside apollo_resolve_dm)."""
     ensure_tables(pool)
-    rows = _fetch(pool, "SELECT DISTINCT lp.domain FROM lisa_pool lp LEFT JOIN lisa_dm d ON d.domain=lp.domain "
-                  "WHERE NULLIF(lp.domain,'') IS NOT NULL AND d.domain IS NULL LIMIT %s", (limit,))
-    n = sum(1 for r in rows if resolve_decision_maker(pool, settings, r["domain"]))
-    return {"resolved": n, "pending": max(0, len(rows) - n)}
+    paid = bool(getattr(settings, "apollo_paid_reveal", False))
+    # Enrich in DIAL ORDER (highest pool priority first = what schedule_lisa_fresh queues + the dialer dials
+    # first), so each prospect is Apollo-resolved BEFORE the dialer reaches it — background, ahead of time.
+    if paid:
+        # FEEDSTOCK (Raj, 2026-08-10): resolve DMs for pooled prospects AND for un-touched advertisers
+        # straight from `companies` — because reserve_lisa_pool now only admits prospects that ALREADY
+        # have a mobile, the advertiser universe must be Apollo-revealed here FIRST to get owner mobiles
+        # into lisa_dm, which reserve then pulls into the dial pool. Excludes anything a human already called.
+        rows = _fetch(pool,
+                      "SELECT domain FROM ( "
+                      "  SELECT lp.domain, lp.priority prio, lp.reserved_at ra "
+                      "  FROM lisa_pool lp LEFT JOIN lisa_dm d ON d.domain=lp.domain "
+                      "  WHERE NULLIF(lp.domain,'') IS NOT NULL AND (d.domain IS NULL "
+                      "    OR (COALESCE(d.trading_name,'')='' AND d.source IS DISTINCT FROM 'too_big')) "
+                      "  UNION "
+                      "  SELECT co.domain, COALESCE((e.dataforseo->'ads'->>'count')::int,0) prio, now() ra "
+                      "  FROM companies co JOIN enrichment e ON e.domain=co.domain "
+                      "  WHERE (e.dataforseo->>'running_google_ads')='true' AND co.source='raghav' "
+                      "    AND co.revenue_musd BETWEEN 2 AND 50 "
+                      "    AND co.domain !~* '\\.(gov|edu|asn|org)\\.au$' "
+                      "    AND (SELECT count(*) FROM companies c3 WHERE c3.domain=co.domain) <= 8 "
+                      "    AND NOT EXISTS (SELECT 1 FROM lisa_dm d2 WHERE d2.domain=co.domain) "
+                      "    AND NOT EXISTS (SELECT 1 FROM calls cc WHERE "
+                      "      right(regexp_replace(COALESCE(cc.dest_number,''),'[^0-9]','','g'),9)="
+                      "      right(regexp_replace(COALESCE(co.phone,''),'[^0-9]','','g'),9)) "
+                      ") q ORDER BY prio DESC NULLS LAST, ra LIMIT %s", (limit,))
+    else:
+        rows = _fetch(pool, "SELECT lp.domain FROM lisa_pool lp LEFT JOIN lisa_dm d ON d.domain=lp.domain "
+                      "WHERE NULLIF(lp.domain,'') IS NOT NULL AND d.domain IS NULL "
+                      "ORDER BY lp.priority DESC NULLS LAST, lp.reserved_at LIMIT %s", (limit,))
+    per_cycle = int(getattr(settings, "apollo_people_trickle_per_cycle", 6))
+    n = revealed = 0
+    for r in rows:
+        if paid and revealed < per_cycle:
+            apollo_resolve_dm(pool, settings, r["domain"]); revealed += 1   # trading name + DM + email/phone + big-co drop
+        else:
+            resolve_decision_maker(pool, settings, r["domain"])            # free: call-intel + BD + Apollo names
+        n += 1
+    return {"resolved": n, "revealed": revealed}
 
 
 def _enrichment_signals(pool: ConnectionPool, domain: str) -> dict:
@@ -546,7 +846,7 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         cr = _fetch(pool, "SELECT company_name AS business_name, industry FROM companies WHERE domain=%s LIMIT 1", (domain,))
         if cr:
             company = company or (cr[0].get("business_name") or "")
-            niche = niche or (cr[0].get("industry") or "")
+            niche = niche or _humanize_sector(cr[0].get("industry"))   # D&B catalogue label → spoken phrase (or blank)
 
     # --- the REAL insight, best source first: full SEO audit > confirmed-Google-Ads signal > niche generic ---
     findings = None
@@ -616,8 +916,10 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
 
     b.update({
         "prospect_name": contact or "",
-        "company_name": company or "",
+        "company_name": _clean_company(company),   # spoken form — no 'PTY LTD', no SHOUTING-CAPS
         "prospect_website": domain or ((row or {}).get("website") or ""),
+        # bare domain for the email-confirm move ("I'll send it to info@<domain> — still the best one?")
+        "company_domain": _norm_domain(domain or ((row or {}).get("website") or "")),
         "prospect_niche": niche or "",
         "prospect_email": email or "",
         "decision_maker": contact or "",
@@ -645,6 +947,26 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
         "dm_name": facts.get("dm_name", ""),             # ask the gatekeeper for them BY NAME (bypass)
         "ideal_customer": facts.get("icp", ""),          # who their buyers are
     })
+    # APOLLO-RESOLVED CONTACT (Raj, 2026-08-10): hand Lisa the DM's email + mobile UP FRONT so she CONFIRMS
+    # them on the call ("I've got your email as X — still the best one?") rather than asking cold. She only
+    # ASKS for a field that's empty (Apollo had nothing). The confirmed email is what the cal.com invite
+    # is sent to, so it must be captured for every booking.
+    dm = get_decision_maker(pool, domain) if domain else {}
+    apollo_email = (dm.get("dm_email") or "").strip()
+    apollo_mobile = ((dm.get("dm_phone") or "").strip() if dm.get("dm_is_mobile") else "")
+    if not b.get("prospect_email"):
+        b["prospect_email"] = apollo_email
+    b["apollo_email"] = apollo_email
+    b["apollo_mobile"] = apollo_mobile
+    if apollo_email or apollo_mobile:
+        b["contact_prefill"] = (
+            (f"Email on file: {apollo_email}. " if apollo_email else "")
+            + (f"Mobile on file: {apollo_mobile}. " if apollo_mobile else "")
+            + "CONFIRM these back to them before booking; only ASK for whichever is missing.")
+        b["have_contact"] = "true"
+    else:
+        b["contact_prefill"] = "No email or mobile on file — ASK for the best email (and mobile) before you book."
+        b["have_contact"] = "false"
     # Honesty guard: only let Lisa claim they run Google Ads when the data actually confirms it.
     # If unconfirmed, the prompt falls back to a neutral "how you're showing up on Google" opener.
     try:
@@ -758,11 +1080,49 @@ def inbound_variables(pool: ConnectionPool, settings: Settings, from_number: str
             "metadata": {"dest9": d9, "inbound": "true", "known": str(known).lower()}}
 
 
-def create_web_call(settings: Settings) -> dict:
-    """Create a Retell WEB call (browser voice test / 'Voice Orb') for the Lisa agent. Returns
-    {access_token, call_id} — the console uses the Retell web SDK + this token to let anyone talk to Lisa
-    live from the page. No phone number, no cost of a PSTN call."""
-    return _retell(settings, "POST", "v2/create-web-call", {"agent_id": getattr(settings, "lisa_agent_id", "")})
+def create_web_call(settings: Settings, agent_id: str | None = None) -> dict:
+    """Create a Retell WEB call (browser voice test / 'Voice Orb'). Returns {access_token, call_id} — the
+    console uses the Retell web SDK + this token to let anyone talk to Lisa live from the page. No phone
+    number, no PSTN cost. Pass agent_id to test a SPECIFIC agent (e.g. A/B an old vs rebuilt Lisa from the
+    orb picker); defaults to the live LISA_AGENT_ID."""
+    aid = (agent_id or "").strip() or getattr(settings, "lisa_agent_id", "")
+    return _retell(settings, "POST", "v2/create-web-call", {"agent_id": aid})
+
+
+def list_lisa_agents(settings: Settings) -> list[dict]:
+    """List the account's Retell agents (id + name) so the Voice Orb can offer an agent picker — lets you
+    A/B the live Lisa against an old or rebuilt version in the browser. The live LISA_AGENT_ID is flagged
+    and floated to the top, then names containing 'lisa'. If LISA_ORB_AGENTS is set, ONLY those curated
+    agents are returned (a clean two-item A/B picker), format "agent_id|Label,agent_id|Label"."""
+    live = getattr(settings, "lisa_agent_id", "")
+    raw = (getattr(settings, "lisa_orb_agents", "") or "").strip()
+    if raw:
+        picks = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            aid, _sep, label = part.partition("|")
+            aid = aid.strip()
+            if aid:
+                picks.append({"agent_id": aid, "agent_name": (label.strip() or aid), "is_live": aid == live})
+        if picks:
+            return picks
+    try:
+        res = _retell(settings, "GET", "list-agents", None)
+    except Exception:
+        return []
+    rows = res if isinstance(res, list) else ((res.get("agents") if isinstance(res, dict) else []) or [])
+    live = getattr(settings, "lisa_agent_id", "")
+    out = []
+    for a in rows:
+        aid = (a or {}).get("agent_id") or ""
+        if not aid:
+            continue
+        name = a.get("agent_name") or aid
+        out.append({"agent_id": aid, "agent_name": name, "is_live": aid == live})
+    out.sort(key=lambda r: (not r["is_live"], "lisa" not in (r["agent_name"] or "").lower(), (r["agent_name"] or "").lower()))
+    return out
 
 
 def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest9: str | None = None,
@@ -793,8 +1153,12 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
     # then REBUILD the brief so Lisa opens with the real audit hooks (competitor gap / keyword gap / quick
     # wins) instead of the generic running-ads line. Falls back gracefully if there's no domain/audit.
     dom = domain or _domain_for(pool, d9)
-    # Prefer the resolved decision-maker's MOBILE — reach the RIGHT person on a good number.
+    # DM + trading name + email/phone are resolved in the BACKGROUND (refresh_decision_makers, ahead of the
+    # dialer) so the dial path stays fast and never contends on the DB. Here we only READ the pre-resolved
+    # record and honour a cached big-company marker (no Apollo call, no writes at dial time).
     dm = get_decision_maker(pool, dom) if dom else {}
+    if dm.get("source") == "too_big":
+        return {"error": f"skipped big company: {dom}"}
     if dm.get("dm_phone") and dm.get("dm_is_mobile"):
         _cand = _e164_au(dm["dm_phone"])
         if _cand and _cand != to_number and len(re.sub(r"[^0-9]", "", _cand)) >= 11:
@@ -806,7 +1170,7 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
                 build_and_store_brief(pool, settings, dest9=d9, domain=dom)   # rebuild with the fresh audit
             except Exception as exc:
                 log.warning("lisa_rebuild_after_audit_failed", domain=dom, error=str(exc)[:160])
-    brief = get_brief(pool, settings, dest9=d9, domain=domain)   # saved per-prospect brief (builds once if missing)
+    brief = get_brief(pool, settings, dest9=d9, domain=dom)   # use the RESOLVED domain (fixes empty briefs on fresh-queue calls)
     # overlay the CURRENT coach playbook so the objection library + avoid-list are always the latest,
     # even on a brief that was stored before the last coaching refresh.
     pb = get_playbook(pool)
@@ -821,6 +1185,13 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
         brief["decision_maker"] = dm["dm_first"]
         if dm.get("dm_title"):
             brief["dm_role"] = dm["dm_title"]
+    # prefer the real TRADING name over a trust/legal entity (e.g. "…DISCRETIONARY TRUST"), and carry the
+    # DM's Apollo-revealed email so Lisa references the business people recognise + can text the audit.
+    if dm.get("trading_name"):
+        brief["company_name"] = dm["trading_name"]
+    if dm.get("dm_email"):
+        brief["prospect_email"] = dm["dm_email"]
+        brief["confirmed_email"] = dm["dm_email"]
     body = {
         "from_number": frm,
         "to_number": to_number,
@@ -917,7 +1288,38 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
         log.warning("lisa_funnel_write_failed", call_id=cid, error=str(exc)[:160])
     # 0a-bis) COMPLIANCE: if the prospect asked not to be contacted, suppress them for good — drop from the
     # reserved pool and cancel every pending Lisa event so she never dials them again.
+    # SELF-CLEANING DM NUMBERS: a 'wrong_number' on a stored DM phone means that number is stale/wrong —
+    # erase it so we never dial it again (next attempt falls back to the company main line), and the
+    # background resolver can find a fresh one. This is the feedback loop that keeps DM-mobile quality
+    # honest (measured 7.3% of DM mobiles answering as wrong-number before this).
+    if outcome == "wrong_number":
+        try:
+            wrong_to = _e164_au(call.get("to_number") or "")
+            if wrong_to:
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE lisa_dm SET dm_phone=NULL, dm_is_mobile=false, "
+                                "  candidates = COALESCE(candidates,'{}'::jsonb) || jsonb_build_object('wrong_number', %s) "
+                                "WHERE dm_phone=%s", (wrong_to, wrong_to))
+                    if cur.rowcount:
+                        log.info("lisa_dm_phone_cleared_wrong_number", phone=wrong_to, rows=cur.rowcount)
+                    conn.commit()
+        except Exception as exc:
+            log.warning("lisa_dm_wrongnum_clear_failed", error=str(exc)[:120])
     if outcome == "do_not_call" and d9:
+        # They asked for the link on THIS call ("text it to me — and don't call again"): honour that FIRST.
+        # Once DND lands we never contact them again, so this send happens BEFORE the suppression below.
+        try:
+            dom_dnc = _norm_domain(dyn.get("prospect_website") or "")
+            if (dom_dnc and (_wants_sms_link(cad) or _wants_report(cad))
+                    and _is_mobile_au(call.get("to_number") or "")
+                    and not _fetch(pool, "SELECT 1 FROM lisa_audit_shares WHERE domain=%s LIMIT 1", (dom_dnc,))):
+                r_dnc = send_audit_link(pool, settings, domain=dom_dnc, to_number=call.get("to_number"),
+                                        name=dyn.get("prospect_name"))
+                if r_dnc.get("ok"):
+                    result["audit_link_sent"] = r_dnc.get("url")
+                    log.info("lisa_audit_sent_before_dnd", call_id=cid, domain=dom_dnc)
+        except Exception as exc:
+            log.warning("lisa_dnc_sms_link_failed", call_id=cid, error=str(exc)[:160])
         try:
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute("DELETE FROM lisa_pool WHERE dest9=%s", (d9,))
@@ -1025,16 +1427,21 @@ def _parse_when(txt: str) -> datetime | None:
         return None
     t = txt.lower().strip()
     now = datetime.now(ZoneInfo(_TZ))
-    hour = 10
+    is_pm = ("pm" in t) or ("afternoon" in t) or ("evening" in t)
+    # hour: explicit '2pm'/'8 am' first; else spelled-out ('eight' -> 8); else part-of-day; else 10am
+    hour = None
     m = re.search(r"(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)", t)
     if m:
         hour = int(m.group(1)) % 12 + (12 if m.group(3) == "pm" else 0)
-    elif "afternoon" in t:
-        hour = 14
-    elif "morning" in t:
-        hour = 10
-    elif "evening" in t:
-        hour = 17
+    if hour is None:
+        _NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+        for w, n in _NUM.items():
+            if re.search(rf"\b{w}\b", t):
+                hour = n % 12 + (12 if is_pm else 0)
+                break
+    if hour is None:
+        hour = 14 if "afternoon" in t else 17 if "evening" in t else 10
     day = None
     if "tomorrow" in t:
         day = now.date() + timedelta(days=1)
@@ -1045,8 +1452,12 @@ def _parse_when(txt: str) -> datetime | None:
             if re.search(rf"\b{name}\b", t):
                 ahead = (wd - now.weekday()) % 7
                 ahead = ahead or 7
+                if "next" in t:                        # 'next tuesday' -> the FOLLOWING week's Tuesday
+                    ahead += 7
                 day = now.date() + timedelta(days=ahead)
                 break
+    if not day and "next week" in t:                   # bare 'next week' -> next Monday (not tomorrow)
+        day = now.date() + timedelta(days=((0 - now.weekday()) % 7 or 7))
     if not day:
         day = now.date() + timedelta(days=1)
     return datetime(day.year, day.month, day.day, min(max(hour, 8), 18), 0, tzinfo=ZoneInfo(_TZ))
@@ -1102,6 +1513,31 @@ def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number:
     return True
 
 
+def _sms_optout_kind(body: str) -> str:
+    """Classify a prospect text as an opt-out / bad-number signal (or '' if it's a normal reply)."""
+    low = (body or "").strip().lower()
+    if low in ("stop", "stop.", "unsubscribe") or low.startswith("stop "):
+        return "stop"
+    for k in ("remove this number", "remove my number", "take me off", "don't text", "do not text",
+              "don't call", "do not call", "wrong number", "wrong person", "not interested"):
+        if k in low:
+            return "optout"
+    return ""
+
+
+def _enforce_sms_optout(pool: ConnectionPool, d9: str, from_number: str, body: str) -> None:
+    """Honour it EVERYWHERE: no more texts, no more calls, out of every pool, DNC on the funnel."""
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE calendar_events SET status='cancelled' WHERE status='pending' "
+                    "AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s", (d9,))
+        cur.execute("DELETE FROM lisa_pool WHERE dest9=%s", (d9,))
+        cur.execute("UPDATE lisa4_pool SET bucket='ok', issue='opt-out (SMS)' WHERE dest9=%s", (d9,))
+        cur.execute("UPDATE classifications SET do_not_contact=true WHERE call_id IN "
+                    "(SELECT call_id FROM calls WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s)", (d9,))
+        conn.commit()
+    log.info("sms_optout_enforced", d9=d9, body=body[:60])
+
+
 def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, to_number: str | None,
                        name: str | None, call_from: str | None = None) -> bool:
     """Fire the MINIMAL curiosity SMS on a missed call. This is a pure BACKEND process (Twilio direct) so
@@ -1110,6 +1546,11 @@ def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, t
     legacy Retell chat agent only if Twilio isn't configured. Gated on LISA_SMS_ENABLED."""
     if not to_number or not getattr(settings, "lisa_sms_enabled", False):
         return False
+    d9 = _d9(to_number)
+    recent = _fetch(pool, "SELECT 1 FROM lisa_sms WHERE dest9=%s AND (direction='inbound' "
+                    "OR created_at > now() - interval '7 days') LIMIT 1", (d9,))
+    if recent:
+        return False   # they already got the nudge (or replied) — repeating it reads as spam
     first = (name or "").strip().split(" ")[0] if name else ""
     body = (f"Hi {first}, it's Lisa — tried to reach you, could you give me a quick call back when you get "
             "a sec? :)").replace("Hi ,", "Hi,")
@@ -1150,37 +1591,518 @@ def _log_sms(pool: ConnectionPool, direction: str, frm: str | None, to: str | No
         log.warning("lisa_sms_log_failed", error=str(exc)[:120])
 
 
-def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: str, body: str) -> dict:
-    """A prospect TEXTED BACK. Capture it (was previously lost), then reply as Lisa — short, human, aiming
-    to lock a quick call — using their saved brief for context. Two-way SMS, backend-driven."""
+# --------------------------------------------------------------------------- #
+# Inbound-SMS auto-responder (BOTH Lisa lines) — Vysakh's standing HARD RULES
+# --------------------------------------------------------------------------- #
+# These rules are fed VERBATIM as the system prompt. The #1 bar: sound like a real
+# person texting, never reveal WHY we called, and only ever try to get them on a
+# quick phone call (or handle pure logistics / opt-out). Post-booking texts may
+# reference the already-agreed meeting.
+SMS_REPLY_RULES = (
+    "You compose ONE short SMS reply to a prospect who texted one of our numbers back. Owner: Vysakh. "
+    "These rules are absolute.\n\n"
+    "PRE-BOOKING TEXTS MUST NEVER REVEAL THE PURPOSE/TOPIC/PITCH OF THE CALL. No mention of Google Ads, "
+    "marketing, website, SEO, \"your rankings\", \"we noticed\", offers, or why we called. The text's ONLY "
+    "job is to get them on a quick phone call (or handle pure logistics/opt-out).\n"
+    "- If they ask \"who are you?\" / \"what's this about?\": stay warm, create light curiosity, say it's quick "
+    "and genuinely worth a 2-minute chat, and ask when's a good time to call. DO NOT explain the reason.\n"
+    "- If they offer/ask a time (\"tomorrow morning\", \"after 5\", \"call me Friday\"): AGREE to a specific time "
+    "and confirm it. That's a win.\n"
+    "- POST-BOOKING texts (only once a meeting is already booked) MAY reference the agreed meeting "
+    "(confirmations, reminders, the invite/video link) — that purpose is already accepted.\n"
+    "- Warm, brief (<=300 chars), casual AU tone, human, no emoji spam, never hard-sell over text, never invent.\n"
+    "- SOUND LIKE A REAL PERSON TEXTING, NOT AN AI. This is the top quality bar. Concretely:\n"
+    "  * lower-case, casual; short fragments over full sentences; contractions (i'm, you're, no worries).\n"
+    "  * AU texting vocab: \"buzz\", \"quick sec\", \"arvo\", \"cheers\", \"ta\", \"no dramas\", \"yeah\". Vary it per reply.\n"
+    "  * NO corporate/AI tells: never \"I wanted to reach out\", \"I hope this finds you\", \"feel free to\", \"at your "
+    "earliest convenience\", \"reach out\", \"touch base\", \"assist you\", em-dashes, semicolons, or 3 exclamation "
+    "marks. Max one \"!\" and often none.\n"
+    "  * match THEIR energy + wording; reference what they actually said (\"all good, finished with patients then!\").\n"
+    "  * a tiny bit of imperfection is fine (a trailing \"..\", \"haha\", \"yep\") — it reads human.\n"
+    "  * read it back: if it sounds like a polished marketing bot, rewrite it looser."
+)
+
+# claude-opus-4-8 token cost in CENTS/token ($5 in / $25 out per 1M) — logged to lisa_llm_usage like the
+# OpenAI helper, so the cost page stays accurate for the SMS auto-responder too.
+_CLAUDE_SMS_RATE = {"in": 500 / 1_000_000, "out": 2500 / 1_000_000}
+
+# The SMS auto-responder returns the reply + a structured read on the prospect's intent via a FORCED
+# function/tool schema (guaranteed shape). ONE schema shared by both providers — OpenAI function-calling
+# (the default LLM, same key/client the classifier uses) and the Anthropic fallback.
+_SMS_TOOL_NAME = "sms_reply"
+_SMS_TOOL_DESC = "Return the SMS reply to send and the read on the prospect's intent."
+_SMS_INTENT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "reply": {"type": "string",
+                  "description": "The exact SMS text to send back (<=300 chars, lower-case casual AU, human)."},
+        "wants_callback": {"type": "boolean",
+                           "description": "They proposed / agreed a time for us to call them."},
+        "callback_time_text": {"type": "string",
+                               "description": "Their OWN words for the time, e.g. 'tomorrow arvo', 'friday 3pm', 'after 5'. Empty if none."},
+        "opted_out": {"type": "boolean",
+                      "description": "They asked to stop / not be contacted / wrong number."},
+        "not_interested": {"type": "boolean",
+                           "description": "They declined but did not opt out."},
+        "is_question": {"type": "boolean",
+                        "description": "They asked who we are / what it's about."},
+    },
+    "required": ["reply", "wants_callback", "callback_time_text", "opted_out", "not_interested", "is_question"],
+}
+
+_L4_LINE_TOKENS = ("l4", "lisa4", "lisa 4", "lisa-4", "4")
+_L5_LINE_TOKENS = ("l5", "lisa5", "lisa 5", "lisa-5", "5")
+_L1_LINE_TOKENS = ("l1", "lisa1", "lisa 1", "lisa-1", "lisa", "1", "")
+
+# TRUE opt-out phrases for the auto-responder: STOP / unsubscribe / remove / do-not-contact / bad number.
+# A bare "not interested" is intentionally excluded — the responder treats it as a SOFT decline (classifier
+# → polite close + soft mark), not a silent full-DNC. (_sms_optout_kind, used elsewhere, still catches both.)
+_HARD_OPTOUT_PHRASES = ("stop", "unsubscribe", "remove this number", "remove my number", "take me off",
+                        "don't text", "do not text", "don't call", "do not call", "wrong number", "wrong person")
+
+
+def _is_hard_sms_optout(body: str) -> bool:
+    """True only for unambiguous opt-out / bad-number texts (never for a plain 'not interested')."""
+    low = (body or "").strip().lower()
+    if low in ("stop", "stop.", "unsubscribe") or low.startswith("stop "):
+        return True
+    return any(p in low for p in _HARD_OPTOUT_PHRASES)
+
+
+def _sms_line_is_l4(settings: Settings, from_line) -> bool:
+    """Which agent owns this thread — Lisa-4 (websites) or Lisa-1. Accepts a line-type token ('L1'/'L4') or a
+    raw line number (matched against the current + historical Lisa-4 numbers). Sets tone + the send-from
+    number + the calendar owner (bde_name), NEVER anything that leaks into the text."""
+    s = str(from_line or "").strip().lower()
+    if s in _L4_LINE_TOKENS:
+        return True
+    if s in _L1_LINE_TOKENS:
+        return False
+    d9 = _d9(from_line)
+    if d9:
+        if any(_d9(n) == d9 for n in list(getattr(settings, "lisa4_numbers", []) or [])):
+            return True
+        try:                                     # rested Lisa-4 lines (append-only registry) still count
+            from . import lisa4 as _l4
+            if d9 in getattr(_l4, "L4_LINE_DIGITS_ALL", ()):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _sms_line_is_l5(settings: Settings, from_line) -> bool:
+    """Which agent owns this thread — Lisa-5 (growth-audit) or not. Accepts a line-type token ('L5') or a raw
+    line number (matched against Lisa-5's current numbers). Sets tone + the send-from number + the calendar
+    owner (bde_name), NEVER anything that leaks into the text. Mirrors _sms_line_is_l4 for the Lisa-5 pool."""
+    s = str(from_line or "").strip().lower()
+    if s in _L5_LINE_TOKENS:
+        return True
+    if s in _L4_LINE_TOKENS or s in _L1_LINE_TOKENS:
+        return False
+    d9 = _d9(from_line)
+    if d9 and any(_d9(n) == d9 for n in list(getattr(settings, "lisa5_numbers", []) or [])):
+        return True
+    return False
+
+
+def _sms_line(settings: Settings, from_line) -> str:
+    """Resolve which Lisa agent owns an SMS thread → 'L5' | 'L4' | 'L1'. THE single line-classifier used by
+    the shared inbound-SMS responder and the evening sweep, so tone + send-from number + calendar owner all
+    stay consistent per line. Checks Lisa-5 first (its numbers are distinct from Lisa-4's / Lisa-1's), then
+    Lisa-4, else Lisa-1. `from_line` may be a token ('L5'/'L4'/'L1') or a raw line number."""
+    if _sms_line_is_l5(settings, from_line):
+        return "L5"
+    if _sms_line_is_l4(settings, from_line):
+        return "L4"
+    return "L1"
+
+
+def _has_booked_meeting(pool: ConnectionPool, d9: str) -> bool:
+    """True when this prospect ALREADY has a booked meeting — a reveal/strategy calendar event (matched by
+    number or by the booking call's booked_event_id), a booking call (lisa_calls.meeting_agreed), or a live
+    booked_crm status. Flips the composer from pre-booking (no purpose) to post-booking (may reference it)."""
+    if not d9:
+        return False
+    try:
+        r = _fetch(pool,
+                   "SELECT (EXISTS(SELECT 1 FROM calendar_events e WHERE e.type IN ('reveal','meeting') "
+                   "         AND e.status IN ('pending','done') "
+                   "         AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=%s) "
+                   "     OR EXISTS(SELECT 1 FROM lisa_calls lc JOIN calendar_events e2 ON e2.id=lc.booked_event_id "
+                   "         WHERE lc.dest9=%s AND e2.status IN ('pending','done')) "
+                   "     OR EXISTS(SELECT 1 FROM lisa_calls lc2 WHERE lc2.dest9=%s AND COALESCE(lc2.meeting_agreed,false))"
+                   "    ) AS booked", (d9, d9, d9))
+        if r and r[0].get("booked"):
+            return True
+    except Exception:
+        pass
+    try:   # booked_crm belongs to the Lisa subsystem and is absent on some DBs — never let it break the check
+        r = _fetch(pool, "SELECT 1 FROM booked_crm WHERE dest9=%s AND COALESCE(NULLIF(status,''),'') <> '' "
+                   "AND lower(status) NOT IN ('lost','cancelled','canceled','no_show','no-show','dead',"
+                   "'not_interested','declined') LIMIT 1", (d9,))
+        if r:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _booked_meeting_when(pool: ConnectionPool, settings: Settings, d9: str) -> str:
+    """Melbourne wall-clock text of the prospect's booked meeting (for a post-booking confirmation/reminder),
+    or '' if we can't pin a time. Prefers a pending reveal/meeting matched by number, else via the booking
+    call's booked_event_id."""
+    for sql, params in (
+        ("SELECT e.start_at s FROM calendar_events e WHERE e.type IN ('reveal','meeting') "
+         "AND e.status='pending' AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=%s "
+         "ORDER BY e.start_at LIMIT 1", (d9,)),
+        ("SELECT e.start_at s FROM lisa_calls lc JOIN calendar_events e ON e.id=lc.booked_event_id "
+         "WHERE lc.dest9=%s AND e.status='pending' ORDER BY e.start_at LIMIT 1", (d9,))):
+        try:
+            r = _fetch(pool, sql, params)
+            if r and r[0].get("s"):
+                return r[0]["s"].astimezone(ZoneInfo(settings.tz)).strftime("%A %d %b, %-I:%M%p").replace(":00", "")
+        except Exception:
+            continue
+    return ""
+
+
+def _sms_prospect_number(pool: ConnectionPool, d9: str) -> str:
+    """The prospect's exact E.164 to reply to — taken from their most recent inbound row (so we text the same
+    number they messaged from); falls back to reconstructing an AU mobile from the trailing-9."""
+    try:
+        r = _fetch(pool, "SELECT from_number FROM lisa_sms WHERE dest9=%s AND direction='inbound' "
+                   "AND NULLIF(from_number,'') IS NOT NULL ORDER BY created_at DESC LIMIT 1", (d9,))
+        if r and r[0].get("from_number"):
+            return _e164_au(r[0]["from_number"])
+    except Exception:
+        pass
+    return _e164_au(d9)
+
+
+def _sms_already_answered(pool: ConnectionPool, d9: str, body: str) -> bool:
+    """Dedupe: skip phone-auto-replies we've already handled. TRUE when (A) an outbound already landed at/after
+    the latest inbound within the last hour (we answered this exact message — duplicate webhook / webhook-vs-
+    sweep race), or (B) an identical inbound text within the last hour already got a reply (Twilio retry)."""
+    try:
+        inb = _fetch(pool, "SELECT created_at FROM lisa_sms WHERE dest9=%s AND direction='inbound' "
+                     "ORDER BY created_at DESC LIMIT 1", (d9,))
+        if not inb:
+            return False
+        latest = inb[0]["created_at"]
+        a = _fetch(pool, "SELECT 1 FROM lisa_sms WHERE dest9=%s AND direction='outbound' "
+                   "AND created_at >= %s AND created_at > now() - interval '1 hour' LIMIT 1", (d9, latest))
+        if a:
+            return True
+        b = _fetch(pool, "SELECT 1 FROM lisa_sms i WHERE i.dest9=%s AND i.direction='inbound' AND i.body=%s "
+                   "AND i.created_at < %s AND i.created_at > now() - interval '1 hour' "
+                   "AND EXISTS(SELECT 1 FROM lisa_sms o WHERE o.dest9=i.dest9 AND o.direction='outbound' "
+                   "           AND o.created_at > i.created_at) LIMIT 1", (d9, body, latest))
+        if b:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _claude_sms_compose(settings: Settings, pool: ConnectionPool | None, *, system: str, user: str) -> tuple[str, dict]:
+    """One LLM call that returns the SMS reply + a read on the prospect's intent, via a FORCED function/tool
+    schema (guaranteed shape). Uses the DEFAULT LLM = OpenAI (the SAME key/client the classifier + coach use)
+    whenever an OpenAI key is configured; Anthropic is an OPTIONAL fallback only when no OpenAI key is set.
+    Logs token cost to lisa_llm_usage. Returns ('', {}) on any failure so the caller can fall back to a safe
+    purpose-free reply. (Name kept for callers; no longer Anthropic-specific.)"""
+    openai_key = getattr(settings, "llm_api_key", "") or ""
+    provider = (getattr(settings, "llm_provider", "openai") or "openai").lower()
+    # OpenAI is the default: use it unless the deployment is explicitly pinned to Anthropic or has no OpenAI key.
+    if openai_key and provider != "anthropic":
+        return _openai_sms_compose(settings, pool, system=system, user=user, key=openai_key)
+    return _anthropic_sms_compose(settings, pool, system=system, user=user)
+
+
+def _openai_sms_compose(settings: Settings, pool: ConnectionPool | None, *, system: str, user: str,
+                        key: str) -> tuple[str, dict]:
+    """DEFAULT path: one OpenAI function-calling call (forced tool) returning the shared SMS-intent schema."""
+    model = getattr(settings, "llm_model_strong", "") or "gpt-4o"
+    tool = {"type": "function",
+            "function": {"name": _SMS_TOOL_NAME, "description": _SMS_TOOL_DESC, "parameters": _SMS_INTENT_SCHEMA}}
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=key)
+        r = client.chat.completions.create(
+            model=model, temperature=0,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user[:8000]}],
+            tools=[tool], tool_choice={"type": "function", "function": {"name": _SMS_TOOL_NAME}})
+        _log_sms_llm_usage_openai(pool, model, r)
+        msg = r.choices[0].message
+        for tc in (getattr(msg, "tool_calls", None) or []):
+            if getattr(getattr(tc, "function", None), "name", "") == _SMS_TOOL_NAME:
+                data = dict(json.loads(tc.function.arguments or "{}"))
+                return (str(data.get("reply") or "").strip()[:320]), data
+    except Exception as exc:
+        log.warning("lisa_sms_llm_failed", provider="openai", error=str(exc)[:160])
+    return "", {}
+
+
+def _anthropic_sms_compose(settings: Settings, pool: ConnectionPool | None, *, system: str,
+                           user: str) -> tuple[str, dict]:
+    """FALLBACK path (only when no OpenAI key): one Claude tool-forced call, same shared SMS-intent schema."""
+    key = getattr(settings, "anthropic_api_key", "") or ""
+    if not key:
+        return "", {}
+    model = getattr(settings, "lisa_sms_model", "") or "claude-opus-4-8"
+    tool = {"name": _SMS_TOOL_NAME, "description": _SMS_TOOL_DESC, "input_schema": _SMS_INTENT_SCHEMA}
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=key)
+        msg = client.messages.create(          # opus-4-8: no temperature/thinking (both 400 on 4.7+)
+            model=model, max_tokens=1024, system=system,
+            messages=[{"role": "user", "content": user[:8000]}],
+            tools=[tool], tool_choice={"type": "tool", "name": _SMS_TOOL_NAME})
+        _log_sms_llm_usage(pool, model, msg)
+        for block in msg.content:
+            if getattr(block, "type", "") == "tool_use" and getattr(block, "name", "") == _SMS_TOOL_NAME:
+                data = dict(block.input or {})
+                return (str(data.get("reply") or "").strip()[:320]), data
+    except Exception as exc:
+        log.warning("lisa_sms_llm_failed", provider="anthropic", error=str(exc)[:160])
+    return "", {}
+
+
+def _log_sms_llm_usage_openai(pool: ConnectionPool | None, model: str, r) -> None:
+    """Log an OpenAI SMS-compose call's token cost to lisa_llm_usage (gpt-4o-class rate _LLM_RATE)."""
+    if pool is None:
+        return
+    try:
+        u = getattr(r, "usage", None)
+        if not u:
+            return
+        pt = getattr(u, "prompt_tokens", 0) or 0
+        ct = getattr(u, "completion_tokens", 0) or 0
+        cost = round(pt * _LLM_RATE["in"] + ct * _LLM_RATE["out"], 4)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa_llm_usage (purpose, model, prompt_tokens, completion_tokens, cost_cents) "
+                        "VALUES (%s,%s,%s,%s,%s)", ("sms_reply", model, pt, ct, cost))
+            conn.commit()
+    except Exception as exc:
+        log.warning("lisa_sms_llm_usage_log_failed", error=str(exc)[:120])
+
+
+def _log_sms_llm_usage(pool: ConnectionPool | None, model: str, msg) -> None:
+    if pool is None:
+        return
+    try:
+        u = getattr(msg, "usage", None)
+        if not u:
+            return
+        pt = getattr(u, "input_tokens", 0) or 0
+        ct = getattr(u, "output_tokens", 0) or 0
+        cost = round(pt * _CLAUDE_SMS_RATE["in"] + ct * _CLAUDE_SMS_RATE["out"], 4)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa_llm_usage (purpose, model, prompt_tokens, completion_tokens, cost_cents) "
+                        "VALUES (%s,%s,%s,%s,%s)", ("sms_reply", model, pt, ct, cost))
+            conn.commit()
+    except Exception as exc:
+        log.warning("lisa_sms_llm_usage_log_failed", error=str(exc)[:120])
+
+
+def _upsert_sms_callback(pool: ConnectionPool, bde_name: str, d9: str, dest_number: str,
+                         when: datetime, body: str, created_by: str) -> None:
+    """A prospect texted a time → book/refresh a pending callback on the right calendar (Lisa-1 or Lisa-4),
+    at the exact parsed Melbourne time. Idempotent: updates the existing pending callback for this prospect
+    rather than stacking duplicates."""
+    from .calendar import create_event, update_event
+    end = when + timedelta(minutes=15)
+    ex = _fetch(pool, "SELECT id FROM calendar_events WHERE bde_name=%s AND status='pending' AND type='callback' "
+                "AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s ORDER BY id DESC LIMIT 1",
+                (bde_name, d9))
+    notes = f"Prospect texted a time: {body[:120]}"
+    if ex:
+        update_event(pool, ex[0]["id"], {"start_at": when, "end_at": end, "notes": notes})
+    else:
+        create_event(pool, bde_name=bde_name, type="callback",
+                     title="📞 Callback: they TEXTED a time", start_at=when, end_at=end,
+                     notes=notes, dest_number=dest_number, created_by=created_by)
+
+
+def _mark_sms_not_interested(pool: ConnectionPool, d9: str) -> None:
+    """Soft close (NOT a hard opt-out): stop cold-chasing this prospect — cancel their pending cold retries /
+    fresh-call slots — and drop a CRM note. They can still be re-engaged later; we just don't keep dialling."""
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE calendar_events SET status='cancelled' WHERE status='pending' "
+                        "AND type IN ('retry','fresh_call') "
+                        "AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s", (d9,))
+            conn.commit()
+    except Exception as exc:
+        log.warning("lisa_sms_not_interested_failed", d9=d9, error=str(exc)[:120])
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO booked_crm (dest9, status, note, updated_by, updated_at) "
+                        "VALUES (%s,'not_interested','SMS: not interested (soft close)','sms-bot',now()) "
+                        "ON CONFLICT (dest9) DO UPDATE SET "
+                        "  note=left(COALESCE(NULLIF(booked_crm.note,'')||' | ','')||'SMS: not interested',400), "
+                        "  updated_by='sms-bot', updated_at=now() "
+                        "WHERE booked_crm.status NOT IN ('won','lost','revealed','booked')", (d9,))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def reply_to_inbound_sms(pool: ConnectionPool, settings: Settings, *, dest9: str, from_line,
+                         inbound_text: str, dry_run: bool = False) -> dict:
+    """SHARED inbound-SMS auto-responder for BOTH Lisa lines. Loads the prospect's brief + full thread +
+    whether they ALREADY have a booked meeting (pre-booking vs post-booking mode), composes ONE reply with
+    Claude under Vysakh's HARD RULES (never reveals the purpose pre-booking; only aims to get them on a quick
+    call), then ACTS on the model's intent: a texted time -> parse (emma agreed-time parser, anchored now,
+    Melbourne) -> upsert a callback on the right calendar + confirm; opt-out -> full opt-out enforcement;
+    not-interested -> soft close (still no purpose reveal); else send the reply. dry_run composes + parses but
+    never sends/inserts. Deduped so a duplicate webhook / the evening sweep never double-texts."""
     ensure_tables(pool)
-    d9 = _d9(from_number)
-    _log_sms(pool, "inbound", from_number, getattr(settings, "lisa_sms_from", ""), body, d9)
+    d9 = _d9(dest9)
+    body = (inbound_text or "").strip()
+    line_tag = _sms_line(settings, from_line)                 # "L1" | "L4" | "L5"
+    is_l4 = line_tag == "L4"
+    is_l5 = line_tag == "L5"
+    bde_name = {"L4": "Lisa4", "L5": "Lisa5"}.get(line_tag, "Lisa")
+    created_by = {"L4": "lisa4", "L5": "lisa5"}.get(line_tag, "lisa")
+    to_number = _sms_prospect_number(pool, d9)
+    result: dict = {"ok": True, "line": line_tag, "dry_run": dry_run, "reply": ""}
+
+    # 0) HARD opt-out keyword (STOP / remove me / wrong number) — enforce, DO NOT reply, no LLM. A bare
+    #    "not interested" is deliberately NOT hard here: it flows to the classifier for a soft close + polite
+    #    reply (the spec's not_interested path), instead of a silent full-DNC.
+    if _is_hard_sms_optout(body):
+        if not dry_run:
+            _enforce_sms_optout(pool, d9, to_number, body)
+        result["optout"] = True
+        return result
+
+    # 1) dedupe — never answer the same inbound twice (live path only; a dry_run always composes).
+    if not dry_run and _sms_already_answered(pool, d9, body):
+        result["skipped"] = "already answered"
+        return result
+
+    # 2) context: brief (first name only — NEVER the company/pitch in the text), booked state, full thread.
     br = _fetch(pool, "SELECT brief FROM lisa_briefs WHERE dest9=%s", (d9,))
     brief = (br[0]["brief"] if br and br[0].get("brief") else {}) or {}
     name = _first_name(brief.get("prospect_name") or "")
-    hist = _fetch(pool, "SELECT direction, body FROM lisa_sms WHERE dest9=%s ORDER BY created_at DESC LIMIT 6", (d9,))
-    thread = "\n".join(f"{'Them' if h['direction']=='inbound' else 'Lisa'}: {h['body']}" for h in reversed(hist))
-    sys = ("You are Lisa from DE Group, an Australian digital-marketing team, replying by SMS to a prospect who "
-           "texted back after you tried to call them. Reply SHORT (1-2 sentences), warm, human and casual — like "
-           "a real person texting. Your goal: get them to agree to a chat with our strategist "
-           "about how they're showing up on Google (they run Google Ads). If they ask who you are or how they "
-           "know you, be honest and friendly (you'd tried to reach them about their online presence). If they "
-           "ask whether you're an AI, admit it briefly and warmly. Never pushy, never long, never a placeholder. "
-           "Return STRICT JSON: {\"reply\": \"...\"}.")
-    usr = (f"Prospect first name: {name or 'there'}\nCompany: {brief.get('company_name') or ''}\n"
-           f"What I'd flag: {brief.get('finding_1') or 'how they show up on Google next to their ads'}\n\nThread so far:\n{thread}")
-    r = _llm_json(settings, sys, usr, pool=pool, purpose="sms_reply")
-    reply = ((r.get("reply") or "").strip() if isinstance(r, dict) else "") or (
-        f"Hi{(' ' + name) if name else ''}! It's Lisa from DE Group — I'd tried you about how you're showing up "
-        "on Google next to your ads. Worth a quick chat with our strategist? What time roughly suits you?")
-    sms_from = _pick_sms_from(settings)
-    try:
-        if _twilio_ready(settings) and _send_sms_twilio(settings, from_number, reply, sms_from):
-            _log_sms(pool, "outbound", sms_from, from_number, reply, d9)
-    except Exception as exc:
-        log.warning("lisa_sms_reply_failed", error=str(exc)[:150])
-    return {"ok": True, "reply": reply}
+    booked = _has_booked_meeting(pool, d9)
+    meeting_at = _booked_meeting_when(pool, settings, d9) if booked else ""
+    hist = _fetch(pool, "SELECT direction, body FROM lisa_sms WHERE dest9=%s ORDER BY created_at DESC LIMIT 8", (d9,))
+    thread = "\n".join(f"{'Them' if h['direction'] == 'inbound' else 'You'}: {h['body']}" for h in reversed(hist))
+
+    # 3) compose. Line type ONLY sets tone; it is NEVER revealed. The user block deliberately withholds the
+    #    company name / finding / pitch so the model cannot leak the purpose pre-booking.
+    mode = "POST-BOOKING (a meeting is already booked — you MAY confirm/remind/refer to it)" if booked \
+        else "PRE-BOOKING (NO meeting yet — NEVER reveal why we called; only get them on a quick call)"
+    line_label = {"L4": "Lisa-4", "L5": "Lisa-5 (growth-audit line — warm, consultative)"}.get(line_tag, "Lisa-1")
+    sysp = (SMS_REPLY_RULES +
+            f"\n\nLINE: {line_label} — use ONLY to pick tone; never state the line, "
+            "a company name, or why you called.\n"
+            f"MODE: {mode}.\n"
+            "You are texting as 'Lisa'. Reply as ONE SMS. Return via the sms_reply tool.")
+    usr = (f"Their first name (optional to use, warm): {name or '(unknown)'}\n"
+           + (f"Booked meeting time you may reference: {meeting_at}\n" if (booked and meeting_at) else "")
+           + f"\nThread so far (most recent last):\n{thread}\n\nTheir latest text: {body}")
+    reply, intent = _claude_sms_compose(settings, pool, system=sysp, user=usr)
+    if not isinstance(intent, dict):
+        intent = {}
+    if not reply:                                   # LLM unavailable → safe, purpose-free fallback
+        if booked and meeting_at:
+            reply = f"hey{(' ' + name.lower()) if name else ''}, lisa here — all set for {meeting_at.lower()}, just give me a shout if the time needs shifting"
+        elif booked:
+            reply = f"hey{(' ' + name.lower()) if name else ''}, lisa here — just shout if you need to shift our catch up, otherwise all good"
+        else:
+            reply = f"hey{(' ' + name.lower()) if name else ''}, it's lisa — tried giving you a buzz earlier. genuinely worth a quick 2 min call, when's good for you to chat?"
+    result["reply"] = reply
+    result["intent"] = intent
+
+    # 4) ACT on intent.
+    if intent.get("opted_out"):                      # model read an opt-out we keyword-missed
+        result["optout"] = True
+        if not dry_run:
+            _enforce_sms_optout(pool, d9, to_number, body)
+        return result                                # opted out → no reply
+
+    ct = (intent.get("callback_time_text") or "").strip()
+    if intent.get("wants_callback") and ct:
+        from .emma import parse_agreed_time
+        when = parse_agreed_time(ct, None, tz="Australia/Melbourne")   # anchor = now (Melbourne)
+        if when:
+            result["callback_at"] = when.isoformat()
+            if not dry_run:
+                try:
+                    _upsert_sms_callback(pool, bde_name, d9, to_number, when, body, created_by)
+                except Exception as exc:
+                    log.warning("lisa_sms_callback_failed", d9=d9, error=str(exc)[:140])
+
+    if intent.get("not_interested"):
+        result["not_interested"] = True
+        if not dry_run:
+            _mark_sms_not_interested(pool, d9)
+
+    # send the composed reply (a not-interested reply is still a polite close — no purpose reveal). Reply
+    # FROM the matching line so the prospect sees the same 'Lisa' they've been dealing with: Lisa-4 from
+    # her number, Lisa-5 from the exact Lisa-5 number they texted (falls back to the primary Lisa-5 number
+    # when from_line is a bare 'L5' token), Lisa-1 from the SMS-capable set.
+    if not dry_run and reply and to_number:
+        if is_l4:
+            sms_from = _e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
+        elif is_l5:
+            l5 = [_e164_au(n) for n in list(getattr(settings, "lisa5_numbers", []) or []) if n]
+            raw = _e164_au(from_line) if from_line else ""
+            sms_from = raw if raw in l5 else (l5[0] if l5 else "")
+        else:
+            sms_from = _pick_sms_from(settings, to_number)
+        try:
+            if _twilio_ready(settings) and sms_from and _send_sms_twilio(settings, to_number, reply, sms_from):
+                _log_sms(pool, "outbound", sms_from, to_number, reply, d9)
+                result["sent"] = True
+        except Exception as exc:
+            log.warning("lisa_sms_reply_failed", line=line_tag, error=str(exc)[:150])
+    return result
+
+
+def sweep_unanswered_sms(pool: ConnectionPool, settings: Settings) -> dict:
+    """Evening catch-up across ALL Lisa lines (Lisa-1 / Lisa-4 / Lisa-5): any prospect whose LAST message is
+    an inbound we never answered gets a reply now, from the correct line. SMS has no call-window restriction,
+    so this runs every refresh cycle; the per-thread dedupe inside reply_to_inbound_sms keeps it from racing
+    the live webhook."""
+    ensure_tables(pool)
+    rows = _fetch(pool,
+                  "WITH last AS (SELECT dest9, max(created_at) mx FROM lisa_sms WHERE dest9 IS NOT NULL "
+                  "              GROUP BY dest9) "
+                  "SELECT s.dest9, s.body, s.to_number FROM lisa_sms s "
+                  "JOIN last l ON l.dest9=s.dest9 AND l.mx=s.created_at "
+                  "WHERE s.direction='inbound' AND s.created_at > now() - interval '2 days' "
+                  "  AND NOT EXISTS (SELECT 1 FROM lisa_sms o WHERE o.dest9=s.dest9 AND o.direction='outbound' "
+                  "                  AND o.created_at >= s.created_at) "
+                  "ORDER BY s.created_at ASC LIMIT 50")
+    handled = 0
+    for r in rows:
+        d9 = r.get("dest9")
+        body = r.get("body") or ""
+        if not d9 or _is_hard_sms_optout(body):      # a STOP was enforced on receipt; never chase it
+            continue
+        line = _sms_line(settings, r.get("to_number"))       # 'L1' | 'L4' | 'L5' (covers Lisa-5 numbers too)
+        try:
+            res = reply_to_inbound_sms(pool, settings, dest9=d9, from_line=line, inbound_text=body)
+            if res.get("sent") or res.get("callback_at") or res.get("optout"):
+                handled += 1
+        except Exception as exc:
+            log.warning("lisa_sms_sweep_item_failed", dest9=d9, error=str(exc)[:140])
+    return {"unanswered": len(rows), "handled": handled}
+
+
+def handle_inbound_sms(pool: ConnectionPool, settings: Settings, from_number: str, body: str) -> dict:
+    """Lisa-1 inbound-SMS webhook entry point. Capture the reply, then hand off to the shared auto-responder
+    (curiosity + get-on-a-call; NEVER reveals the pitch pre-booking)."""
+    ensure_tables(pool)
+    d9 = _d9(from_number)
+    _log_sms(pool, "inbound", from_number, getattr(settings, "lisa_sms_from", ""), body, d9)
+    return reply_to_inbound_sms(pool, settings, dest9=d9, from_line="L1", inbound_text=body)
 
 
 # --------------------------------------------------------------------------- #
@@ -1317,10 +2239,11 @@ _OUTCOME_MAP = {
 }
 
 
-def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, call: dict) -> None:
-    """Mirror a completed Lisa call into `calls` + `classifications` (bde_name='Lisa', provider='retell')
-    so the leaderboard / funnel / reports treat her like any BDE. Isolation to admins is via
-    PRIVATE_BDE_NAMES. Idempotent per call_id."""
+def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, call: dict,
+                       *, bde_ext: str = "LISA", bde_name: str = "Lisa") -> None:
+    """Mirror a completed AI-agent call into `calls` + `classifications` (provider='retell') so the
+    leaderboard / funnel / reports treat her like any BDE. Defaults to Lisa-1; Lisa-4 passes her own
+    identity. Isolation to admins is via PRIVATE_BDE_NAMES. Idempotent per call_id."""
     outcome = (cad.get("call_outcome") or "").strip().lower()
     booked = bool(cad.get("meeting_agreed"))
     callback = outcome == "callback_requested" or bool(cad.get("callback_when"))
@@ -1330,6 +2253,14 @@ def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, cal
     dur_ms = call.get("duration_ms") or call.get("call_length_ms") or 0
     talk = int((dur_ms or 0) / 1000)
     stage = "p5" if booked else ("p1" if callback else None)
+    # REAL full-pitch signal (NOT just "reached"): she got to actually deliver the pitch — i.e. booked, or a
+    # genuine conversation that ended in interest/objection/callback, or a >=60s talk with a live decision-
+    # maker. Gatekeeper-only, wrong-number, voicemail, no-answer and instant hang-ups do NOT count.
+    full_pitch = bool(
+        booked
+        or (reached and outcome in ("not_interested", "callback_requested"))
+        or (reached and talk >= 60 and outcome not in (
+            "gatekeeper_only", "wrong_number", "voicemail", "no_answer", "do_not_call")))
     dest = call.get("to_number")
     # Only AUSTRALIAN calls belong in the funnel. A Lisa call to a non-AU number is a TEST call
     # (e.g. dialling our own +91 mobile) — mark it out-of-scope so it never counts anywhere on the
@@ -1339,22 +2270,29 @@ def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, cal
         cur.execute(
             "INSERT INTO calls (call_id, bde_extension, bde_name, direction, dest_number, started_at, "
             "  talk_seconds, answered, is_voicemail, has_transcript, recording_present, in_scope, provider, "
-            "  fresh_or_followup) VALUES (%s,'LISA','Lisa','outbound',%s,now(),%s,%s,%s,%s,%s,%s,'retell','fresh') "
+            "  fresh_or_followup) VALUES (%s,%s,%s,'outbound',%s,now(),%s,%s,%s,%s,%s,%s,'retell','fresh') "
             "ON CONFLICT (call_id) DO UPDATE SET talk_seconds=EXCLUDED.talk_seconds, answered=EXCLUDED.answered, "
             "  is_voicemail=EXCLUDED.is_voicemail, has_transcript=EXCLUDED.has_transcript, "
             "  recording_present=EXCLUDED.recording_present, in_scope=EXCLUDED.in_scope",
-            (cid, dest, talk, answered, is_vm, bool(call.get("transcript")), bool(call.get("recording_url")), in_scope))
+            (cid, bde_ext, bde_name, dest, talk, answered, is_vm, bool(call.get("transcript")),
+             bool(call.get("recording_url")), in_scope))
         cur.execute(
             "INSERT INTO classifications (call_id, rpc_connect, full_pitch, is_lead, qualified, meeting_booked, "
             "  call_outcome, booking_status, meeting_datetime, callback_requested, callback_when, pipeline_stage, "
             "  prospect_company, prospect_website, prospect_contact_name, prospect_email, do_not_contact, "
             "  classified_at, model) "
-            "VALUES (%s,%s,%s,%s,false,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),'retell') "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),'retell') "
             "ON CONFLICT (call_id) DO UPDATE SET rpc_connect=EXCLUDED.rpc_connect, full_pitch=EXCLUDED.full_pitch, "
             "  is_lead=EXCLUDED.is_lead, meeting_booked=EXCLUDED.meeting_booked, call_outcome=EXCLUDED.call_outcome, "
             "  booking_status=EXCLUDED.booking_status, callback_requested=EXCLUDED.callback_requested, "
             "  pipeline_stage=EXCLUDED.pipeline_stage, do_not_contact=EXCLUDED.do_not_contact",
-            (cid, reached, reached, (booked or callback), booked, co, ("firm" if booked else None),
+            # WEBSITE-SALE QUALIFICATION DOCTRINE (Raj, 2026-08-07): a Lisa-4 booking IS a qualified
+            # lead — her flow confirms the right party (owner / website decision-maker) before any
+            # booking, and website sales don't use marketing BANT. Lisa-1 stays qualified=false here
+            # (her BANT verdict comes from the AI classifier pass).
+            (cid, reached, full_pitch, (booked or callback),
+             bool(booked and str(bde_name or "") in ("Lisa 4", "Lisa4")),
+             booked, co, ("firm" if booked else None),
              cad.get("agreed_day_time"), callback, cad.get("callback_when"), stage,
              dyn.get("company_name"), dyn.get("prospect_website"), dyn.get("prospect_name"),
              cad.get("confirmed_email") or dyn.get("prospect_email"), outcome == "do_not_call"))
@@ -1368,6 +2306,67 @@ def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, cal
                 "text=EXCLUDED.text, summary=EXCLUDED.summary",
                 (cid, tx, (call.get("call_analysis") or {}).get("user_sentiment"), cad.get("call_summary")))
         conn.commit()
+
+
+_AI_CLASSIFY_CONTEXT = (
+    "[AGENT CONTEXT — READ FIRST] This call was made by 'Lisa', our company's AI sales agent. Lisa-1 calls "
+    "as Traffic Radius (Google-Ads/SEO strategy sessions); Lisa-4 calls under DE GROUP, a white-label "
+    "web-design brand of the SAME company — for those calls the product IS DE Group's offer: a brand-new "
+    "website already built for the prospect, revealed in a 10-15 min screen-share. Judge EVERY stage "
+    "against the offering PITCHED ON THIS CALL, never against a different brand: rpc_connect = an owner/"
+    "decision-maker was on the phone; full_pitch = the core hook was delivered to them; is_lead = genuine "
+    "interest; meeting_booked = the offered meeting (strategy session OR screen-share reveal) was booked. "
+    "NEVER mark a stage NO merely because the call wasn't about 'Traffic Radius services'.")
+
+
+def classify_ai_calls(pool: ConnectionPool, settings: Settings, limit: int = 6) -> dict:
+    """Stage-by-stage classification for AI-agent calls — the SAME evidence panel human calls get — with
+    brand context injected. Retell's own post-call analysis stays authoritative for the funnel FLAGS
+    (re-asserted after the classifier writes its evidence), so a rubric quirk can never un-book a meeting."""
+    rows = _fetch(pool,
+        "SELECT c.call_id, c.answered, c.is_voicemail, c.dest_number, c.started_at, "
+        "  t.text, t.sentiment, t.summary, t.diarized "
+        "FROM calls c JOIN transcripts t ON t.call_id=c.call_id "
+        "JOIN classifications cl ON cl.call_id=c.call_id "
+        "WHERE c.bde_name IN ('Lisa','Lisa 4') AND c.in_scope AND c.answered "
+        "  AND cl.evidence IS NULL AND length(t.text) > 250 LIMIT %s", (limit,))
+    if not rows:
+        return {"classified": 0}
+    from .classify.classifier import Classifier, upsert_classification
+    clf = Classifier(settings)
+    l4nums = set(getattr(settings, "lisa4_numbers", []) or [])
+    agent_nums = l4nums | set(getattr(settings, "lisa_numbers", []) or [])
+    n = 0
+    for row in rows:
+        try:
+            rec = clf.classify_one(dict(row), {"text": row.get("text"), "sentiment": row.get("sentiment"),
+                                               "summary": row.get("summary")}, memory=_AI_CLASSIFY_CONTEXT)
+            upsert_classification(pool, rec)
+            lr = _fetch(pool, "SELECT from_number, to_number, call_outcome, meeting_agreed, agreed_day_time, "
+                        "callback_when, call_summary, duration_ms, recording_url, brief FROM lisa_calls "
+                        "WHERE call_id=%s", (row["call_id"],))
+            if lr:
+                r = lr[0]
+                inbound = (r["to_number"] or "") in agent_nums
+                cad = {"call_outcome": r["call_outcome"] or "", "meeting_agreed": r["meeting_agreed"],
+                       "agreed_day_time": r["agreed_day_time"], "callback_when": r["callback_when"],
+                       "call_summary": r["call_summary"]}
+                call = {"to_number": (r["from_number"] if inbound else r["to_number"]),
+                        "duration_ms": r["duration_ms"], "transcript": None,
+                        "recording_url": r["recording_url"]}
+                try:
+                    dyn = json.loads(r["brief"]) if isinstance(r["brief"], str) else (r["brief"] or {})
+                except Exception:
+                    dyn = {}
+                is_l4 = (r["from_number"] in l4nums) or ((r["to_number"] or "") in l4nums)
+                if is_l4:
+                    _write_funnel_call(pool, row["call_id"], dyn, cad, call, bde_ext="LISA4", bde_name="Lisa 4")
+                else:
+                    _write_funnel_call(pool, row["call_id"], dyn, cad, call)
+            n += 1
+        except Exception as exc:
+            log.warning("classify_ai_call_failed", call_id=row.get("call_id"), error=str(exc)[:120])
+    return {"classified": n}
 
 
 def schedule_lisa_followup(pool: ConnectionPool, settings: Settings, *, dest9: str, dest_number: str,
@@ -1387,6 +2386,10 @@ def schedule_lisa_followup(pool: ConnectionPool, settings: Settings, *, dest9: s
                      dest_number=dest_number, created_by="lisa")
         return
     if outcome in ("no_answer", "voicemail", "gatekeeper_only"):
+        # MOBILE-ONLY (Raj, 2026-08-10): never schedule a cold retry to a landline (a main line reaches a
+        # gatekeeper, never the owner). Prospect-requested callbacks are handled above and stay exempt.
+        if (dest9 or "")[:1] != "4":
+            return
         attempts = _fetch(pool, "SELECT count(*) n FROM calls WHERE provider='retell' AND "
                           "right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s", (dest9,))[0]["n"]
         if attempts >= int(getattr(settings, "lisa_retry_max_attempts", 4)):
@@ -1399,8 +2402,15 @@ def schedule_lisa_followup(pool: ConnectionPool, settings: Settings, *, dest9: s
         # DOUBLE-TAP: a no-answer gets ONE quick same-day retry (+dt_h) if still within business hours,
         # before falling back to the multi-day cadence — mirrors how a human re-tries a missed call.
         cand = now_l + timedelta(hours=dt_h)
-        if outcome == "no_answer" and attempts <= 1 and dt_h > 0 and cand.weekday() < 5 and wstart <= cand.hour < wend:
+        # VOICEMAIL LEVER (Raj, 2026-08-10): a cold mobile that goes to voicemail is usually just busy —
+        # so voicemail now ALSO gets a same-day double-tap, then next-business-day retries at a VARIED hour
+        # (someone who ignores a 9am unknown number often answers at 2pm) instead of one 3-day-out attempt.
+        _vary = [9, 13, 15, 11]
+        if outcome in ("no_answer", "voicemail") and attempts <= 1 and dt_h > 0 and cand.weekday() < 5 and wstart <= cand.hour < wend:
             when, label = cand, "double-tap"
+        elif outcome in ("no_answer", "voicemail"):
+            _hr = min(max(_vary[min(attempts, len(_vary) - 1)], wstart), wend - 1)
+            when, label = _future_biz(now_l + timedelta(days=1), _hr), "retry"
         else:
             when, label = _future_biz(now_l + timedelta(days=cad_days), wstart), "retry"
         create_event(pool, bde_name="Lisa", type="retry", title=f"🔄 Lisa {label} ({attempts+1}): {who}",
@@ -1420,50 +2430,57 @@ def _future_biz(dt: datetime, hour: int) -> datetime:
 # Lisa's reserved pool + calendar + auto-dialer
 # --------------------------------------------------------------------------- #
 def reserve_lisa_pool(pool: ConnectionPool, settings: Settings) -> dict:
-    """Reserve Lisa's EXCLUSIVE pool from already-WORKED GAds prospects — ones our human BDEs have already
-    REACHED (rpc_connect), so we have a proven, dialable number + a real contact name (call intelligence).
-    SMB-only: national chains (many branches / very high revenue) are excluded. Highest-advertising first.
-    Also PURGES any fresh (never-human-called) entries so the pool becomes worked-data only. Idempotent."""
+    """Reserve Lisa's EXCLUSIVE pool of FRESH GAds prospects — businesses NEVER contacted by anyone: no
+    human-BDE (3cx/aircall) call, no prior Lisa call, and not in the human pipeline — so Lisa never
+    overlaps a prospect a human BDE is working. SMB-only (national chains / >$100M excluded),
+    highest-advertising first. Purges any entry that has SINCE been contacted so the pool stays fresh.
+    Idempotent."""
     ensure_tables(pool)
     size = int(getattr(settings, "lisa_pool_size", 500))
-    # switch to worked data: drop fresh (never human-reached) entries so only proven prospects remain
+    # keep the pool FRESH + non-overlapping: drop any entry whose number has since been dialed by a human
+    # BDE or by Lisa, or that entered the human pipeline.
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM lisa_pool lp WHERE NOT EXISTS (SELECT 1 FROM calls c WHERE c.in_scope "
-                    "AND c.provider IN ('3cx','aircall') AND "
-                    "right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=lp.dest9)")
+        cur.execute(
+            "DELETE FROM lisa_pool lp WHERE "
+            "  EXISTS (SELECT 1 FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
+            "  OR EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9) "
+            "  OR EXISTS (SELECT 1 FROM prospect_pipeline pp WHERE pp.dest9=lp.dest9) "
+            "  OR lp.domain ~* '\\.(gov|edu|asn|org)\\.au$'")   # non-commercial: gov/uni/association/foundation
         conn.commit()
     have = _fetch(pool, "SELECT count(*) c FROM lisa_pool")[0]["c"]
     if have >= size:
-        return {"reserved": 0, "total": have, "note": "pool at size (worked)"}
+        return {"reserved": 0, "total": have, "note": "pool at size (fresh)"}
     need = size - have
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "WITH worked AS ("
-            "  SELECT DISTINCT ON (d9) d9, dest_number, dom, company FROM ("
-            "    SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) d9, c.dest_number, "
-            "      split_part(regexp_replace(lower(COALESCE(cl.prospect_website,'')),'^https?://(www\\.)?',''),'/',1) dom, "
-            "      cl.prospect_company company, c.started_at, cl.rpc_connect, cl.do_not_contact, cl.meeting_booked "
-            "    FROM calls c JOIN classifications cl ON cl.call_id=c.call_id "
-            "    WHERE c.in_scope AND c.provider IN ('3cx','aircall') AND c.answered "
-            "      AND COALESCE(c.dest_number,'')<>'' AND COALESCE(cl.prospect_contact_name,'')<>'' "
-            "  ) x WHERE x.rpc_connect AND NOT COALESCE(x.do_not_contact,false) "
-            "    AND NOT COALESCE(x.meeting_booked,false) AND length(x.d9)=9 AND x.dom<>'' "
-            "  ORDER BY d9, started_at DESC) "
             "INSERT INTO lisa_pool (dest9, dest_number, domain, company, phone, priority) "
-            "SELECT w.d9, w.dest_number, w.dom, w.company, w.dest_number, "
-            "       COALESCE((e.dataforseo->'ads'->>'count')::int,0) FROM worked w "
-            "JOIN enrichment e ON e.domain=w.dom "
-            "WHERE (e.dataforseo->>'running_google_ads')='true' "
-            # SMB only: exclude national chains (many branch rows) + very large businesses
-            "  AND (SELECT count(*) FROM companies c3 WHERE c3.domain=w.dom) <= 8 "
-            "  AND NOT EXISTS (SELECT 1 FROM companies c2 WHERE c2.domain=w.dom AND COALESCE(c2.revenue_musd,0)>100) "
-            "  AND w.d9 NOT IN (SELECT dest9 FROM lisa_pool) "
-            "  AND NOT EXISTS (SELECT 1 FROM prospect_pipeline pp WHERE pp.dest9=w.d9 AND COALESCE(pp.dnd,false)) "
-            "ORDER BY COALESCE((e.dataforseo->'ads'->>'count')::int,0) DESC NULLS LAST "
+            "SELECT d9, num, dom, company, num, prio FROM ("
+            "  SELECT DISTINCT ON (d9) d9, num, dom, company, prio FROM ("
+            # MOBILE-FIRST (Raj, 2026-08-10): dial the RESOLVED OWNER MOBILE, not the company's main line.
+            # Lisa-1's advertiser universe lists landlines (switchboards → gatekeepers), so we join the
+            # DM resolver (lisa_dm) and take dm_phone where it's a mobile — the owner who can actually book.
+            "    SELECT right(regexp_replace(COALESCE(dm.dm_phone,''),'[^0-9]','','g'),9) d9, dm.dm_phone num, "
+            "           co.domain dom, co.company_name company, "
+            "           COALESCE((e.dataforseo->'ads'->>'count')::int,0) prio "
+            "    FROM companies co JOIN enrichment e ON e.domain=co.domain "
+            "         JOIN lisa_dm dm ON dm.domain=co.domain "
+            "    WHERE (e.dataforseo->>'running_google_ads')='true' AND co.source='raghav' "
+            "      AND dm.dm_is_mobile IS TRUE AND NULLIF(dm.dm_phone,'') IS NOT NULL "
+            "      AND co.revenue_musd BETWEEN 2 AND 50 "   # $2M-$50M only: excludes tiny/one-man-shops, null-revenue, and big companies
+            "      AND co.domain !~* '\\.(gov|edu|asn|org)\\.au$' "
+            "      AND (SELECT count(*) FROM companies c3 WHERE c3.domain=co.domain) <= 8 "
+            "  ) base "
+            "  WHERE length(d9)=9 AND left(d9,1) = '4' "
+            "    AND d9 NOT IN (SELECT dest9 FROM lisa_pool) "
+            "    AND NOT EXISTS (SELECT 1 FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=base.d9) "
+            "    AND NOT EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=base.d9) "
+            "    AND NOT EXISTS (SELECT 1 FROM prospect_pipeline pp WHERE pp.dest9=base.d9) "
+            "  ORDER BY d9, prio DESC NULLS LAST "
+            ") dedup ORDER BY prio DESC NULLS LAST "
             "LIMIT %s ON CONFLICT (dest9) DO NOTHING", (need,))
         got = cur.rowcount
         conn.commit()
-    return {"reserved": got, "total": have + got, "worked": True}
+    return {"reserved": got, "total": have + got, "fresh": True}
 
 
 def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
@@ -1472,15 +2489,35 @@ def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
     already on her calendar or already called by her."""
     ensure_tables(pool)
     tz = settings.tz
+    # CLEANUP: cancel any pending fresh_call whose prospect has since been called (by Lisa OR a human BDE).
+    # A deadlock/crash between placing a call and marking its event 'done' can leave a stale pending event
+    # that would otherwise RE-DIAL an already-called prospect (this caused the same company being dialled
+    # 3× today). Runs every cycle so it can never re-accumulate.
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE calendar_events e SET status='cancelled' "
+                "WHERE e.bde_name='Lisa' AND e.status='pending' AND e.type='fresh_call' AND ("
+                "  EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9="
+                "    right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)) "
+                "  OR EXISTS (SELECT 1 FROM calls c WHERE "
+                "    right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)="
+                "    right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)))")
+            conn.commit()
+    except Exception as exc:
+        log.warning("lisa_stale_event_cleanup_failed", error=str(exc)[:140])
     cap = int(getattr(settings, "lisa_daily_target", 50))
     wstart = int(getattr(settings, "lisa_call_window_start", 9))
+    wsmin = int(getattr(settings, "lisa_call_window_start_min", 0))
     wend = int(getattr(settings, "lisa_call_window_end", 17))
     rows = _fetch(pool,
         "SELECT lp.dest9, lp.dest_number, lp.company FROM lisa_pool lp "
         "WHERE NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.bde_name='Lisa' AND e.status IN ('pending','done') "
         "   AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
-        "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.provider='retell' AND "
+        "  AND NOT EXISTS (SELECT 1 FROM calls c WHERE "
         "   right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
+        "  AND NOT EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9) "
+        "  AND left(lp.dest9,1) = '4' "   # MOBILE-ONLY guard: never schedule a landline onto Lisa's calendar
         # Head-of-Sales value order: highest-spend advertisers (most live ad creatives) first.
         "ORDER BY lp.priority DESC NULLS LAST, lp.reserved_at")
     existing = {r["d"]: r["n"] for r in _fetch(pool,
@@ -1488,7 +2525,8 @@ def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
         "WHERE bde_name='Lisa' AND status='pending' AND type='fresh_call' GROUP BY 1", (tz,))}
     now = datetime.now(ZoneInfo(tz))
     day = now.date() + (timedelta(days=1) if now.hour >= wend else timedelta(0))
-    span = max(1, wend - wstart)
+    open_min = wstart * 60 + wsmin              # exact window open in minutes-of-day (e.g. 8:30 => 510)
+    span_min = max(1, wend * 60 - open_min)     # minutes from open to close, to spread the day's calls across
     to_insert = []
     for r in rows:
         while day.weekday() >= 5 or existing.get(day, 0) >= cap:
@@ -1496,9 +2534,8 @@ def schedule_lisa_fresh(pool: ConnectionPool, settings: Settings) -> dict:
                 day += timedelta(days=1); continue
             day += timedelta(days=1)
         used = existing.get(day, 0)
-        mins = int(used * (span * 60) / max(1, cap))
-        when = datetime(day.year, day.month, day.day, min(wstart + mins // 60, wend - 1), mins % 60,
-                        tzinfo=ZoneInfo(tz))
+        t = min(open_min + int(used * span_min / max(1, cap)), wend * 60 - 1)   # minute-of-day for this slot
+        when = datetime(day.year, day.month, day.day, t // 60, t % 60, tzinfo=ZoneInfo(tz))
         existing[day] = used + 1
         to_insert.append(("Lisa", "fresh_call", f"🎙️ Lisa call: {r['company'] or r['dest_number']}",
                           when, when + timedelta(minutes=15), None, r["dest_number"]))
@@ -1522,6 +2559,49 @@ _ENSURE_FRESH_INDEX = (
     ") WHERE type='fresh_call' AND status='pending'")
 
 
+def sync_reveal_calls(pool: ConnectionPool, settings: Settings) -> dict:
+    """AUTO reveal-tracking (Raj, 2026-08-10): when a website-reveal closer (e.g. Immanule Manoj) has an
+    ANSWERED, substantive (>=2min) call to a BOOKED reveal prospect, flip that prospect's booked_crm row to
+    'revealed' and log the closer/date/outcome — so reveal meetings self-track in the CRM with no manual
+    step. Idempotent: transitions each prospect to 'revealed' once; never overwrites 'won'/'lost' or churns."""
+    ensure_tables(pool)
+    closers = list(getattr(settings, "reveal_closers", []) or [])
+    if not closers:
+        return {"skipped": "no reveal closers configured"}
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "WITH rc AS ("
+                "  SELECT DISTINCT ON (d9) d9, bde_name, t, mins, outcome FROM ("
+                "    SELECT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) d9, "
+                "           c.bde_name, (c.started_at AT TIME ZONE %s) t, "
+                "           round(COALESCE(c.talk_seconds,0)/60.0)::int mins, cl.call_outcome outcome, c.started_at "
+                "    FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+                "    WHERE c.bde_name = ANY(%s) AND c.answered AND COALESCE(c.talk_seconds,0) >= 120 "
+                "      AND c.started_at > now() - interval '10 days' "
+                "      AND EXISTS (SELECT 1 FROM calendar_events e WHERE e.type='reveal' "
+                "        AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9) = "
+                "            right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)) "
+                "  ) s ORDER BY d9, started_at DESC) "
+                "INSERT INTO booked_crm (dest9, status, note, updated_by, updated_at) "
+                "SELECT rc.d9, 'revealed', "
+                "  left('auto: reveal call by '||rc.bde_name||' '||to_char(rc.t,'Dy DD Mon HH24:MI')||"
+                "       ' ('||rc.mins||'min'||COALESCE(', '||rc.outcome,'')||')', 400), "
+                "  'auto-reveal', now() FROM rc "
+                "ON CONFLICT (dest9) DO UPDATE SET status='revealed', note=EXCLUDED.note, "
+                "  updated_by='auto-reveal', updated_at=now() "
+                "WHERE booked_crm.status NOT IN ('won','lost','revealed')",
+                (settings.tz, closers))
+            n = cur.rowcount
+            conn.commit()
+        if n:
+            log.info("sync_reveal_calls", revealed=n)
+        return {"revealed": n}
+    except Exception as exc:
+        log.warning("sync_reveal_calls_failed", error=str(exc)[:160])
+        return {"error": str(exc)[:160]}
+
+
 def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     """GATED daily dialer. When lisa_autodial_enabled, dial Lisa's DUE calendar events (fresh/retry/
     callback) within the business-hours window, up to the daily target, a few at a time. Marks each dialed
@@ -1534,29 +2614,106 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     tz = settings.tz
     now = datetime.now(ZoneInfo(tz))
     wstart = int(getattr(settings, "lisa_call_window_start", 9))
+    wsmin = int(getattr(settings, "lisa_call_window_start_min", 0))
     wend = int(getattr(settings, "lisa_call_window_end", 17))
-    if now.weekday() >= 5 or not (wstart <= now.hour < wend):
+    open_min = wstart * 60 + wsmin                       # exact window open (e.g. 8:30 => 510)
+    now_min = now.hour * 60 + now.minute
+    if now.weekday() >= 5 or not (open_min <= now_min < wend * 60):
         return {"skipped": "outside call window"}
-    placed_today = _fetch(pool, "SELECT count(*) n FROM lisa_calls WHERE "
-                          "(created_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date", (tz, tz))[0]["n"]
+    # COUNT ONLY LISA-1's OWN CALLS (Raj, 2026-08-10). lisa_calls holds BOTH AI lines, so an unfiltered
+    # count let Lisa-4's ~260/day eat Lisa-1's daily budget and stall her with 140+ calls still due.
+    # Mirror Lisa-4's own-number gate (lisa4.py): prefer her registered caller IDs; if unset, count
+    # everything that ISN'T Lisa-4 (the two AI lines are the only outbound sources in lisa_calls).
+    _l1 = list(getattr(settings, "lisa_numbers", []) or [])
+    if _l1:
+        placed_today = _fetch(pool, "SELECT count(*) n FROM lisa_calls WHERE from_number = ANY(%s) "
+                              "AND (created_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date",
+                              (_l1, tz, tz))[0]["n"]
+    else:
+        placed_today = _fetch(pool, "SELECT count(*) n FROM lisa_calls WHERE "
+                              "(created_at AT TIME ZONE %s)::date = (now() AT TIME ZONE %s)::date "
+                              "AND right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) <> ALL("
+                              "  SELECT right(regexp_replace(x,'[^0-9]','','g'),9) FROM unnest(%s::text[]) x)",
+                              (tz, tz, list(getattr(settings, "lisa4_numbers", []) or [])))[0]["n"]
     remaining = int(getattr(settings, "lisa_daily_target", 50)) - int(placed_today or 0)
     if remaining <= 0:
         return {"skipped": "daily target reached", "placed_today": placed_today}
     # NATURAL PACING — dial like a human: ONE call at a time, evenly spread so ~daily_target calls fill the
     # whole business-hours window (no concurrency, no fast bursts). The gap = window / daily_target
     # (e.g. 8h / 50 ≈ 9.6 min between calls); overridable via LISA_MIN_CALL_GAP_SECONDS.
-    gap = int(getattr(settings, "lisa_min_call_gap_seconds", 0)) or \
-        int(((wend - wstart) * 3600) / max(1, int(getattr(settings, "lisa_daily_target", 50))))
+    # PIPELINE PACING — ONE call at a time, but CONTINUOUS: dial the next only when NO Lisa call is still
+    # in-flight, so it flows the moment each call ends (no artificial idle). A small floor gap prevents
+    # hammering; the 8-min cap on "ongoing" prevents a stuck/mis-webhooked call from stalling the queue.
+    # SCOPE TO LISA-1's OWN LINE (Raj, 2026-08-12): lisa_calls holds BOTH AI lines, so an unscoped
+    # 'ongoing' count let Lisa-4 (on a call almost continuously) trip Lisa-1's in-flight guard every
+    # cycle — starving her to ~2 dials/day. Count only HER own line's in-flight, like placed_today.
+    if _l1:
+        inflight = _fetch(pool, "SELECT count(*) n FROM lisa_calls WHERE status='ongoing' "
+                          "AND from_number = ANY(%s) AND created_at > now() - interval '8 minutes'",
+                          (_l1,))[0]["n"]
+    else:
+        inflight = _fetch(pool, "SELECT count(*) n FROM lisa_calls WHERE status='ongoing' "
+                          "AND created_at > now() - interval '8 minutes' "
+                          "AND right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) <> ALL(%s)",
+                          ([re.sub(r'[^0-9]','',str(x))[-9:] for x in (list(getattr(settings,'lisa4_numbers',[]) or []))],))[0]["n"]
+    if inflight:
+        return {"skipped": "call in-flight", "inflight": inflight, "placed_today": placed_today}
+    floor = int(getattr(settings, "lisa_min_call_gap_seconds", 0)) or 20
     since = _fetch(pool, "SELECT extract(epoch from (now() - max(created_at))) s FROM lisa_calls "
                    "WHERE (created_at AT TIME ZONE %s)::date=(now() AT TIME ZONE %s)::date", (tz, tz))[0]["s"]
-    if since is not None and since < gap:
-        return {"skipped": "natural pacing", "wait_s": int(gap - since), "gap_s": gap, "placed_today": placed_today}
-    # look at a few due candidates but place AT MOST ONE this cycle (skipping any outside its local hours)
+    if since is not None and since < floor:
+        return {"skipped": "floor gap", "wait_s": int(floor - since), "placed_today": placed_today}
+    # look at a few due candidates but place AT MOST ONE this cycle (skipping any outside its local hours).
+    # WARM FIRST: a due prospect CALLBACK (they explicitly asked us to call back) and already-reached
+    # follow-ups jump ahead of cold fresh calls, then retries — so a promised callback fires at its time
+    # instead of sitting behind a large fresh backlog. Within a tier, earliest promised time first.
+    # SELF-DIAL GUARD numbers = Lisa's OWN caller IDs only (not prospects who rang us back). Built from
+    # settings; kept dynamic by also catching any number used as from_number on an OUTBOUND call
+    # (to_number is NOT one of our lines) — the divert-bridge case — while NEVER excluding inbound
+    # callers (to_number IS one of our lines) so warm prospect callbacks stay dialable. (Raj, 2026-08-12)
+    _own9 = [re.sub(r"[^0-9]", "", str(x))[-9:] for x in
+             (list(getattr(settings, "lisa_numbers", []) or []) + list(getattr(settings, "lisa4_numbers", []) or [])) if x]
     due = _fetch(pool,
         "SELECT id, dest_number, right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
         "FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
         "  AND type IN ('fresh_call','retry','callback','reached_call') AND start_at <= now() "
-        "ORDER BY start_at LIMIT 8")
+        # MOBILE-ONLY (Raj, 2026-08-10): never dial a landline for cold fresh/retry — a business main line
+        # reaches a receptionist, never the owner who can book. Prospect-REQUESTED callbacks/reached are
+        # exempt (they gave us that number and expect our call).
+        "  AND (type IN ('callback','reached_call') "
+        "       OR left(right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9),1)='4') "
+        # SELF-DIAL GUARD (Raj, 2026-08-10; fixed 08-12): NEVER dial a number Lisa herself calls FROM — a
+        # carrier busy-divert twice bridged two concurrent Lisa calls into each other and she 'booked'
+        # herself. Exclude only our OWN outbound caller-IDs (to_number is NOT one of our lines), so a
+        # prospect who rang us back (inbound: to_number IS our line) is NOT wrongly suppressed.
+        "  AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) NOT IN "
+        "    (SELECT DISTINCT right(regexp_replace(from_number,'[^0-9]','','g'),9) FROM lisa_calls "
+        "     WHERE COALESCE(from_number,'')<>'' AND created_at > now() - interval '45 days' "
+        "       AND right(regexp_replace(COALESCE(to_number,''),'[^0-9]','','g'),9) <> ALL(%s)) "
+        "ORDER BY CASE WHEN type IN ('callback','reached_call') THEN 0 WHEN type='retry' THEN 1 ELSE 2 END, "
+        "         start_at LIMIT 8", (_own9,))
+    if not due:
+        # SELF-FEEDING QUEUE: nothing due but we're inside the window and under target — promote the next
+        # scheduled fresh call instead of idling (the day-spread stagger otherwise starves the dialer).
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE calendar_events SET start_at=now() WHERE id = ("
+                "  SELECT id FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
+                "    AND type='fresh_call' AND start_at > now() "
+                "    AND left(right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9),1)='4' "  # mobile-only
+                "    ORDER BY start_at LIMIT 1)")
+            conn.commit()
+        due = _fetch(pool,
+            "SELECT id, dest_number, right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) d9 "
+            "FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
+            "  AND type IN ('fresh_call','retry','callback','reached_call') AND start_at <= now() "
+            "  AND (type IN ('callback','reached_call') "
+            "       OR left(right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9),1)='4') "
+            "  AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) NOT IN "  # self-dial guard (own IDs only)
+            "    (SELECT DISTINCT right(regexp_replace(from_number,'[^0-9]','','g'),9) FROM lisa_calls "
+            "     WHERE COALESCE(from_number,'')<>'' AND created_at > now() - interval '45 days' "
+            "       AND right(regexp_replace(COALESCE(to_number,''),'[^0-9]','','g'),9) <> ALL(%s)) LIMIT 1",
+            (_own9,))
     dialed = 0
     skipped_tz = 0
     for e in due:
@@ -1574,8 +2731,20 @@ def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
                 conn.commit()
             dialed += 1
             break   # ONE call per cycle — natural, human-like spacing
+        # PERMANENT failures (big-company guard, invalid number) must CANCEL the event — otherwise it sits
+        # at the head of the due queue and the dialer retries it every cycle forever (wedged the floor for
+        # 20+ min on a too_big prospect). Transient errors (Retell API hiccup) stay pending for retry.
+        err = (r.get("error") or "")
+        transient = any(t in err.lower() for t in ("http 5", "timed out", "timeout", "concurrency", "temporarily"))
+        if err and not transient:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE calendar_events SET status='cancelled', notes=COALESCE(notes,'')||' · auto-cancelled: '||%s "
+                            "WHERE id=%s", (err[:120], e["id"]))
+                conn.commit()
+            log.info("lisa_autodial_event_cancelled", event_id=e["id"], reason=err[:80])
+            continue
     stats = {"dialed": dialed, "candidates": len(due), "skipped_tz": skipped_tz,
-             "placed_today": placed_today, "gap_s": gap}
+             "placed_today": placed_today, "floor_s": floor}
     log.info("lisa_autodial", **stats)
     return stats
 
@@ -1999,6 +3168,27 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
     actions = {"prioritized": 0, "reserved": 0, "coach": "skip", "qa_reviewed": 0, "briefs_built": 0, "dms_resolved": 0, "scheduled": 0}
     alerts: list[str] = []
 
+    # THROTTLE the heavy orchestration. Pool-reserve, coaching, QA, DM-enrichment (paid Apollo) and
+    # scheduling do NOT need to run every 60s — running them ~every few minutes keeps the enriched-DM +
+    # calendar buffer full while leaving each 60s cycle free to DIAL (run_lisa_autodial runs first,
+    # unthrottled, in cli.refresh). This is what turns the ~4-5 min/call cadence into ~1 min/call.
+    heavy_every = int(getattr(settings, "lisa_hos_heavy_interval_s", 180))
+    do_heavy = True
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT (hos_heavy_at IS NULL OR hos_heavy_at < now() - make_interval(secs => %s)) go "
+                        "FROM lisa_control WHERE id=1", (heavy_every,))
+            row = cur.fetchone()
+            if row is not None:
+                do_heavy = bool(row["go"])
+                if do_heavy:                       # claim the slot NOW so overlapping cycles don't double-run
+                    cur.execute("UPDATE lisa_control SET hos_heavy_at=now() WHERE id=1")
+                    conn.commit()
+    except Exception as exc:
+        log.warning("hos_throttle_failed", error=str(exc)[:140]); do_heavy = True
+    if not do_heavy:
+        return {"skipped": "heavy throttled", "next_heavy_s": heavy_every}
+
     # 1) value-rank the pool — live ad creatives = spend proxy (all pool prospects are GAds-confirmed)
     try:
         with pool.connection() as conn, conn.cursor() as cur:
@@ -2014,6 +3204,11 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
         actions["reserved"] = reserve_lisa_pool(pool, settings).get("reserved", 0)
     except Exception as exc:
         log.warning("hos_reserve_failed", error=str(exc)[:140])
+    # per-stage classification for AI-agent calls (same evidence panel as human calls)
+    try:
+        actions["ai_classified"] = classify_ai_calls(pool, settings).get("classified", 0)
+    except Exception as exc:
+        log.warning("hos_ai_classify_failed", error=str(exc)[:140])
     if getattr(settings, "lisa_coaching_enabled", True):
         try:
             pb = refresh_playbook(pool, settings)
@@ -2037,7 +3232,10 @@ def run_head_of_sales(pool: ConnectionPool, settings: Settings) -> dict:
     except Exception as exc:
         log.warning("hos_briefs_failed", error=str(exc)[:140])
     try:
-        actions["dms_resolved"] = refresh_decision_makers(pool, settings, limit=60).get("resolved", 0)
+        # Cap resolves/cycle so the heavy pass stays FAST (each free resolve is an Apollo HTTP call ~1-2s).
+        # Enrichment is dial-order, so ~12/heavy-cycle stays comfortably ahead of the ~1/min dial rate.
+        actions["dms_resolved"] = refresh_decision_makers(
+            pool, settings, limit=int(getattr(settings, "lisa_dm_resolve_per_cycle", 12))).get("resolved", 0)
     except Exception as exc:
         log.warning("hos_dm_failed", error=str(exc)[:140])
     try:
@@ -2189,12 +3387,45 @@ def summary(pool: ConnectionPool, days: int = 30) -> dict:
     return s
 
 
-def recent_calls(pool: ConnectionPool, limit: int = 100) -> list[dict]:
+def recent_calls(pool: ConnectionPool, limit: int = 100, from_numbers: list[str] | None = None,
+                 agent: str | None = None, booked: bool = False, date: str | None = None) -> list[dict]:
+    """Recent Lisa calls. `agent`/`booked`/`date` filter SERVER-side so a filtered view is never
+    truncated by the recent-N window (at 600+ calls/day a morning booking falls outside the last
+    300 rows). Line attribution = either-leg rule: a call is Lisa-4's iff from_number OR to_number
+    contains her line digits (inbound bookings like Samantha's count for L4); else Lisa-1."""
+    from .lisa4 import L4_LINE_RX  # single source of truth for the Lisa-4 line registry (all lines ever)
     ensure_tables(pool)
+    froms = list(from_numbers or [])
+    l4_pred = ("(COALESCE(lc.from_number,'') ~ %(l4d)s "
+               "OR COALESCE(lc.to_number,'') ~ %(l4d)s)")
+    conds, extra = [], {"l4d": L4_LINE_RX}
+    if agent == "lisa4":
+        conds.append(l4_pred)
+    elif agent == "lisa1":
+        conds.append(f"NOT {l4_pred}")
+    if booked:
+        conds.append("COALESCE(lc.meeting_agreed,false)")
+    if date == "today":
+        conds.append("(lc.created_at AT TIME ZONE 'Australia/Melbourne')::date="
+                     "(now() AT TIME ZONE 'Australia/Melbourne')::date")
+    elif date == "7d":
+        conds.append("(lc.created_at AT TIME ZONE 'Australia/Melbourne')::date>="
+                     "(now() AT TIME ZONE 'Australia/Melbourne')::date - 6")
+    where = ("WHERE " + " AND ".join(conds) + " ") if conds else ""
     return _fetch(pool,
         "SELECT lc.call_id, lc.dest9, lc.prospect_name, lc.company_name, lc.domain, lc.status, lc.call_outcome, "
+        # which agent owns this row (either-leg rule) — the UI scopes/chips by THIS, not by
+        # comparing raw numbers client-side (formatting drift dropped inbound rows).
+        f"  CASE WHEN {l4_pred} THEN 'lisa4' ELSE 'lisa1' END AS agent, "
+        # ALWAYS-identifiable name: call record -> Lisa-4 pool (title/company/domain) -> the number itself
+        "  COALESCE(NULLIF(lc.company_name,''), lp4.title, lp4.company, lp4.domain, NULLIF(lc.domain,''), "
+        "           NULLIF(lc.prospect_name,''), lc.to_number) AS display_name, lp4.bucket AS pool_bucket, "
         "  lc.meeting_agreed, lc.agreed_day_time, lc.callback_when, lc.main_objection, lc.asked_if_ai, lc.call_summary, "
         "  lc.recording_url, lc.duration_ms, lc.cost_cents, lc.booked_event_id, lc.sms_sent, lc.qualification, "
+        "  lc.from_number, lc.to_number, "
+        # INBOUND = a prospect called Lisa BACK (from_number is not one of her registered caller IDs). Shows
+        # in the same recent-calls list, flagged so callbacks from our voicemails/SMS are visible.
+        "  (%(froms)s::text[] <> '{}' AND lc.from_number IS NOT NULL AND lc.from_number <> ALL(%(froms)s::text[])) AS inbound, "
         "  (lc.created_at AT TIME ZONE 'Australia/Melbourne') AS created_local, "
         # audit report we generated + texted for this prospect (token -> public /r/ link, built client-side)
         "  (SELECT s.token FROM lisa_audit_shares s WHERE s.domain=lc.domain ORDER BY s.created_at DESC LIMIT 1) AS audit_token, "
@@ -2206,4 +3437,45 @@ def recent_calls(pool: ConnectionPool, limit: int = 100) -> list[dict]:
         "     FROM lisa_sms x WHERE x.dest9=lc.dest9 AND x.created_at >= lc.created_at "
         "       AND x.created_at < COALESCE((SELECT min(lc2.created_at) FROM lisa_calls lc2 "
         "                                    WHERE lc2.dest9=lc.dest9 AND lc2.created_at > lc.created_at), 'infinity')) AS sms "
-        "FROM lisa_calls lc ORDER BY lc.created_at DESC LIMIT %s", (limit,))
+        "FROM lisa_calls lc LEFT JOIN lisa4_pool lp4 ON lp4.dest9=lc.dest9 "
+        + where +
+        "ORDER BY lc.created_at DESC LIMIT %(limit)s",
+        {**extra, "froms": froms, "limit": limit})
+
+
+def sync_qualifier_calls(pool: ConnectionPool, settings: Settings) -> dict:
+    """AUTO qualification-tracking (Raj, 2026-08-11): Ben (BDM) qualifies Lisa-1 bookings by phone.
+    When a qualifier has an ANSWERED (>=45s) call to any booked_crm prospect AFTER its booking, append a
+    one-line CRM note (once per call) so qualification self-tracks. Manoj/reveals are handled separately
+    by sync_reveal_calls."""
+    ensure_tables(pool)
+    names = [n.strip() for n in str(getattr(settings, "booking_qualifier_names", "") or "Ben").split(",") if n.strip()]
+    # EVERY attempt is noted (Raj, 2026-08-12) — answered talks AND misses (voicemail / no-pickup / short),
+    # so the booked-CRM page shows 'Manoj tried — voicemail' in near-realtime, not just successful quals.
+    rows = _fetch(pool,
+        "SELECT bc.dest9, c.bde_name, c.call_id, round(COALESCE(c.talk_seconds,0)) s, c.answered, "
+        "  COALESCE(cl.call_outcome,'') outcome, "
+        "  to_char(c.started_at AT TIME ZONE 'Australia/Melbourne','Dy DD Mon HH24:MI') t "
+        "FROM booked_crm bc JOIN calls c "
+        "  ON right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=bc.dest9 "
+        "LEFT JOIN classifications cl ON cl.call_id=c.call_id "
+        "WHERE c.bde_name = ANY(%s) "
+        "  AND c.started_at > now() - interval '3 days' "
+        "  AND COALESCE(bc.note,'') NOT LIKE '%%[q:'||c.call_id||']%%' LIMIT 30", (names,))
+    n = 0
+    for r in rows:
+        s = int(r["s"] or 0)
+        if r["answered"] and s >= 45:
+            line = f" · BDM QUAL CALL by {r['bde_name']} ({s}s, {r['t']})"
+        elif "voicemail" in (r["outcome"] or "").lower() or (not r["answered"] and s <= 5):
+            line = f" · {r['bde_name']} tried — voicemail/no pick-up ({r['t']})"
+        else:
+            line = f" · {r['bde_name']} tried — short call {s}s ({r['t']})"
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE booked_crm SET note=COALESCE(note,'')||%s||' [q:'||%s||']', "
+                "  updated_by='auto-qual-sync', updated_at=now() WHERE dest9=%s",
+                (line, r["call_id"], r["dest9"]))
+            conn.commit()
+            n += 1
+    return {"noted": n}

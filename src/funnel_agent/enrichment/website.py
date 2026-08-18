@@ -16,6 +16,7 @@ structured 'error' result rather than raising.
 from __future__ import annotations
 
 import re
+import time
 
 import httpx
 
@@ -108,19 +109,57 @@ async def afetch_website_intel(client, domain: str, *, max_bytes: int = 2_000_00
     for scheme in ("https", "http"):
         url = f"{scheme}://{domain}"
         try:
+            _t0 = time.perf_counter()
             resp = await client.get(url)
+            _load_ms = int((time.perf_counter() - _t0) * 1000)
             html = resp.text or ""
             if len(html) > max_bytes:
                 html = html[:max_bytes]
             det = _detect(html)
             return {
                 "found": True, "status": "ok", "final_url": str(resp.url),
-                "http_status": resp.status_code, "html_bytes": len(html), **det,
+                "http_status": resp.status_code, "html_bytes": len(html),
+                "load_ms": _load_ms, **_health(html, str(resp.url)), **det,
             }
         except Exception as exc:
             last_err = str(exc)[:160]
             continue
     return {"found": False, "status": "error", "error": last_err}
+
+
+def _health(html: str, final_url: str) -> dict:
+    """Website-health signals for the Lisa-4 audit: is it secure (HTTPS), mobile-ready (viewport), titled."""
+    h = html or ""
+    hl = h.lower()
+    m = re.search(r"<title[^>]*>(.*?)</title>", hl, re.S)
+    return {
+        "is_https": str(final_url or "").lower().startswith("https://"),
+        "has_viewport": ('name="viewport"' in hl) or ("name='viewport'" in hl),
+        "title": (m.group(1).strip()[:120] if m else ""),
+    }
+
+
+def website_audit(intel: dict) -> dict:
+    """Classify a scanned domain into a Lisa-4 target bucket → {bucket, issue, is_target}.
+    bucket = 'no_website' | 'critical_issue' | 'ok'. Missing new signals (records scanned before the
+    health fields existed) default to healthy, so we NEVER claim a false issue on the call."""
+    if not intel or intel.get("status") == "no_domain":
+        return {"bucket": "no_website", "issue": "no website", "is_target": True}
+    if not intel.get("found"):
+        return {"bucket": "critical_issue", "issue": "site not loading", "is_target": True}
+    st = int(intel.get("http_status") or 0)
+    if st == 0 or st >= 400:
+        return {"bucket": "critical_issue", "issue": "site error (%s)" % (st or "no response"), "is_target": True}
+    if int(intel.get("html_bytes") or 0) < 1500:
+        return {"bucket": "critical_issue", "issue": "site is blank / parked", "is_target": True}
+    if intel.get("is_https") is False:
+        return {"bucket": "critical_issue", "issue": "site is not secure (no HTTPS)", "is_target": True}
+    if intel.get("has_viewport") is False:
+        return {"bucket": "critical_issue", "issue": "site isn't mobile-friendly", "is_target": True}
+    lm = intel.get("load_ms")
+    if isinstance(lm, (int, float)) and lm > 7000:
+        return {"bucket": "critical_issue", "issue": "site is very slow to load", "is_target": True}
+    return {"bucket": "ok", "issue": None, "is_target": False}
 
 
 def fetch_website_intel(domain: str, *, timeout: float = 12.0, verify: bool = True) -> dict:
@@ -138,12 +177,15 @@ def fetch_website_intel(domain: str, *, timeout: float = 12.0, verify: bool = Tr
         url = f"{scheme}://{domain}"
         try:
             with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers, verify=verify) as c:
+                _t0 = time.perf_counter()
                 resp = c.get(url)
+                _load_ms = int((time.perf_counter() - _t0) * 1000)
             html = resp.text or ""
             det = _detect(html)
             return {
                 "found": True, "status": "ok", "final_url": str(resp.url),
-                "http_status": resp.status_code, "html_bytes": len(html), **det,
+                "http_status": resp.status_code, "html_bytes": len(html),
+                "load_ms": _load_ms, **_health(html, str(resp.url)), **det,
             }
         except Exception as exc:  # try the next scheme, else report
             last_err = str(exc)[:160]
