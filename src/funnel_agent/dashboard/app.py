@@ -25,6 +25,8 @@ from ..auth import (can_manage_pipeline, create_session, create_user,
 from ..config import Settings, get_settings
 from ..db.analytics import make_analytics_pool
 from ..prospects import gads_dnb_gate
+from .. import crm as _crm
+from .. import push as _push
 
 # ---- Pipeline terminology (human, sales-manager language) + the "winning next move" -------- #
 # One shared vocabulary so the calendar, the event drill-down and the prospect page all read
@@ -500,7 +502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- auth: per-person login + role-based scoping --------------------- #
     # /api/lisa/postcall is the Retell webhook — it has NO session (Retell posts server-to-server), so it
     # must bypass the login gate; it is guarded instead by its own LISA_WEBHOOK_TOKEN query token.
-    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/api/lisa/postcall",
+    _PUBLIC = {"/login", "/logout", "/healthz", "/readyz", "/logo.png", "/sw.js", "/api/lisa/postcall",
                "/api/lisa/inbound", "/api/lisa/sms-inbound", "/api/lisa/apollo-phone",
                "/api/lisa4/postcall", "/api/lisa4/inbound", "/api/lisa4/sms-inbound",
                "/api/lisa5/postcall", "/api/lisa5/inbound", "/api/lisa5/sms-inbound"}
@@ -594,6 +596,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """True when the logged-in user is an isolated/private BDE (e.g. Mohit) viewing the app."""
         u = getattr(request.state, "user", None) or {}
         return u.get("role") == "bde" and u.get("bde_name") in settings.private_bdes
+
+    def _crm_allowed(request: Request) -> bool:
+        """True when the user may see+edit the booked-CRM: any admin, or a user (e.g. Alfred) whose
+        canonical bde_name / login email is in CRM_ACCESS_NAMES."""
+        u = getattr(request.state, "user", None) or {}
+        if is_admin(u):
+            return True
+        allow = settings.crm_access
+        return bool(allow) and (str(u.get("bde_name") or "").lower() in allow
+                                or str(u.get("email") or "").lower() in allow
+                                or str(u.get("name") or "").lower() in allow)
 
     def _is_pilot_bde_viewer(request: Request) -> bool:
         """True when the viewer is a BDE on the GAds-pool PILOT (CALENDAR_ALLOC_NAMES — e.g. Mohit,
@@ -5004,74 +5017,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/lisa-crm", response_class=HTMLResponse)
     def lisa_crm_page(request: Request):
-        u = getattr(request.state, "user", None) or {}
-        if not is_admin(u):
+        if not _crm_allowed(request):
             return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
         return HTMLResponse(_static("lisa-crm.html"), headers=_NOCACHE)
 
+    @app.get("/lisa-crm/{dest9}", response_class=HTMLResponse)
+    def lisa_crm_record_page(dest9: str, request: Request):
+        """Per-booking drill-down record page (the single source of truth for one prospect)."""
+        if not _crm_allowed(request):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        return HTMLResponse(_static("crm-record.html"), headers=_NOCACHE)
+
     @app.get("/api/lisa/crm")
     def lisa_crm_data(request: Request) -> JSONResponse:
-        """Booked-prospects CRM: one row per prospect that has EVER agreed to a meeting on a Lisa
-        line — booking evidence, meeting schedule, reveal-site state, last touches, autopilot and
-        a manual status (booked_crm). Admin-only."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
-        closers = list(getattr(settings, "reveal_closers", []) or []) or ["__none__"]
-        rows = q("""
-            WITH booked AS (
-              SELECT DISTINCT ON (dest9) dest9, call_id, company_name, agreed_day_time,
-                     created_at AS booked_at,
-                     (right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) AS inbound,
-                     -- business line: Lisa-4 sells WEBSITES on +61468030256; everything else is
-                     -- Lisa-1 selling organic & paid marketing.
-                     (from_number='+61468030256' OR to_number='+61468030256') AS is_lisa4
-              FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
-              ORDER BY dest9, created_at ASC)
-            SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
-                   CASE WHEN b.is_lisa4 THEN 'lisa4' ELSE 'lisa1' END AS agent,
-                   COALESCE(NULLIF(b.company_name,''), lp.company, lb.company_name, '(unknown)') AS company,
-                   COALESCE(lp.domain, lb.domain) AS domain,
-                   (SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='outbound') AS last_out,
-                   (SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound')  AS last_in,
-                   (SELECT count(*) FROM lisa_calls lc WHERE lc.dest9=b.dest9) AS total_calls,
-                   (SELECT ce.start_at FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
-                      AND ce.type='reveal' ORDER BY (ce.status='pending') DESC, ce.start_at DESC LIMIT 1) AS meeting_at,
-                   (SELECT ce.status  FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
-                      AND ce.type='reveal' ORDER BY (ce.status='pending') DESC, ce.start_at DESC LIMIT 1) AS meeting_status,
-                   (SELECT count(*) FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
-                      AND ce.status='pending' AND ce.created_by='raj-autopilot') AS autopilot_pending,
-                   st.status AS site_status, st.share_token,
-                   bc.status AS crm_status, bc.note AS crm_note, bc.updated_by AS crm_by,
-                   (SELECT left(body,160) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound'
-                    ORDER BY created_at DESC LIMIT 1) AS last_in_body,
-                   ((SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound')
-                    > COALESCE(bc.replies_seen_at, 'epoch'::timestamptz)) AS unread,
-                   -- CALL ANALYSIS in the CRM: the booking call's summary + the human REVEAL call's
-                   -- (Manoj) outcome + summary, straight from the classifier.
-                   (SELECT call_summary FROM lisa_calls WHERE call_id=b.call_id) AS booking_summary,
-                   rv.bde_name AS reveal_by, rv.started_at AS reveal_at, rv.mins AS reveal_mins,
-                   rv.call_outcome AS reveal_outcome, rv.reveal_summary AS reveal_summary
-            FROM booked b
-            LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
-            LEFT JOIN lisa_briefs lb ON lb.dest9=b.dest9
-            LEFT JOIN LATERAL (SELECT status, share_token FROM lisa4_sites s
-                               WHERE s.dest9=b.dest9 ORDER BY id DESC LIMIT 1) st ON true
-            LEFT JOIN LATERAL (
-              SELECT c.bde_name, c.started_at, round(COALESCE(c.talk_seconds,0)/60.0)::int AS mins,
-                     cl.call_outcome, COALESCE(NULLIF(cl.problem_summary,''),'') AS reveal_summary
-              FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id
-              WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
-                AND c.answered AND COALESCE(c.talk_seconds,0) >= 60
-                AND c.bde_name = ANY(%s)   -- ONLY the website-reveal closer(s), e.g. Immanule Manoj (not the AI booking call or an unrelated BDE)
-              ORDER BY c.started_at DESC LIMIT 1) rv ON true
-            LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
-            ORDER BY b.booked_at DESC""", (closers,))
+        """Booked-prospects CRM (single source of truth): one enriched row per prospect that has ever
+        agreed a meeting on a Lisa line. Admin or CRM-access users (e.g. Alfred)."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        _crm.ensure_crm_tables(pool)
+        closers = list(dict.fromkeys(list(getattr(settings, "reveal_closers", []) or []) + ["Alfred"]))
+        rows = _crm.crm_rows(q, closers)
         return JSONResponse(jsonable_encoder({"rows": rows}))
 
     @app.post("/api/lisa/crm/status")
     async def lisa_crm_status(request: Request) -> JSONResponse:
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
         body = await request.json()
         d9 = re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
         if not d9:
@@ -5089,8 +5060,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/lisa/crm/seen")
     async def lisa_crm_seen(request: Request) -> JSONResponse:
         """Mark a booked prospect's inbound replies as read (per-prospect cursor on booked_crm)."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
         body = await request.json()
         d9 = re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
         if not d9:
@@ -5099,6 +5070,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cur.execute("""INSERT INTO booked_crm (dest9, replies_seen_at) VALUES (%s, now())
                            ON CONFLICT (dest9) DO UPDATE SET replies_seen_at=now()""", (d9,))
             conn.commit()
+        return JSONResponse({"ok": True})
+
+
+    @app.get("/api/lisa/crm/record/{dest9}")
+    def lisa_crm_record(dest9: str, request: Request) -> JSONResponse:
+        """Full drill-down record for one booked prospect + activity timeline."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        _crm.ensure_crm_tables(pool)
+        closers = list(dict.fromkeys(list(getattr(settings, "reveal_closers", []) or []) + ["Alfred"]))
+        rec = _crm.crm_record(q, dest9, closers)
+        if not rec:
+            raise HTTPException(404, "not found")
+        return JSONResponse(jsonable_encoder(rec))
+
+    @app.post("/api/lisa/crm/update")
+    async def lisa_crm_update(request: Request) -> JSONResponse:
+        """Alfred/admin edits: stage, owner, next_action, next_action_at, outcome, contact_name, contact_email, status, note."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        _crm.crm_update(pool, str(body.get("dest9") or ""), body.get("fields") or {}, who)
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/lisa/crm/note")
+    async def lisa_crm_note(request: Request) -> JSONResponse:
+        """Add a timeline note to a booked prospect."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        _crm.crm_add_note(pool, str(body.get("dest9") or ""), str(body.get("body") or ""), who)
+        return JSONResponse({"ok": True})
+
+    @app.get("/sw.js")
+    def crm_service_worker():
+        """Service worker at root scope for background web-push."""
+        return Response(content=_static("sw.js"), media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+    @app.get("/api/push/vapid")
+    def push_vapid(request: Request) -> JSONResponse:
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        _crm.ensure_crm_tables(pool)
+        return JSONResponse({"publicKey": _push.public_key(pool)})
+
+    @app.post("/api/push/subscribe")
+    async def push_subscribe(request: Request) -> JSONResponse:
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:120]
+        _push.save_subscription(pool, who, body.get("subscription") or body, request.headers.get("user-agent", ""))
         return JSONResponse({"ok": True})
 
     @app.get("/api/notifications")

@@ -715,6 +715,9 @@ def lisa_dial(
                 _lisa.sync_reveal_calls(ana, settings)
                 # AUTO qualification-tracking: note Ben's (BDM) answered calls to booked prospects.
                 _lisa.sync_qualifier_calls(ana, settings)
+                # AUTO Chrome web-push: alert Alfred's laptop on every new booking (watermark-based, guarded).
+                from . import push as _push
+                _push.push_new_bookings(ana, settings)
                 # Emma Collins (AI staff #3 — meeting scheduler): refresh her unified booking queue,
                 # send APPROVED invites, poll RSVPs/replies, fire due reminders. Self-throttled +
                 # creds-gated inside (queues safely until the 4 MS Graph env values are set).

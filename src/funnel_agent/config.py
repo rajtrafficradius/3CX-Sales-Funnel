@@ -266,6 +266,10 @@ class Settings(BaseSettings):
     # canonical bde_name(s). Isolation is opt-in; empty = no private BDEs (unchanged behaviour).
     private_bde_names: str = ""
 
+    # Names/emails granted FULL see+edit access to the booked-CRM (beyond admins) — e.g. Alfred the closer.
+    # CSV of canonical bde_name(s) and/or login emails. CRM_ACCESS_NAMES.
+    crm_access_names: str = "Alfred"
+
     # The whole CALLING system (calendar + call scheduling: fresh calls, RPC-connect callbacks,
     # gatekeeper/weekly recalls) operates ONLY on prospects CONFIRMED running Google Ads. The old
     # BDE-sourced (non-GAds) data is reached from the Agency & RPC page / pipeline pages instead.
@@ -407,6 +411,11 @@ class Settings(BaseSettings):
     def calendar_alloc_bdes(self) -> list[str]:
         """If non-empty, the ONLY BDEs the calling allocators deal a worklist to. See calendar_alloc_names."""
         return _csv(self.calendar_alloc_names)
+
+    @property
+    def crm_access(self) -> list[str]:
+        """Lower-cased names/emails with full booked-CRM see+edit access (beyond admins). See crm_access_names."""
+        return [s.lower() for s in _csv(self.crm_access_names)]
 
     @property
     def lisa_numbers(self) -> list[str]:
