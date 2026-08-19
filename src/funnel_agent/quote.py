@@ -150,7 +150,7 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
    </div>
 
    <div class="foot"><b>Digital Expo · DE Group</b> — Web Design &amp; Digital Marketing · Melbourne, Australia<br>
-     (03) 7020 9196 · hello@digitalexpo.com.au · digitalexpo.com.au · ABN 44 164 082 473</div>
+     (03) 7020 9196 · hello@digitalexpo.com.au · digitalexpo.com.au · ABN 90 134 920 228</div>
  </div></div>
 </body></html>'''
 
