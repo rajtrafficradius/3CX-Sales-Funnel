@@ -67,6 +67,9 @@
   .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:7px;border:1px solid var(--line);background:var(--chip);color:var(--txt-dim)}
   .tag.good{color:var(--good);background:var(--good-soft);border-color:rgba(74,222,128,.3)}
   .tag.warn{color:var(--warn);background:var(--warn-soft);border-color:rgba(251,191,36,.3)}
+  .tag.build{color:#4aa3ff;background:rgba(74,163,255,.12);border-color:rgba(74,163,255,.35);animation:tagpulse 1.4s ease-in-out infinite}
+  .tag.bad{color:#f87171;background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.32)}
+  @keyframes tagpulse{0%,100%{opacity:1}50%{opacity:.5}}
   .udot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 3px rgba(248,113,113,.18)}
   /* ---- hero ---- */
   .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:22px;padding:20px 22px;margin-bottom:14px;box-shadow:var(--elev2)}
@@ -516,6 +519,19 @@ function renderRecord(r){
       </div></div>
     </div>
     <div class="panel">
+      <div class="panel-h">Development status <span class="rt" id="devRt">auto-updates</span></div>
+      <div class="panel-b"><div class="kv">
+        <div class="row"><span class="k">Website build</span><span class="v">${(function(){var s=r.site_status;
+          if(s==='built'&&r.share_token)return '<span class="tag good">● Live</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.share_token)+'" target="_blank" rel="noopener">Open ↗</a>';
+          if(s==='built')return '<span class="tag good">● Built</span>';
+          if(s==='building')return '<span class="tag build">● Building now…</span>';
+          if(s==='queued')return '<span class="tag">● Queued to build</span>';
+          if(s==='error')return '<span class="tag bad">● Build failed — will retry</span>';
+          return '<span class="dim">Not started</span>';})()}</span></div>
+        <div class="row"><span class="k">Growth audit</span><span class="v">${r.audit_token?('<span class="tag good">● Ready</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.audit_token)+'" target="_blank" rel="noopener">Open ↗</a>'):'<span class="dim">Not generated yet</span>'}</span></div>
+      </div></div>
+    </div>
+    <div class="panel">
       <div class="panel-h">Documents <span class="rt">share manually</span></div>
       <div class="panel-b"><div class="kv">
         <div class="row"><span class="k">Brand intro (DE Group)</span><span class="v">${r.brand_intro_sent_at?`<span class="sent" title="Already shared — no need to resend">✓ Sent by ${esc(r.brand_intro_sent_by||'Lisa')}${(d=>d?' · '+d.toLocaleDateString('en-AU',{day:'numeric',month:'short'}):'')(toDate(r.brand_intro_sent_at))}</span> `:''}<a class="asset" href="/api/lisa4/site/public/de-group-reveal-aUGgB40aZsd9yQ" target="_blank" rel="noopener">Open ↗</a></span></div>
@@ -631,9 +647,14 @@ function wire(){
     catch(e){toast('Failed: '+e.message,true);gaBtn.disabled=false;gaBtn.textContent='Generate';}};
 }
 
+var _devPoll=null;
 async function loadRecord(){
   if(!D9){renderError(new Error('missing dest9'));return;}
-  try{const rec=await api('/api/lisa/crm/record/'+encodeURIComponent(D9));if(!rec||!rec.dest9){renderError(new Error('Not found'));return;}renderRecord(rec);}
+  try{const rec=await api('/api/lisa/crm/record/'+encodeURIComponent(D9));if(!rec||!rec.dest9){renderError(new Error('Not found'));return;}renderRecord(rec);
+    // real-time development status: while the site is queued/building, refresh every 15s until it's live
+    if(_devPoll){clearTimeout(_devPoll);_devPoll=null;}
+    if(rec.site_status==='building'||rec.site_status==='queued'){_devPoll=setTimeout(loadRecord,15000);}
+  }
   catch(e){renderError(e);}
 }
 window.loadRecord=loadRecord;
