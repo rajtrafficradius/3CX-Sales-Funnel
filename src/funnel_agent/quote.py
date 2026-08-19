@@ -44,7 +44,7 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
   --grad:linear-gradient(115deg,#1f5fd0,#17a8e6);--sh:0 2px 8px rgba(11,21,36,.06),0 22px 48px -30px rgba(11,21,36,.32)}}
  *{{box-sizing:border-box}} body{{margin:0;background:var(--bg2);color:var(--ink);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}}
  .wrap{{max-width:820px;margin:0 auto;padding:0 20px}} a{{color:var(--blue);text-decoration:none}}
- .doc{{background:var(--bg);margin:26px auto 40px;border:1px solid var(--line);border-radius:18px;box-shadow:var(--sh);overflow:hidden}}
+ .doc{{max-width:720px;background:var(--bg);margin:26px auto 40px;border:1px solid var(--line);border-radius:18px;box-shadow:var(--sh);overflow:hidden}}
  .top{{background:linear-gradient(140deg,var(--navy),#122645);color:#fff;padding:30px 34px;position:relative;overflow:hidden}}
  .top::after{{content:"";position:absolute;inset:0;background:radial-gradient(50% 130% at 100% 0,rgba(23,168,230,.28),transparent 60%);pointer-events:none}}
  .brandrow{{display:flex;align-items:center;gap:11px;position:relative}}
