@@ -354,6 +354,12 @@ def reserve_lisa4_pool(pool: ConnectionPool, settings: Settings, scan_batch: int
     Critical-issue candidates are scanned live (concurrently) and classified by the audit engine."""
     ensure_lisa4_tables(pool)
     target = int(getattr(settings, "lisa4_pool_size", 500))
+    try:   # bump the pool target from crm_config (no env change / redeploy) so Lisa-4 never runs dry
+        _t = _fetch(pool, "SELECT v FROM crm_config WHERE k='lisa4_pool_size'")
+        if _t and str(_t[0].get("v") or "").strip().isdigit():
+            target = int(_t[0]["v"])
+    except Exception:
+        pass
     # D&B (raghav) backfill gate. Default OFF (LISA4_USE_DNB_BACKFILL=false): Lisa-4 fills from gmaps stock
     # ONLY (§0 below) — the D&B dataset is reserved for Lisa-1/human calling. When off, §1 (critical-issue)
     # and §2 (no-website) below are skipped. Existing lisa4_pool rows are NEVER removed by this flag.

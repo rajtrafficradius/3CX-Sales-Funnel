@@ -608,6 +608,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 or str(u.get("email") or "").lower() in allow
                                 or str(u.get("name") or "").lower() in allow)
 
+    def _tasks_allowed(request: Request) -> bool:
+        """Owner-only Tasks board — restricted to the emails in crm_config 'tasks_access_emails'
+        (Vysakh + Raj). Not all admins; the page/API gate uses this either way."""
+        u = getattr(request.state, "user", None) or {}
+        from .. import tasks as _tsk
+        return _tsk.has_access(pool, str(u.get("email") or ""))
+
     def _is_pilot_bde_viewer(request: Request) -> bool:
         """True when the viewer is a BDE on the GAds-pool PILOT (CALENDAR_ALLOC_NAMES — e.g. Mohit,
         Alfred, Ben). They work the WHOLE confirmed-Google-Ads pool, so the prospect/call ACL lets
@@ -718,7 +725,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              # not just admins — the page/API gate is _crm_allowed either way.
                              "crm_access": _crm_allowed(request),
                              # drives the "Meeting Scheduler" rail entry (admins + SCHEDULER_USERS)
-                             "scheduler_user": _can_schedule(request)})
+                             "scheduler_user": _can_schedule(request),
+                             # owner-only Tasks board (Vysakh + Raj)
+                             "tasks_access": _tasks_allowed(request)})
 
     @app.get("/api/recent-bookings")
     def recent_bookings(request: Request) -> JSONResponse:
@@ -5280,6 +5289,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             n = cur.rowcount
             conn.commit()
         return JSONResponse({"ok": True, "requeued": n})
+
+    @app.get("/tasks", response_class=HTMLResponse)
+    def tasks_page(request: Request):
+        """Owner-only Tasks / project board (Vysakh + Raj)."""
+        if not _tasks_allowed(request):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        from .. import tasks as _tsk
+        try:
+            _tsk.seed_tasks(pool)
+        except Exception:
+            pass
+        return HTMLResponse(_static("tasks.html"), headers=_NOCACHE)
+
+    @app.get("/api/tasks")
+    def api_tasks_list(request: Request) -> JSONResponse:
+        if not _tasks_allowed(request):
+            raise HTTPException(403, "no access")
+        from .. import tasks as _tsk
+        try:
+            _tsk.seed_tasks(pool)
+        except Exception:
+            pass
+        return JSONResponse({"tasks": _tsk.list_tasks(pool)})
+
+    @app.post("/api/tasks")
+    async def api_tasks_create(request: Request) -> JSONResponse:
+        if not _tasks_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        from .. import tasks as _tsk
+        tid = _tsk.create_task(pool, title=body.get("title", ""), description=body.get("description", ""),
+                               category=body.get("category", ""), priority=body.get("priority", "normal"),
+                               status=body.get("status", "pending"), who=who)
+        return JSONResponse({"ok": bool(tid), "id": tid})
+
+    @app.post("/api/tasks/{task_id}")
+    async def api_tasks_update(request: Request, task_id: int) -> JSONResponse:
+        if not _tasks_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        from .. import tasks as _tsk
+        _tsk.update_task(pool, task_id, body, who)
+        return JSONResponse({"ok": True})
 
     @app.get("/s/{code}")
     def shortlink_redirect(code: str):
