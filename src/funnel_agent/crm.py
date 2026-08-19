@@ -327,6 +327,10 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
         model = cfg.get("lisa4_designer_model") or "claude-opus-5"
         key = cfg.get("anthropic_api_key") or getattr(settings, "anthropic_api_key", "") or ""
         from . import audit as _a, growth_audit as _ga
+        try:   # make sure the domain has the full SEO dataset (paid, idempotent) so the audit isn't thin
+            _a.ensure_audit_data(pool, settings, dom, company or "")
+        except Exception:
+            pass
         audit_model = _a.assemble_audit(pool, dom, avg_ticket=avg_ticket)
         if not audit_model:
             return None

@@ -272,6 +272,73 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dic
     }
 
 
+def _audit_data_status(pool, domain: str) -> dict:
+    from psycopg.rows import dict_row
+    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT dataforseo FROM enrichment WHERE domain=%s", (domain,))
+        r = cur.fetchone()
+    df = (r["dataforseo"] if r else {}) or {}
+    return {"base": bool(df.get("rank") or df.get("ranked_kw")),
+            "seo": bool(df.get("audit") and df.get("ranked_kw")),
+            "competitor": bool(df.get("competitor_audit"))}
+
+
+def ensure_audit_data(pool, settings, domain: str, company: str = "") -> dict:
+    """Idempotently fetch the DataForSEO datasets the growth audit needs — base rank+ads, the SEO keyword
+    audit (ranked_kw + money keywords) and the competitor gap. PAID (a few cents per NEW domain); only runs
+    the missing pieces, so a prospect that was only ads-checked (thin audit) gets filled out. Guarded
+    per-step — a failure in one never aborts the others; returns what ran. No-op if DataForSEO is disabled."""
+    domain = (domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if not domain or not getattr(settings, "dataforseo_enabled", False):
+        return {"skipped": "no domain / dataforseo disabled"}
+    did, errors = [], []
+    try:
+        from .enrichment.dataforseo import DataForSEOClient, build_seo_audit, brand_tokens
+        from .enrich import enrich_dataforseo_one
+        from .competitor import run_competitor_audit
+        from datetime import datetime as _dt
+        from psycopg.types.json import Json
+        if not _audit_data_status(pool, domain)["base"]:
+            try:
+                c = DataForSEOClient(settings)
+                try:
+                    enrich_dataforseo_one(pool, c, domain)
+                finally:
+                    c.close()
+                did.append("base")
+            except Exception as exc:
+                errors.append("base:" + str(exc)[:120])
+        if not _audit_data_status(pool, domain)["seo"]:
+            try:
+                c = DataForSEOClient(settings)
+                try:
+                    rk = c.ranked_keywords(domain, limit=100)
+                finally:
+                    c.close()
+                kws = (rk.get("keywords") or [])[:100]
+                a = build_seo_audit(kws, brands=brand_tokens(domain, company or ""))
+                a["keyword_count_total"] = rk.get("count"); a["fetched_at"] = _dt.now().isoformat()
+                patch = {"audit": a, "ranked_kw": kws}
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                                "ON CONFLICT (domain) DO UPDATE SET dataforseo = "
+                                "COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
+                                (domain, Json(patch), Json(patch)))
+                    conn.commit()
+                did.append("seo")
+            except Exception as exc:
+                errors.append("seo:" + str(exc)[:120])
+        if not _audit_data_status(pool, domain)["competitor"]:
+            try:
+                run_competitor_audit(pool, settings, domain)
+                did.append("competitor")
+            except Exception as exc:
+                errors.append("competitor:" + str(exc)[:120])
+    except Exception as exc:
+        errors.append("setup:" + str(exc)[:120])
+    return {"did": did, "errors": errors}
+
+
 def _ads_model(ads: dict, paid: dict) -> dict:
     """Rich Google-Ads model from the Transparency Center data (the authoritative source — DataForSEO
     Labs 'paid' keyword metrics under-report and are often 0 even for confirmed advertisers)."""
