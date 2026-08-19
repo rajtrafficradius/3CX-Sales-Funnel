@@ -600,14 +600,27 @@ _DESIGNER_SYSTEM = (
 )
 
 
+def _designer_model(pool: ConnectionPool, settings: Settings) -> str:
+    """Resolve the AI-designer model. A DB override (crm_config 'lisa4_designer_model') wins so we can set
+    it at runtime WITHOUT an env-triggered redeploy; else the configured default; else Opus 5 (the quality
+    bar for client sites — never a lighter tier)."""
+    try:
+        r = _fetch(pool, "SELECT v FROM crm_config WHERE k='lisa4_designer_model'")
+        if r and (r[0].get("v") or "").strip():
+            return r[0]["v"].strip()
+    except Exception:
+        pass
+    return getattr(settings, "lisa4_designer_model", None) or "claude-opus-5"
+
+
 def _claude(settings: Settings, system: str, user: str, *, max_tokens: int = 60000,
-            messages: list | None = None) -> str:
-    """Call the Anthropic Messages API (Claude — claude-sonnet-4-5) via urllib, streaming. Returns text."""
+            messages: list | None = None, model: str | None = None) -> str:
+    """Call the Anthropic Messages API (Claude) via urllib, streaming. Returns text."""
     key = getattr(settings, "anthropic_api_key", "") or ""
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY not set — cannot run the Lisa-4 AI designer")
     body = {
-        "model": getattr(settings, "lisa4_designer_model", "claude-sonnet-4-5"),
+        "model": model or getattr(settings, "lisa4_designer_model", None) or "claude-opus-5",
         "max_tokens": max_tokens,
         "system": system,
         "messages": messages or [{"role": "user", "content": user}],
@@ -631,6 +644,18 @@ def _claude(settings: Settings, system: str, user: str, *, max_tokens: int = 600
             if ev.get("type") == "content_block_delta":
                 out.append((ev.get("delta") or {}).get("text", ""))
     return "".join(out)
+
+
+def _strip_md_fences(s: str) -> str:
+    """Some models (Opus 5 included) wrap output in ```html … ``` — strip a leading/trailing code fence
+    so the site HTML is raw. Leaves unfenced output untouched."""
+    t = (s or "").strip()
+    if t.startswith("```"):
+        nl = t.find("\n")
+        t = t[nl + 1:] if nl != -1 else t[3:]
+    if t.rstrip().endswith("```"):
+        t = t.rstrip()[:-3]
+    return t.strip()
 
 
 def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
@@ -683,7 +708,8 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
         site_id = cur.fetchone()["id"]
         conn.commit()
     try:
-        html = _claude(settings, _DESIGNER_SYSTEM, user)
+        dmodel = _designer_model(pool, settings)
+        html = _strip_md_fences(_claude(settings, _DESIGNER_SYSTEM, user, model=dmodel))
         # CONTINUATION: a full multi-page site can exceed one completion — resume until the file is
         # genuinely complete (</html> present AND the <script> exists so nav/pages actually work).
         tries = 0
@@ -694,10 +720,10 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
                 {"role": "user", "content": "You stopped mid-file. Continue EXACTLY from where you left "
                  "off — output ONLY the remaining raw HTML/CSS/JS (no repetition of anything already "
                  "written, no commentary), finishing the COMPLETE document: all remaining pages, the "
-                 "full <script> with the working hash-router/nav/reveals, through to </html>."}])
+                 "full <script> with the working hash-router/nav/reveals, through to </html>."}], model=dmodel)
             if not cont.strip():
                 break
-            html += cont
+            html += _strip_md_fences(cont)
             tries += 1
         if not (html.rstrip().endswith("</html>") and "<script" in html and html.count("<section") >= 3):
             raise RuntimeError(f"generated site incomplete after {tries} continuations ({len(html)}b)")
