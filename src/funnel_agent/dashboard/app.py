@@ -508,7 +508,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                "/api/lisa5/postcall", "/api/lisa5/inbound", "/api/lisa5/sms-inbound"}
     # tokenised share links (audit SMS links + Lisa-4 reveal sites) + Emma's email-open pixel
     # (the prospect's mail client fetches it) — no login.
-    _PUBLIC_PREFIXES = ("/r/", "/api/lisa4/site/public/", "/api/emma/px/")
+    _PUBLIC_PREFIXES = ("/r/", "/api/lisa4/site/public/", "/api/emma/px/", "/s/")
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
