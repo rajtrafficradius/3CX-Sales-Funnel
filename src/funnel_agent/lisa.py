@@ -1609,7 +1609,14 @@ SMS_REPLY_RULES = (
     "- If they offer/ask a time (\"tomorrow morning\", \"after 5\", \"call me Friday\"): AGREE to a specific time "
     "and confirm it. That's a win.\n"
     "- POST-BOOKING texts (only once a meeting is already booked) MAY reference the agreed meeting "
-    "(confirmations, reminders, the invite/video link) — that purpose is already accepted.\n"
+    "(confirmations, reminders, the calendar invite) — that purpose is already accepted. NEVER mention or "
+    "offer a 'video link' — that phrase is banned.\n"
+    "- IF THEY ASK FOR THE WEBSITE / COMPANY LINK (\"send me a link to your website\", \"i want to see your "
+    "site first\", \"can you send your company site\"): the site is ALREADY BUILT and ready. Reply warmly that "
+    "you'll send them the link and our company details shortly, ahead of the meeting. It is a HARD RULE that "
+    "you NEVER say or imply it is being built / made / prepared / 'ready soon' / 'once it's done' — to them it "
+    "already exists and you're simply sending it across. Keep it to a brief 'will flick you the link shortly'. "
+    "Do NOT paste any URL yourself — a separate step sends the real link once it's available.\n"
     "- Warm, brief (<=300 chars), casual AU tone, human, no emoji spam, never hard-sell over text, never invent.\n"
     "- SOUND LIKE A REAL PERSON TEXTING, NOT AN AI. This is the top quality bar. Concretely:\n"
     "  * lower-case, casual; short fragments over full sentences; contractions (i'm, you're, no worries).\n"
@@ -1983,6 +1990,24 @@ def reply_to_inbound_sms(pool: ConnectionPool, settings: Settings, *, dest9: str
     if not dry_run and _sms_already_answered(pool, d9, body):
         result["skipped"] = "already answered"
         return result
+
+    # 1.5) HUMAN-LIKE DELAY (Vysakh, 2026-08-19): a real person doesn't fire back in 2 seconds. Hold the
+    #      auto-reply until the prospect's latest inbound has aged a natural, STABLE per-thread amount
+    #      (~1.5-7.5 min). The live webhook runs at age~0 → we defer; the loop's sweep_unanswered_sms
+    #      re-invokes us each cycle and actually sends once it's old enough. Hard opt-outs (step 0) already
+    #      fired instantly above, so compliance is unaffected. dry_run (CRM preview) never defers.
+    if not dry_run:
+        try:
+            _ar = _fetch(pool, "SELECT extract(epoch from (now()-max(created_at))) age FROM lisa_sms "
+                         "WHERE dest9=%s AND direction='inbound'", (d9,))
+            age = _ar[0]["age"] if (_ar and _ar[0].get("age") is not None) else 1e9
+            delay = 90 + (int(d9[-3:]) % 360) if (d9 and d9[-3:].isdigit()) else 210   # stable 90-449s
+            if age < delay:
+                result["deferred"] = True
+                result["reply_after_s"] = int(delay - age)
+                return result
+        except Exception:
+            pass   # never let the delay gate block a reply on error
 
     # 2) context: brief (first name only — NEVER the company/pitch in the text), booked state, full thread.
     br = _fetch(pool, "SELECT brief FROM lisa_briefs WHERE dest9=%s", (d9,))
