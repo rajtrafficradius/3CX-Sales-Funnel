@@ -714,6 +714,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"email": u.get("email"), "name": u.get("name"),
                              "role": u.get("role"), "bde_name": u.get("bde_name"),
                              "is_admin": is_admin(u),
+                             # reveals the "Booked CRM" rail link for CRM-allowed users (e.g. Alfred),
+                             # not just admins — the page/API gate is _crm_allowed either way.
+                             "crm_access": _crm_allowed(request),
                              # drives the "Meeting Scheduler" rail entry (admins + SCHEDULER_USERS)
                              "scheduler_user": _can_schedule(request)})
 

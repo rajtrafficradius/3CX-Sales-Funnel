@@ -957,6 +957,7 @@ pull();setInterval(pull,60000);})();
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
     if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.crm_access){document.querySelectorAll('.tr-rail [data-nav="/lisa-crm"]').forEach(function(el){el.style.display='';});}
     if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;
