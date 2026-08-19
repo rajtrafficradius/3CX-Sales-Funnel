@@ -344,6 +344,7 @@ def ensure_lisa4_tables(pool: ConnectionPool) -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa4_sites_dest9 ON lisa4_sites(dest9)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa4_sites_status ON lisa4_sites(status)")
         cur.execute("ALTER TABLE lisa4_sites ADD COLUMN IF NOT EXISTS build_attempts integer DEFAULT 0")
+        cur.execute("ALTER TABLE lisa4_sites ADD COLUMN IF NOT EXISTS building_at timestamptz")
         conn.commit()
 
 
@@ -750,12 +751,12 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
         ex = cur.fetchone()
         if ex:
             site_id = ex["id"]
-            cur.execute("UPDATE lisa4_sites SET status='building', model=%s, error=NULL, "
+            cur.execute("UPDATE lisa4_sites SET status='building', model=%s, error=NULL, building_at=now(), "
                         "build_attempts=COALESCE(build_attempts,0)+1 WHERE id=%s", (dmodel, site_id))
         else:
             cur.execute("UPDATE lisa4_sites SET status='superseded' WHERE dest9=%s AND status='built'", (dest9,))
-            cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status, model, build_attempts) "
-                        "VALUES (%s,%s,%s,%s,%s,'building',%s,1) RETURNING id",
+            cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status, model, build_attempts, building_at) "
+                        "VALUES (%s,%s,%s,%s,%s,'building',%s,1,now()) RETURNING id",
                         (dest9, p.get("domain"), p.get("company"), p.get("bucket"), p.get("issue"), dmodel))
             site_id = cur.fetchone()["id"]
         conn.commit()
@@ -1281,6 +1282,16 @@ def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 
     failed 3+ times are skipped, and the confirm-gate decides eligibility: queued-before-cutover builds
     freely; queued-after only when the booking's CRM stage is 'confirmed'."""
     ensure_lisa4_tables(pool)
+    # self-heal: a container restart (e.g. a deploy) can orphan a row mid-build in 'building'. The drainer
+    # below only picks 'queued', so re-queue any build that has been 'building' with no HTML for >20 min so it
+    # rebuilds instead of being stranded. (A live build finishes in ~10-12 min, so 20 min is safe headroom.)
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE lisa4_sites SET status='queued' WHERE status='building' AND html IS NULL "
+                        "AND COALESCE(building_at, created_at) < now() - interval '20 minutes'")
+            conn.commit()
+    except Exception:
+        pass
     gate = _confirm_gate_from(pool)
     rows = _fetch(pool,
         "SELECT s.dest9 FROM lisa4_sites s "
