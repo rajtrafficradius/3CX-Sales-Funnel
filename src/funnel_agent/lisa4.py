@@ -1184,6 +1184,14 @@ def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 
         res = build_website(pool, settings, r["dest9"])
         if res.get("status") == "built":
             built += 1
+            try:   # AUTOPILOT: default quote + Alfred's reveal playbook (once each), surfaced on the booking page
+                from . import crm as _crm
+                _i = _fetch(pool, "SELECT company, domain, issue FROM lisa4_pool WHERE dest9=%s", (r["dest9"],))
+                _co = (_i[0]["company"] if _i else None); _dom = (_i[0]["domain"] if _i else None); _iss = (_i[0].get("issue") if _i else None)
+                _crm.ensure_quote_default(pool, r["dest9"], _co, _dom)
+                _crm.ensure_reveal_guide(pool, settings, r["dest9"], _co, _dom, "", _iss or "")
+            except Exception as exc:
+                log.warning("lisa4_autopilot_docs_failed", error=str(exc)[:140])
     return {"built": built, "queued_seen": len(rows)}
 
 

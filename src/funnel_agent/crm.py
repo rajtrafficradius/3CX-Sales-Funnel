@@ -29,6 +29,7 @@ def ensure_crm_tables(pool) -> None:
             ("next_action_at", "timestamptz"), ("outcome", "text"),
             ("contact_name", "text"), ("contact_email", "text"), ("created_at", "timestamptz DEFAULT now()"),
             ("quote_token", "text"), ("comparison_token", "text"), ("quote_total", "integer"),
+            ("guideline_token", "text"),
         ):
             cur.execute(f"ALTER TABLE booked_crm ADD COLUMN IF NOT EXISTS {col} {typ}")
         cur.execute(
@@ -67,7 +68,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        st.status AS site_status, st.share_token,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
        bc.note AS crm_note, bc.updated_by AS crm_by, bc.updated_at AS crm_at,
-       bc.quote_token, bc.comparison_token, bc.quote_total,
+       bc.quote_token, bc.comparison_token, bc.quote_total, bc.guideline_token,
        (SELECT count(*) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
@@ -214,3 +215,74 @@ def crm_add_note(pool, dest9: str, body: str, who: str) -> None:
         cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'note',%s,%s)",
                     (d9, body.strip()[:2000], who[:80]))
         conn.commit()
+
+
+def ensure_quote_default(pool, dest9: str, company: str, domain: str, default_total: int = 1000):
+    """Autopilot: create a DEFAULT website quotation for a booked prospect IF one doesn't exist yet, and
+    link it to booked_crm so it surfaces on the booking page. NEVER overwrites an existing/edited quote.
+    Fully guarded — never raises into the caller (the build loop). Returns the quote token, or None."""
+    import re as _re, secrets, random
+    from . import quote as _q
+    d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+    if not d9:
+        return None
+    try:
+        ensure_crm_tables(pool)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT quote_token FROM booked_crm WHERE dest9=%s", (d9,))
+            r = cur.fetchone()
+            if r and (r.get("quote_token") or ""):
+                return r["quote_token"]                       # already has one — leave the closer's version
+            html = _q.gen_quote_html(company or "your business", domain or "", int(default_total))
+            slug = _re.sub(r"[^a-z0-9]+", "-", (company or "quote").lower()).strip("-")[:28] or "quote"
+            tok = f"{slug}-quote-" + secrets.token_urlsafe(8)
+            synth = "9" + "".join(str(random.randint(0, 9)) for _ in range(8))
+            cur.execute("INSERT INTO lisa4_sites (dest9,company,domain,html,status,share_token,kind,quote_total,built_at) "
+                        "VALUES (%s,%s,%s,%s,'built',%s,'quote',%s,now())", (synth, company, domain, html, tok, int(default_total)))
+            cur.execute("INSERT INTO booked_crm (dest9,quote_token,quote_total,updated_by,updated_at) "
+                        "VALUES (%s,%s,%s,'autopilot',now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "quote_token=EXCLUDED.quote_token, quote_total=COALESCE(booked_crm.quote_total,EXCLUDED.quote_total), updated_at=now()",
+                        (d9, tok, int(default_total)))
+            conn.commit()
+        return tok
+    except Exception:
+        return None
+
+
+def ensure_reveal_guide(pool, settings, dest9: str, company: str, domain: str,
+                        industry: str = "", finding: str = "", quote_line: str = ""):
+    """Autopilot: generate Alfred's Opus-5 reveal PLAYBOOK for a booked prospect IF one doesn't exist yet,
+    and link it to booked_crm so it surfaces on the booking page. Guarded — never raises. Returns token/None."""
+    import re as _re, secrets, random
+    from . import reveal_guide as _rg
+    d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+    if not d9:
+        return None
+    try:
+        ensure_crm_tables(pool)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT guideline_token FROM booked_crm WHERE dest9=%s", (d9,))
+            r = cur.fetchone()
+            if r and (r.get("guideline_token") or ""):
+                return r["guideline_token"]
+            cur.execute("SELECT v FROM crm_config WHERE k='lisa4_designer_model'")
+            m = cur.fetchone()
+            model = (m.get("v") if m else None) or "claude-opus-5"
+        key = getattr(settings, "anthropic_api_key", "") or ""
+        ql = quote_line or "a bespoke website build from A$900 + GST, plus web & email hosting from A$100/month + GST"
+        html = _rg.gen_reveal_guide(key, model, company or "the business", domain or "", industry or "", finding or "", ql)
+        if not html:
+            return None
+        slug = _re.sub(r"[^a-z0-9]+", "-", (company or "guide").lower()).strip("-")[:24] or "guide"
+        tok = f"{slug}-guide-" + secrets.token_urlsafe(8)
+        synth = "9" + "".join(str(random.randint(0, 9)) for _ in range(8))
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa4_sites (dest9,company,domain,html,status,share_token,kind,built_at) "
+                        "VALUES (%s,%s,%s,%s,'built',%s,'guideline',now())", (synth, company, domain, html, tok))
+            cur.execute("INSERT INTO booked_crm (dest9,guideline_token,updated_by,updated_at) "
+                        "VALUES (%s,%s,'autopilot',now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "guideline_token=EXCLUDED.guideline_token, updated_at=now()", (d9, tok))
+            conn.commit()
+        return tok
+    except Exception:
+        return None
