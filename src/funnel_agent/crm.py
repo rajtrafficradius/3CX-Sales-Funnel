@@ -30,6 +30,7 @@ def ensure_crm_tables(pool) -> None:
             ("contact_name", "text"), ("contact_email", "text"), ("created_at", "timestamptz DEFAULT now()"),
             ("quote_token", "text"), ("comparison_token", "text"), ("quote_total", "integer"),
             ("guideline_token", "text"),
+            ("brand_intro_sent_at", "timestamptz"), ("brand_intro_sent_by", "text"),
         ):
             cur.execute(f"ALTER TABLE booked_crm ADD COLUMN IF NOT EXISTS {col} {typ}")
         cur.execute(
@@ -69,6 +70,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
        bc.note AS crm_note, bc.updated_by AS crm_by, bc.updated_at AS crm_at,
        bc.quote_token, bc.comparison_token, bc.quote_total, bc.guideline_token,
+       bc.brand_intro_sent_at, bc.brand_intro_sent_by,
        (SELECT count(*) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
@@ -286,3 +288,46 @@ def ensure_reveal_guide(pool, settings, dest9: str, company: str, domain: str,
         return tok
     except Exception:
         return None
+
+
+BRAND_INTRO_TOKEN = "de-group-reveal-aUGgB40aZsd9yQ"
+
+
+def send_brand_intro(pool, settings, dest9: str, by: str = "Lisa",
+                     base_url: str = "https://3cx-sales-funnel-production.up.railway.app") -> bool:
+    """Lisa shares the DE Group brand intro to a BOOKED prospect via SMS (post-booking), ONCE — and records
+    it so the closer never duplicates it. Skips if already shared or the prospect opted out. Guarded —
+    never raises. Returns True only if an SMS actually went out."""
+    import re as _re
+    from . import lisa as _l
+    d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+    if not d9:
+        return False
+    try:
+        ensure_crm_tables(pool)
+        chk = _l._fetch(pool, "SELECT (SELECT brand_intro_sent_at FROM booked_crm WHERE dest9=%s) sent, "
+                        "EXISTS(SELECT 1 FROM lisa_sms WHERE dest9=%s AND direction='inbound' "
+                        "  AND lower(body) ~ 'stop|unsubscribe|remove|do not|opt out|wrong number') optout", (d9, d9))
+        if chk and (chk[0].get("sent") or chk[0].get("optout")):
+            return False
+        info = _l._fetch(pool, "SELECT prospect_name FROM lisa_calls WHERE dest9=%s AND COALESCE(meeting_agreed,false) "
+                         "ORDER BY started_at DESC LIMIT 1", (d9,))
+        name = _l._first_name((info[0].get("prospect_name") if info else "") or "")
+        to = "+61" + d9
+        link = base_url.rstrip("/") + "/api/lisa4/site/public/" + BRAND_INTRO_TOKEN
+        body = (f"hey{(' ' + name.lower()) if name else ''}, ahead of our chat here's a quick intro to who we "
+                f"are at DE Group: {link} — looking forward to showing you what we've built. cheers, lisa")
+        frm = _l._e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
+        if not (_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, to, body, frm)):
+            return False
+        _l._log_sms(pool, "outbound", frm, to, body, d9)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO booked_crm (dest9,brand_intro_sent_at,brand_intro_sent_by,updated_at) "
+                        "VALUES (%s,now(),%s,now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "brand_intro_sent_at=now(), brand_intro_sent_by=EXCLUDED.brand_intro_sent_by, updated_at=now()", (d9, by))
+            cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
+                        (d9, "Brand intro shared via SMS", by))
+            conn.commit()
+        return True
+    except Exception:
+        return False

@@ -57,6 +57,7 @@
   .retry{margin-top:4px;background:var(--panel2);color:var(--accent);border:1px solid var(--line);border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer}
   .retry:hover{border-color:var(--accent)}
   .dim{color:var(--faint)}
+  .sent{display:inline-block;font-size:11px;font-weight:800;color:#0f7a45;background:#e7f6ee;border:1px solid #bfe6cf;border-radius:999px;padding:2px 8px;vertical-align:middle}
   .mono{font-variant-numeric:tabular-nums;color:var(--txt-dim)}
   /* pills / tags / badges */
   .lpill{display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;border:1px solid;white-space:nowrap}
@@ -517,7 +518,7 @@ function renderRecord(r){
     <div class="panel">
       <div class="panel-h">Documents <span class="rt">share manually</span></div>
       <div class="panel-b"><div class="kv">
-        <div class="row"><span class="k">Brand intro (DE Group)</span><span class="v"><a class="asset" href="/api/lisa4/site/public/de-group-reveal-aUGgB40aZsd9yQ" target="_blank" rel="noopener">Open ↗</a></span></div>
+        <div class="row"><span class="k">Brand intro (DE Group)</span><span class="v">${r.brand_intro_sent_at?`<span class="sent" title="Already shared — no need to resend">✓ Sent by ${esc(r.brand_intro_sent_by||'Lisa')}${(d=>d?' · '+d.toLocaleDateString('en-AU',{day:'numeric',month:'short'}):'')(toDate(r.brand_intro_sent_at))}</span> `:''}<a class="asset" href="/api/lisa4/site/public/de-group-reveal-aUGgB40aZsd9yQ" target="_blank" rel="noopener">Open ↗</a></span></div>
         <div class="row"><span class="k">Comparison — old vs new</span><span class="v">${r.comparison_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.comparison_token)}" target="_blank" rel="noopener">Open ↗</a>`:'<span class="dim">—</span>'}</span></div>
         <div class="row"><span class="k">Quotation</span><span class="v">${r.quote_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.quote_token)}" target="_blank" rel="noopener">Open ↗</a>${r.quote_total?` <span class="dim">· A$${(+r.quote_total).toLocaleString()}</span>`:''}`:'<span class="dim">not created</span>'}</span></div>
         <div class="row"><span class="k">Reveal playbook <span class="dim">(Alfred)</span></span><span class="v">${r.guideline_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.guideline_token)}" target="_blank" rel="noopener">Open ↗</a>`:'<span class="dim">—</span>'}</span></div>

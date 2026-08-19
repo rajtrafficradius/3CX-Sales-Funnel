@@ -1190,6 +1190,7 @@ def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 
                 _co = (_i[0]["company"] if _i else None); _dom = (_i[0]["domain"] if _i else None); _iss = (_i[0].get("issue") if _i else None)
                 _crm.ensure_quote_default(pool, r["dest9"], _co, _dom)
                 _crm.ensure_reveal_guide(pool, settings, r["dest9"], _co, _dom, "", _iss or "")
+                _crm.send_brand_intro(pool, settings, r["dest9"], by="Lisa")   # Lisa shares the brand intro (post-booking, once)
             except Exception as exc:
                 log.warning("lisa4_autopilot_docs_failed", error=str(exc)[:140])
     return {"built": built, "queued_seen": len(rows)}
