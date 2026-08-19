@@ -1335,6 +1335,11 @@ def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 
                     _qa.qa_check(pool, settings, r["dest9"])
                 except Exception:
                     pass
+                try:   # old-vs-new comparison (needs Chromium in the image; guarded / degrades gracefully)
+                    from . import comparison as _cmp
+                    _cmp.ensure_comparison(pool, settings, r["dest9"])
+                except Exception:
+                    pass
                 _crm.send_brand_intro(pool, settings, r["dest9"], by="Lisa")   # Lisa shares the brand intro (post-booking, once)
             except Exception as exc:
                 log.warning("lisa4_autopilot_docs_failed", error=str(exc)[:140])
