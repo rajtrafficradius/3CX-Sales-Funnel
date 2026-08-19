@@ -1101,6 +1101,17 @@ def run_lisa4_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     for e in due:
         if not e.get("dest_number"):
             continue
+        # WON-DEAL GUARD (Raj, 2026-08-19): never re-dial a prospect who already booked a meeting — retire
+        # any stale fresh_call/callback/retry event and skip. Defensive: on any error we fall through and
+        # dial as normal, so this can only ever SUPPRESS a re-pitch, never block a legitimate call.
+        try:
+            if _L1._has_booked_meeting(pool, e["d9"]):
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE calendar_events SET status='done' WHERE id=%s", (e["id"],))
+                    conn.commit()
+                continue
+        except Exception:
+            pass
         lh, _tz = _L1._prospect_local_hour(pool, e["d9"])
         if not (wstart <= lh < wend):
             continue
@@ -1296,6 +1307,10 @@ def schedule_lisa4_followup(pool: ConnectionPool, settings: Settings, *, dest9: 
     from . import lisa as _L1
     tz = settings.tz
     who = dyn.get("company_name") or dest_number
+    # NEVER schedule a follow-up on a call that already BOOKED a meeting — the callback would re-pitch a
+    # won deal the next day (Grandeur, 2026-08-19). Booked prospects get the reveal flow, not another dial.
+    if cad.get("meeting_agreed"):
+        return
     if outcome == "callback_requested" or cad.get("callback_when"):
         when = _L1._parse_when(cad.get("callback_when")) or (
             datetime.now(ZoneInfo(tz)) + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)

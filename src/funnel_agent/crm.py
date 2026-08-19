@@ -161,14 +161,17 @@ def crm_record(q, dest9: str, closers: list[str]) -> dict:
                   FROM lisa_calls WHERE dest9=%s ORDER BY started_at DESC LIMIT 50""", (d9,)):
         tl.append({"kind": "lisa_call", "at": c["started_at"], "body": (c["call_outcome"] or "call"),
                    "meta": {"booked": c["meeting_agreed"], "dur_s": c["dur"], "recording": c["recording_url"]}})
-    for c in q("""SELECT c.started_at, c.bde_name, c.answered, c.is_voicemail, round(COALESCE(c.talk_seconds,0)) talk, cl.call_outcome
+    for c in q("""SELECT c.started_at, c.bde_name, c.answered, c.is_voicemail, round(COALESCE(c.talk_seconds,0)) talk,
+                         c.call_id, c.recording_present, cl.call_outcome
                   FROM calls c LEFT JOIN classifications cl ON cl.call_id=c.call_id
                   WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%s AND c.bde_name = ANY(%s)
                   ORDER BY c.started_at DESC LIMIT 50""", (d9, closers or ["__none__"])):
         tl.append({"kind": "bde_call", "at": c["started_at"],
                    "body": f"{c['bde_name']}: {'answered' if c['answered'] else ('voicemail' if c['is_voicemail'] else 'no answer')}"
                            + (f" · {c['talk']}s" if c['answered'] else ""),
-                   "meta": {"outcome": c["call_outcome"]}})
+                   "meta": {"outcome": c["call_outcome"],
+                            # BDE (Alfred) recording — streamed by the existing /api/call/{id}/recording route
+                            "rec_call_id": c["call_id"] if (c.get("recording_present") and c.get("call_id")) else None}})
     for s in q("SELECT created_at, direction, left(body,300) body FROM lisa_sms WHERE dest9=%s ORDER BY created_at DESC LIMIT 30", (d9,)):
         tl.append({"kind": "sms", "at": s["created_at"], "body": f"SMS {s['direction']}: {s['body']}"})
     for a in q("SELECT created_at, kind, body, author FROM crm_activity WHERE dest9=%s ORDER BY created_at DESC LIMIT 100", (d9,)):

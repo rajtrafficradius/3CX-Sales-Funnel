@@ -427,6 +427,7 @@ function tItem(t){
   if(t.kind==='sms'){const dm=/^SMS (inbound|outbound):\s*/i.exec(t.body||'');if(dm){label='SMS '+(dm[1].toLowerCase()==='inbound'?'received':'sent');body=esc((t.body||'').slice(dm[0].length));}}
   if(t.kind==='lisa_call'){const badges=[];if(m.booked)badges.push('<span class="tag good">Meeting agreed</span>');if(m.dur_s)badges.push('<span class="tag">'+esc(fmtDur(m.dur_s))+'</span>');if(badges.length)extra+='<div class="tbadges">'+badges.join('')+'</div>';if(m.recording)extra+='<audio class="tplayer" controls preload="none" src="'+esc(m.recording)+'"></audio>';}
   if(t.kind==='bde_call'&&m.outcome)extra+='<div class="tbadges"><span class="tag">'+esc(m.outcome)+'</span></div>';
+  if(t.kind==='bde_call'&&m.rec_call_id)extra+='<audio class="tplayer" controls preload="none" src="/api/call/'+encodeURIComponent(m.rec_call_id)+'/recording"></audio>';
   const author=t.author?('<span class="tl-author">'+esc(t.author)+'</span>'):'';
   return `<li class="tl-item"><span class="tl-mark" style="--k:${cfg.c}">${cfg.ic}</span><div class="tl-body"><div class="tl-head"><span class="tl-kind" style="color:${cfg.c}">${esc(label)}</span>${author}<span class="tl-when">${esc(fdt(t.at))}</span></div>${body?`<div class="tl-text">${body}</div>`:''}${extra}</div></li>`;
 }
