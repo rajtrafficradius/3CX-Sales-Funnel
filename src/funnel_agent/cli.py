@@ -900,6 +900,13 @@ def refresh(
                 _nsr.run_noshow_recovery(ana, settings)
             except Exception as exc:
                 log.warning("noshow_recovery_failed", error=str(exc)[:160])
+            # Fireflies meeting-watch (self-throttled to ~10 min): capture Alfred's recorded calls, match to
+            # a prospect, auto-detect callbacks (e.g. 'call back in September') and surface them on the CRM.
+            try:
+                from . import fireflies as _ff
+                _ff.run_fireflies_watch(ana, settings, limit=4)   # small batch/pass so it can't stall the loop
+            except Exception as exc:
+                log.warning("fireflies_watch_failed", error=str(exc)[:160])
         # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
         # 90-day performance). The ONLY cold pool on the calendar; resolves once a number is dialled.
         fx = {"scheduled": 0}

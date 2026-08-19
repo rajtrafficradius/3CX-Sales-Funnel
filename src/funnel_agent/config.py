@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     aircall_api_key: str = ""
     aircall_base: str = "https://api.aircall.io/v1"
     aircall_page_size: int = 50  # Aircall's max per_page
+    # Fireflies — capture Alfred's recorded meetings/calls + auto-detect callbacks. Lowercase env var name.
+    fireflies_api: str = Field(default="", validation_alias="fireflies_api")
     aircall_agent_names: str = ""  # CSV of BDE/BDM names who dial via Aircall (Alfred, Ben, …)
     message_classify_days: int = 21  # only classify inbound SMS/chat within this recency window
     messages_enabled: bool = False   # gate the refresh loop's SMS capture+auto-booking (off until validated)
