@@ -5192,6 +5192,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.commit()
         return JSONResponse({"ok": True, "token": tok})
 
+    @app.get("/api/lisa/recovery")
+    def lisa_recovery_report(request: Request) -> JSONResponse:
+        """No-show recovery campaign report (Outbound Intelligence section)."""
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(403, "no access")
+        from .. import noshow_recovery as _nsr
+        return JSONResponse(_nsr.report(pool))
+
+    @app.get("/api/lisa/recovery/preview")
+    def lisa_recovery_preview(request: Request) -> JSONResponse:
+        """Dry-run: exactly who would be messaged + the message text. Sends nothing."""
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(403, "no access")
+        from .. import noshow_recovery as _nsr
+        return JSONResponse(_nsr.preview(pool, limit=100))
+
+    @app.post("/api/lisa/recovery/enable")
+    async def lisa_recovery_enable(request: Request) -> JSONResponse:
+        """Turn the no-show recovery autopilot on/off (admin). Off by default."""
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        on = "1" if bool(body.get("enabled")) else "0"
+        who = (u.get("email") or "?")[:80]
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("CREATE TABLE IF NOT EXISTS crm_config (k text PRIMARY KEY, v text)")
+            cur.execute("INSERT INTO crm_config (k,v) VALUES ('noshow_recovery_enabled',%s) "
+                        "ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v", (on,))
+            conn.commit()
+        log.info("noshow_recovery_toggle", enabled=on, by=who)
+        return JSONResponse({"ok": True, "enabled": on == "1"})
+
+    @app.post("/api/lisa/recovery/send-one")
+    async def lisa_recovery_send_one(request: Request) -> JSONResponse:
+        """Manually send the recovery to ONE prospect (admin), regardless of the autopilot toggle."""
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(403, "no access")
+        import re as _re
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        from .. import noshow_recovery as _nsr
+        ok = _nsr.send_recovery(pool, settings, d9, by=(u.get("email") or "admin")[:40])
+        return JSONResponse({"ok": bool(ok)})
+
     @app.get("/sw.js")
     def crm_service_worker():
         """Service worker at root scope for background web-push."""

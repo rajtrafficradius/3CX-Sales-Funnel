@@ -893,6 +893,13 @@ def refresh(
                 _lisa.sweep_unanswered_sms(ana, settings)
             except Exception as exc:
                 log.warning("lisa_sms_sweep_failed", error=str(exc)[:160])
+            # No-show RECOVERY autopilot (GATED — does nothing unless crm_config noshow_recovery_enabled is on):
+            # re-engage prospects who agreed a meeting but never showed, with the finished site + brand intro.
+            try:
+                from . import noshow_recovery as _nsr
+                _nsr.run_noshow_recovery(ana, settings)
+            except Exception as exc:
+                log.warning("noshow_recovery_failed", error=str(exc)[:160])
         # Fresh Google-Ads calling calendar — top up each BDE's curated fresh worklist (value ×
         # 90-day performance). The ONLY cold pool on the calendar; resolves once a number is dialled.
         fx = {"scheduled": 0}

@@ -663,6 +663,50 @@ pull();setInterval(pull,60000);})();
     </div>
   </div>
 
+  <!-- NO-SHOW RECOVERY -->
+  <div id="nsrSec" style="margin-top:16px;background:#171233;border:1px solid #2a2450;border-radius:16px;padding:18px 20px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:15px;font-weight:800;color:#f3f0ff;letter-spacing:-.01em">No-show Recovery</div>
+        <div style="font-size:12px;color:#a99fd6;margin-top:2px">Prospects who agreed a meeting but didn't show — auto-sent the finished website + brand intro, then re-booked by the human-like SMS responder.</div>
+      </div>
+      <button id="nsrToggle" onclick="nsrEnable()" style="cursor:pointer;border:1px solid #3a3560;background:#221b45;color:#cfc7f5;border-radius:9px;padding:8px 14px;font:inherit;font-size:12px;font-weight:700">Autopilot: –</button>
+      <button onclick="nsrPreview()" style="cursor:pointer;border:1px solid #3a3560;background:#221b45;color:#cfc7f5;border-radius:9px;padding:8px 14px;font:inherit;font-size:12px;font-weight:700">Preview messages</button>
+    </div>
+    <div id="nsrStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"></div>
+    <div id="nsrList" style="margin-top:12px"></div>
+    <div id="nsrPrev" style="margin-top:12px"></div>
+  </div>
+  <script>
+  function nsrChip(v,l,c){return '<div style="flex:1;min-width:120px;background:#1e1840;border:1px solid #2f2858;border-radius:11px;padding:12px 14px"><div style="font-size:22px;font-weight:850;color:'+(c||'#cbb8ff')+'">'+v+'</div><div style="font-size:11px;color:#a99fd6;margin-top:2px">'+l+'</div></div>';}
+  function nsrEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function loadNsr(){fetch('/api/lisa/recovery').then(function(r){return r.json()}).then(function(d){
+    if(!d)return;
+    var t=document.getElementById('nsrToggle');
+    t.textContent='Autopilot: '+(d.enabled?'ON':'OFF');
+    t.style.background=d.enabled?'#183a2a':'#221b45';t.style.color=d.enabled?'#7ee6a8':'#cfc7f5';t.style.borderColor=d.enabled?'#2f6b4b':'#3a3560';
+    document.getElementById('nsrStats').innerHTML=
+      nsrChip((d.pending==null?'–':d.pending),'Awaiting send','#ffd27a')+
+      nsrChip(d.sent||0,'Sent')+nsrChip(d.replied||0,'Replied','#7ee6a8')+nsrChip(d.rebooked||0,'Re-booked','#7ee6a8');
+    var rows=(d.recent||[]);
+    document.getElementById('nsrList').innerHTML = rows.length ? (
+      '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+      '<thead><tr style="color:#8a80b8;text-align:left"><th style="padding:6px 8px;font-weight:700">Company</th><th style="padding:6px 8px;font-weight:700">Sent</th><th style="padding:6px 8px;font-weight:700">Status</th></tr></thead><tbody>'+
+      rows.map(function(x){return '<tr style="border-top:1px solid #262048"><td style="padding:6px 8px"><a href="/lisa-crm/'+nsrEsc(x.dest9)+'" style="color:#cbb8ff">'+nsrEsc(x.company||x.dest9)+'</a></td><td style="padding:6px 8px;color:#a99fd6">'+nsrEsc(x.sent_at||'')+'</td><td style="padding:6px 8px">'+(x.rebooked?'<span style="color:#7ee6a8">Re-booked</span>':x.replied?'<span style="color:#7ee6a8">Replied</span>':'<span style="color:#a99fd6">Sent</span>')+'</td></tr>';}).join('')+
+      '</tbody></table></div>') : '<div style="font-size:12px;color:#8a80b8">Nothing sent yet.</div>';
+  }).catch(function(){});}
+  function nsrEnable(){var on=document.getElementById('nsrToggle').textContent.indexOf('ON')<0;
+    if(on&&!confirm('Turn ON the no-show recovery autopilot? It will start texting eligible no-show prospects their website + brand intro.'))return;
+    fetch('/api/lisa/recovery/enable',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:on})}).then(function(){loadNsr();});}
+  function nsrPreview(){var el=document.getElementById('nsrPrev');el.innerHTML='<div style="font-size:12px;color:#8a80b8">Loading preview…</div>';
+    fetch('/api/lisa/recovery/preview').then(function(r){return r.json()}).then(function(d){
+      var t=(d.targets||[]);
+      el.innerHTML='<div style="font-size:12px;color:#a99fd6;margin-bottom:6px">'+t.length+' prospect(s) would be messaged. Example:</div>'+
+        (t.length?'<div style="background:#0f0c22;border:1px solid #2a2450;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#d7d0f5;white-space:pre-wrap">'+nsrEsc(t[0].message)+'</div>':'');
+    }).catch(function(){el.innerHTML='<div style="font-size:12px;color:#e07">Preview failed.</div>';});}
+  loadNsr();setInterval(loadNsr,60000);
+  </script>
+
   <div id="recos"></div>
 
   <div class="sec-head clps closed" id="flowHead" onclick="this.classList.toggle('closed');$('flowWrap').style.display=this.classList.contains('closed')?'none':''"><span class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>How the calling system runs<span class="chev">▾</span></span></div>

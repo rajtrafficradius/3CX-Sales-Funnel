@@ -1969,6 +1969,13 @@ def reply_to_inbound_sms(pool: ConnectionPool, settings: Settings, *, dest9: str
     ensure_tables(pool)
     d9 = _d9(dest9)
     body = (inbound_text or "").strip()
+    # If this prospect was sent a no-show recovery text, record that they replied (campaign reporting). The
+    # normal responder below then handles the reply human-like and steers to re-booking. Guarded.
+    try:
+        from . import noshow_recovery as _nsr
+        _nsr.mark_reply(pool, d9)
+    except Exception:
+        pass
     line_tag = _sms_line(settings, from_line)                 # "L1" | "L4" | "L5"
     is_l4 = line_tag == "L4"
     is_l5 = line_tag == "L5"
