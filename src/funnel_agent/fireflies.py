@@ -74,14 +74,22 @@ def _match_prospect(pool, dest9s: list[str]):
     from . import lisa as _l
     for d9 in dest9s:
         r = _l._fetch(pool,
-            "SELECT %s AS d9, "
+            "SELECT "
             "  (SELECT company_name FROM lisa_calls WHERE dest9=%s AND company_name IS NOT NULL ORDER BY started_at DESC LIMIT 1) c1, "
             "  (SELECT company FROM lisa4_pool WHERE dest9=%s LIMIT 1) c2, "
-            "  EXISTS(SELECT 1 FROM lisa_calls WHERE dest9=%s) has_call, "
-            "  EXISTS(SELECT 1 FROM booked_crm WHERE dest9=%s) has_booking", (d9, d9, d9, d9, d9))
-        if r and (r[0].get("has_call") or r[0].get("has_booking")):
-            company = r[0].get("c1") or r[0].get("c2")
-            by = "booking" if r[0].get("has_booking") else "lisa_call"
+            "  (SELECT company_name FROM companies WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),9)=%s ORDER BY (source='gmaps') DESC LIMIT 1) c3, "
+            "  EXISTS(SELECT 1 FROM lisa_calls WHERE dest9=%s) has_lisa, "
+            "  EXISTS(SELECT 1 FROM booked_crm WHERE dest9=%s) has_booking, "
+            "  EXISTS(SELECT 1 FROM calls WHERE right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s) has_call, "
+            "  EXISTS(SELECT 1 FROM companies WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),9)=%s) has_co",
+            (d9, d9, d9, d9, d9, d9, d9))
+        if not r:
+            continue
+        x = r[0]
+        if x.get("has_booking") or x.get("has_lisa") or x.get("has_call") or x.get("has_co"):
+            company = x.get("c1") or x.get("c2") or x.get("c3")
+            by = ("booking" if x.get("has_booking") else "lisa_call" if x.get("has_lisa")
+                  else "aircall" if x.get("has_call") else "company")
             return d9, company, by
     return None, None, None
 

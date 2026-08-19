@@ -783,12 +783,17 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
             html = "<!doctype html><html><body>" + html + "</body></html>"
         # SAVE with retry on a fresh connection — generation runs for many minutes and the pooled
         # connection can go stale meanwhile; losing a finished site to a dead socket is unacceptable.
-        import time as _time
+        # Assign a public share_token on build (idempotent) so the finished site has a shareable link the
+        # closer / autopilot can actually send — previously reveal builds were left tokenless.
+        import time as _time, secrets as _secrets, re as _re2
+        _slug = _re2.sub(r"[^a-z0-9]+", "-", (p.get("company") or "site").lower()).strip("-")[:24] or "site"
+        _tok = f"{_slug}-reveal-" + _secrets.token_urlsafe(8)
         for _attempt in range(3):
             try:
                 with pool.connection() as conn, conn.cursor() as cur:
-                    cur.execute("UPDATE lisa4_sites SET html=%s, status='built', built_at=now() WHERE id=%s",
-                                (html, site_id))
+                    cur.execute("UPDATE lisa4_sites SET html=%s, status='built', built_at=now(), "
+                                "share_token=COALESCE(share_token,%s), kind=COALESCE(kind,'reveal') WHERE id=%s",
+                                (html, _tok, site_id))
                     conn.commit()
                 break
             except Exception as _exc:

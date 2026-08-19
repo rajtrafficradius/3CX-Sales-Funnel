@@ -67,9 +67,12 @@
   .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:7px;border:1px solid var(--line);background:var(--chip);color:var(--txt-dim)}
   .tag.good{color:var(--good);background:var(--good-soft);border-color:rgba(74,222,128,.3)}
   .tag.warn{color:var(--warn);background:var(--warn-soft);border-color:rgba(251,191,36,.3)}
-  .tag.build{color:#4aa3ff;background:rgba(74,163,255,.12);border-color:rgba(74,163,255,.35);animation:tagpulse 1.4s ease-in-out infinite}
+  .tag.build{color:#4aa3ff;background:rgba(74,163,255,.12);border-color:rgba(74,163,255,.35)}
   .tag.bad{color:#f87171;background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.32)}
   @keyframes tagpulse{0%,100%{opacity:1}50%{opacity:.5}}
+  .pbar{height:7px;border-radius:5px;background:var(--chip);margin-top:7px;overflow:hidden;min-width:150px}
+  .pbar span{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#1f5fd0,#17a8e6);background-size:200% 100%;transition:width .6s ease;animation:pbarflow 1.6s linear infinite}
+  @keyframes pbarflow{0%{background-position:200% 0}100%{background-position:-200% 0}}
   .udot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);box-shadow:0 0 0 3px rgba(248,113,113,.18)}
   /* ---- hero ---- */
   .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:22px;padding:20px 22px;margin-bottom:14px;box-shadow:var(--elev2)}
@@ -316,6 +319,8 @@ async function api(u){const r=await fetch(u);if(!r.ok)throw new Error('HTTP '+r.
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
 
 function toDate(s){if(!s)return null;let str=String(s);if(!/[zZ]|[+-]\d\d:?\d\d$/.test(str))str+='Z';const d=new Date(str.replace(' ','T'));return isNaN(d)?null:d;}
+// live build % — elapsed since building started vs a typical ~11min Opus build, capped so it never shows 100% until truly built
+function buildPct(r){var ba=toDate(r.site_building_at);if(!ba)return 10;var el=(Date.now()-ba.getTime())/1000;return Math.min(95,Math.max(5,Math.round(el/660*100)));}
 function ymdNum(d){const p=new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);const o={};p.forEach(x=>o[x.type]=x.value);return Date.UTC(+o.year,+o.month-1,+o.day);}
 function frel(s){const d=toDate(s);if(!d)return '';
   const diff=Math.round((ymdNum(d)-ymdNum(new Date()))/86400000);
@@ -522,11 +527,11 @@ function renderRecord(r){
       <div class="panel-h">Development status <span class="rt" id="devRt">auto-updates</span></div>
       <div class="panel-b"><div class="kv">
         <div class="row"><span class="k">Website build</span><span class="v">${(function(){var s=r.site_status;
-          if(s==='built'&&r.share_token)return '<span class="tag good">● Live</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.share_token)+'" target="_blank" rel="noopener">Open ↗</a>';
-          if(s==='built')return '<span class="tag good">● Built</span>';
-          if(s==='building')return '<span class="tag build">● Building now…</span>';
-          if(s==='queued')return '<span class="tag">● Queued to build</span>';
-          if(s==='error')return '<span class="tag bad">● Build failed — will retry</span>';
+          if(s==='built'&&r.share_token)return '<span class="tag good">● Live · 100%</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.share_token)+'" target="_blank" rel="noopener">Open ↗</a>';
+          if(s==='built')return '<span class="tag good">● Built · 100%</span>';
+          if(s==='building'){var p=buildPct(r);return '<span class="tag build">● Building… '+p+'%</span><div class="pbar"><span style="width:'+p+'%"></span></div>';}
+          if(s==='queued')return '<span class="tag build">● Queued · 0%</span><div class="pbar"><span style="width:4%"></span></div>';
+          if(s==='error')return '<span class="tag bad">● Build failed — retrying</span>';
           return '<span class="dim">Not started</span>';})()}</span></div>
         <div class="row"><span class="k">Growth audit</span><span class="v">${r.audit_token?('<span class="tag good">● Ready</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.audit_token)+'" target="_blank" rel="noopener">Open ↗</a>'):'<span class="dim">Not generated yet</span>'}</span></div>
       </div></div>

@@ -67,7 +67,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        (SELECT count(*) FROM lisa_calls lc WHERE lc.dest9=b.dest9) AS total_calls,
        (SELECT ce.start_at FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
           AND ce.type IN ('reveal','meeting') ORDER BY (ce.status='pending') DESC, ce.start_at DESC LIMIT 1) AS meeting_at,
-       st.status AS site_status, st.share_token,
+       st.status AS site_status, st.share_token, st.building_at AS site_building_at, st.built_at AS site_built_at,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
        bc.note AS crm_note, bc.updated_by AS crm_by, bc.updated_at AS crm_at,
        bc.quote_token, bc.comparison_token, bc.quote_total, bc.guideline_token,
@@ -85,7 +85,7 @@ FROM booked b
 LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
 LEFT JOIN lisa_briefs lb ON lb.dest9=b.dest9
 LEFT JOIN classifications cl ON cl.call_id=b.call_id
-LEFT JOIN LATERAL (SELECT status, share_token FROM lisa4_sites s WHERE s.dest9=b.dest9 ORDER BY id DESC LIMIT 1) st ON true
+LEFT JOIN LATERAL (SELECT status, share_token, building_at, built_at FROM lisa4_sites s WHERE s.dest9=b.dest9 ORDER BY id DESC LIMIT 1) st ON true
 LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
 ORDER BY b.booked_at DESC
 """
