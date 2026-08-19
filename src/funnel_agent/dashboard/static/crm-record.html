@@ -517,6 +517,7 @@ function renderRecord(r){
     <div class="panel">
       <div class="panel-h">Documents <span class="rt">share manually</span></div>
       <div class="panel-b"><div class="kv">
+        <div class="row"><span class="k">Brand intro (DE Group)</span><span class="v"><a class="asset" href="/api/lisa4/site/public/de-group-reveal-aUGgB40aZsd9yQ" target="_blank" rel="noopener">Open ↗</a></span></div>
         <div class="row"><span class="k">Comparison — old vs new</span><span class="v">${r.comparison_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.comparison_token)}" target="_blank" rel="noopener">Open ↗</a>`:'<span class="dim">—</span>'}</span></div>
         <div class="row"><span class="k">Quotation</span><span class="v">${r.quote_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.quote_token)}" target="_blank" rel="noopener">Open ↗</a>${r.quote_total?` <span class="dim">· A$${(+r.quote_total).toLocaleString()}</span>`:''}`:'<span class="dim">not created</span>'}</span></div>
       </div>
