@@ -5264,6 +5264,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.commit()
         return JSONResponse({"ok": True, "token": tok})
 
+    @app.post("/api/lisa/crm/retry-build")
+    async def lisa_crm_retry_build(request: Request) -> JSONResponse:
+        """Re-queue a failed website build so it tries again (e.g. after a transient error)."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        import re as _re
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE lisa4_sites SET status='queued', build_attempts=0, error=NULL "
+                        "WHERE dest9=%s AND status='error'", (d9,))
+            n = cur.rowcount
+            conn.commit()
+        return JSONResponse({"ok": True, "requeued": n})
+
     @app.get("/s/{code}")
     def shortlink_redirect(code: str):
         """Public short-link redirect for SMS (keeps outbound links clean). 302 -> the real public URL."""

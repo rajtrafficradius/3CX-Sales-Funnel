@@ -531,7 +531,7 @@ function renderRecord(r){
           if(s==='built')return '<span class="tag good">● Built · 100%</span>';
           if(s==='building'){var p=buildPct(r);return '<span class="tag build">● Building… '+p+'%</span><div class="pbar"><span style="width:'+p+'%"></span></div>';}
           if(s==='queued')return '<span class="tag build">● Queued · 0%</span><div class="pbar"><span style="width:4%"></span></div>';
-          if(s==='error')return '<span class="tag bad">● Build failed — retrying</span>';
+          if(s==='error')return '<span class="tag bad">● Build failed</span> <button class="btn ghost" type="button" id="rbBtn" style="width:auto;padding:5px 11px;font-size:12px">Retry build</button>';
           return '<span class="dim">Not started</span>';})()}</span></div>
         <div class="row"><span class="k">Growth audit</span><span class="v">${r.audit_token?('<span class="tag good">● Ready</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.audit_token)+'" target="_blank" rel="noopener">Open ↗</a>'):'<span class="dim">Not generated yet</span>'}</span></div>
       </div></div>
@@ -650,6 +650,10 @@ function wire(){
       if(r&&r.token){toast('Growth audit generated');await loadRecord();}
       else{toast(r&&r.reason?r.reason:'No SEO data for this domain yet',true);gaBtn.disabled=false;gaBtn.textContent='Generate';}}
     catch(e){toast('Failed: '+e.message,true);gaBtn.disabled=false;gaBtn.textContent='Generate';}};
+  const rbBtn=document.getElementById('rbBtn');
+  if(rbBtn)rbBtn.onclick=async()=>{rbBtn.disabled=true;rbBtn.textContent='Re-queuing…';
+    try{await post('/api/lisa/crm/retry-build',{dest9:D9});toast('Build re-queued');await loadRecord();}
+    catch(e){toast('Failed: '+e.message,true);rbBtn.disabled=false;rbBtn.textContent='Retry build';}};
   const cmpBtn=document.getElementById('cmpBtn');
   if(cmpBtn)cmpBtn.onclick=async()=>{cmpBtn.disabled=true;cmpBtn.textContent='Capturing…';
     try{const r=await post('/api/lisa/crm/comparison',{dest9:D9});
