@@ -207,6 +207,19 @@ def crm_update(pool, dest9: str, fields: dict, who: str) -> None:
         cur.execute("INSERT INTO crm_activity (dest9, kind, body, author, meta) VALUES (%s,'system',%s,%s,%s)",
                     (d9, "updated " + ", ".join(sets.keys()), who[:80], json.dumps({k: str(v)[:200] for k, v in sets.items()})))
         conn.commit()
+    # CONFIRMED TRIGGER (Vysakh, 2026-08-19): the closer marking a booking 'confirmed' kicks off the
+    # website build on autopilot (idempotent — no-op if a site is already queued/building/built). From the
+    # confirm-gate cutover this is what STARTS a build; before it, builds run regardless.
+    if str(sets.get("stage", "")).strip().lower() == "confirmed":
+        try:
+            from . import lisa4 as _l4
+            if _l4.enqueue_lisa4_build(pool, d9):
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                                (d9, "Confirmed → website build queued (autopilot)", who[:80]))
+                    conn.commit()
+        except Exception:
+            pass
 
 
 def crm_add_note(pool, dest9: str, body: str, who: str) -> None:

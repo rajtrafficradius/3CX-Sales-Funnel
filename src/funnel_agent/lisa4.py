@@ -342,6 +342,7 @@ def ensure_lisa4_tables(pool: ConnectionPool) -> None:
             "  error text, created_at timestamptz DEFAULT now(), built_at timestamptz)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa4_sites_dest9 ON lisa4_sites(dest9)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_lisa4_sites_status ON lisa4_sites(status)")
+        cur.execute("ALTER TABLE lisa4_sites ADD COLUMN IF NOT EXISTS build_attempts integer DEFAULT 0")
         conn.commit()
 
 
@@ -699,16 +700,28 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
             pass
     user = (context + "\n\nBuild this business a brand-new website. Infer their industry + services from the "
             "name. Make it genuinely impressive so they want to publish it.")
-    # mark building
+    dmodel = _designer_model(pool, settings)
+    # mark building — REUSE the prospect's existing active row. The partial unique index
+    # idx_lisa4_sites_active allows only ONE active (queued/building/built) row per dest9, so a blind INSERT
+    # collides with the 'queued' row the booking flow already created — and that INSERT sits OUTSIDE the try
+    # below, so the violation aborts the WHOLE build pass every cycle (head-of-line deadlock). Transition the
+    # existing queued/building row in place; only if none exists (rebuild over an old 'built') insert fresh.
     with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status, model) "
-                    "VALUES (%s,%s,%s,%s,%s,'building',%s) RETURNING id",
-                    (dest9, p.get("domain"), p.get("company"), p.get("bucket"), p.get("issue"),
-                     getattr(settings, "lisa4_designer_model", "")))
-        site_id = cur.fetchone()["id"]
+        cur.execute("SELECT id FROM lisa4_sites WHERE dest9=%s AND status IN ('queued','building') "
+                    "ORDER BY id DESC LIMIT 1", (dest9,))
+        ex = cur.fetchone()
+        if ex:
+            site_id = ex["id"]
+            cur.execute("UPDATE lisa4_sites SET status='building', model=%s, error=NULL, "
+                        "build_attempts=COALESCE(build_attempts,0)+1 WHERE id=%s", (dmodel, site_id))
+        else:
+            cur.execute("UPDATE lisa4_sites SET status='superseded' WHERE dest9=%s AND status='built'", (dest9,))
+            cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status, model, build_attempts) "
+                        "VALUES (%s,%s,%s,%s,%s,'building',%s,1) RETURNING id",
+                        (dest9, p.get("domain"), p.get("company"), p.get("bucket"), p.get("issue"), dmodel))
+            site_id = cur.fetchone()["id"]
         conn.commit()
     try:
-        dmodel = _designer_model(pool, settings)
         html = _strip_md_fences(_claude(settings, _DESIGNER_SYSTEM, user, model=dmodel))
         # CONTINUATION: a full multi-page site can exceed one completion — resume until the file is
         # genuinely complete (</html> present AND the <script> exists so nav/pages actually work).
@@ -747,8 +760,13 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
         log.info("lisa4_site_built", dest9=dest9, company=p.get("company"), bytes=len(html))
         return {"status": "built", "id": site_id, "bytes": len(html)}
     except Exception as exc:
+        # Retry a transient failure (an Opus stream timeout is common) up to 3 attempts before retiring the
+        # row to 'error'. build_attempts was already incremented at mark-building, so this leaves the row in
+        # 'queued' (retry) until the 3rd attempt, then 'error' — either way it never stays stuck blocking the
+        # queue. NOTE: whatever the outcome, the row leaves the pre-generation state, so no head-of-line stall.
         with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE lisa4_sites SET status='error', error=%s WHERE id=%s", (str(exc)[:300], site_id))
+            cur.execute("UPDATE lisa4_sites SET status=CASE WHEN COALESCE(build_attempts,0) >= 3 THEN 'error' "
+                        "ELSE 'queued' END, error=%s WHERE id=%s", (str(exc)[:300], site_id))
             conn.commit()
         log.warning("lisa4_site_build_failed", dest9=dest9, error=str(exc)[:160])
         return {"error": str(exc)[:200], "id": site_id}
@@ -1174,17 +1192,85 @@ def run_lisa4_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     return {"dialed": 0, "candidates": len(due)}
 
 
+# Confirm-gate cutover (Vysakh, 2026-08-19): everything queued BEFORE this builds automatically
+# (grandfathered — today's bookings all build so Alfred can be trained on the trigger first); anything queued
+# ON/AFTER it builds ONLY when the booking's CRM stage is 'confirmed'. Stored in crm_config so the date can be
+# nudged without a redeploy if the training slips.
+_CONFIRM_GATE_DEFAULT = "2026-08-20 00:00:00+10:00"   # start of Wed 20 Aug, AEST
+
+
+def _confirm_gate_from(pool: ConnectionPool) -> str:
+    try:
+        r = _fetch(pool, "SELECT v FROM crm_config WHERE k='lisa4_confirm_gate_from'")
+        if r and r[0].get("v"):
+            return r[0]["v"]
+    except Exception:
+        pass
+    return _CONFIRM_GATE_DEFAULT
+
+
+def enqueue_lisa4_build(pool: ConnectionPool, dest9: str) -> bool:
+    """Ensure a queued build row exists for a booked prospect (idempotent — skips if one is already
+    queued/building/built). Called by the CRM 'confirmed' trigger. Only enqueues Lisa-4 WEBSITE prospects
+    (those present in lisa4_pool); audit prospects are handled by the audit path. Returns True if newly queued."""
+    import re as _re
+    d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+    if not d9:
+        return False
+    try:
+        ensure_lisa4_tables(pool)
+        row = _fetch(pool, "SELECT company, domain, bucket, issue FROM lisa4_pool WHERE dest9=%s", (d9,))
+        if not row:
+            return False   # not a Lisa-4 website prospect — nothing to build here
+        if _fetch(pool, "SELECT 1 FROM lisa4_sites WHERE dest9=%s AND status IN ('queued','building','built') LIMIT 1", (d9,)):
+            return False
+        p = dict(row[0])
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status) "
+                        "VALUES (%s,%s,%s,%s,%s,'queued')",
+                        (d9, p.get("domain"), p.get("company"), p.get("bucket"), p.get("issue")))
+            conn.commit()
+        log.info("lisa4_build_enqueued_by_confirm", dest9=d9, company=p.get("company"))
+        return True
+    except Exception as exc:
+        log.warning("lisa4_enqueue_failed", error=str(exc)[:140])
+        return False
+
+
 def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 2) -> dict:
     """Build any queued Lisa-4 sites (booked reveals) with the AI designer. A few per pass so a slow Claude
-    call never stalls the loop."""
+    call never stalls the loop. Each build is ISOLATED (a poison row can't abort the pass), rows that have
+    failed 3+ times are skipped, and the confirm-gate decides eligibility: queued-before-cutover builds
+    freely; queued-after only when the booking's CRM stage is 'confirmed'."""
     ensure_lisa4_tables(pool)
-    rows = _fetch(pool, "SELECT dest9 FROM lisa4_sites WHERE status='queued' ORDER BY created_at LIMIT %s", (limit,))
+    gate = _confirm_gate_from(pool)
+    rows = _fetch(pool,
+        "SELECT s.dest9 FROM lisa4_sites s "
+        "WHERE s.status='queued' AND COALESCE(s.build_attempts,0) < 3 "
+        "  AND ( s.created_at < %s::timestamptz "
+        "        OR EXISTS (SELECT 1 FROM booked_crm b WHERE b.dest9=s.dest9 "
+        "                   AND lower(COALESCE(b.stage,''))='confirmed') ) "
+        "ORDER BY s.created_at LIMIT %s", (gate, limit))
     built = 0
     for r in rows:
-        res = build_website(pool, settings, r["dest9"])
+        try:
+            res = build_website(pool, settings, r["dest9"])
+        except Exception as exc:
+            # Belt-and-braces: even a pre-generation failure (DB hiccup) must advance the row so it can never
+            # block the queue — increment attempts and retire to 'error' after the 3rd.
+            log.warning("lisa4_build_exception", dest9=r.get("dest9"), error=str(exc)[:160])
+            try:
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE lisa4_sites SET build_attempts=COALESCE(build_attempts,0)+1, "
+                                "status=CASE WHEN COALESCE(build_attempts,0)+1 >= 3 THEN 'error' ELSE 'queued' END "
+                                "WHERE dest9=%s AND status IN ('queued','building')", (r["dest9"],))
+                    conn.commit()
+            except Exception:
+                pass
+            continue
         if res.get("status") == "built":
             built += 1
-            try:   # AUTOPILOT: default quote + Alfred's reveal playbook (once each), surfaced on the booking page
+            try:   # AUTOPILOT: default quote + Alfred's reveal playbook + Lisa brand intro (once each)
                 from . import crm as _crm
                 _i = _fetch(pool, "SELECT company, domain, issue FROM lisa4_pool WHERE dest9=%s", (r["dest9"],))
                 _co = (_i[0]["company"] if _i else None); _dom = (_i[0]["domain"] if _i else None); _iss = (_i[0].get("issue") if _i else None)
