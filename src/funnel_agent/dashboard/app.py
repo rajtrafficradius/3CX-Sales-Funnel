@@ -5242,6 +5242,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ok = _nsr.send_recovery(pool, settings, d9, by=(u.get("email") or "admin")[:40])
         return JSONResponse({"ok": bool(ok)})
 
+    @app.post("/api/lisa/crm/comparison")
+    async def lisa_crm_comparison(request: Request) -> JSONResponse:
+        """Generate the old-vs-new website comparison for a booked prospect (headless-Chromium screenshots of
+        their current site + our new one). Returns {token} or {ok:false,reason}. Never auto-sent."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        import re as _re
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        from .. import comparison as _cmp
+        tok = _cmp.ensure_comparison(pool, settings, d9, force=True)
+        if not tok:
+            return JSONResponse({"ok": False, "reason": "Couldn't generate — the site isn't built yet, or screenshots weren't available."})
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                        (d9, "Old-vs-new comparison generated", who))
+            conn.commit()
+        return JSONResponse({"ok": True, "token": tok})
+
     @app.get("/s/{code}")
     def shortlink_redirect(code: str):
         """Public short-link redirect for SMS (keeps outbound links clean). 302 -> the real public URL."""
