@@ -6,7 +6,7 @@ trmatrix.com.au/s/xxxxxx — genuinely tidy. Idempotent: the same target reuses 
 """
 import secrets
 
-_BASE = "https://3cx-sales-funnel-production.up.railway.app"
+_BASE = "https://www.trmatrix.com.au"
 _ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"   # no ambiguous 0/o/1/l/i
 
 

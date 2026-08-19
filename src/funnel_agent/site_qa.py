@@ -14,7 +14,7 @@ The result is CACHED on lisa4_sites (qa_passed / qa_notes / qa_at) so it runs on
 import re as _re
 import urllib.request
 
-_BASE = "https://3cx-sales-funnel-production.up.railway.app"
+_BASE = "https://www.trmatrix.com.au"
 # Scaffolding markers only. Deliberately NOT "placeholder" (a valid <input placeholder="…"> attribute) nor
 # generic words — those caused false failures on real sites.
 _PLACEHOLDERS = ("lorem ipsum", "[company name", "[company]", "your business here", "your company name",

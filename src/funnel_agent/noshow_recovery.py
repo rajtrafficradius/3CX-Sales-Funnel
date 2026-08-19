@@ -42,7 +42,7 @@ def enabled(pool) -> bool:
 
 
 BRAND_INTRO_TOKEN = "de-group-reveal-aUGgB40aZsd9yQ"
-_BASE = "https://3cx-sales-funnel-production.up.railway.app"
+_BASE = "https://www.trmatrix.com.au"
 
 
 def _targets(pool, limit: int = 50):

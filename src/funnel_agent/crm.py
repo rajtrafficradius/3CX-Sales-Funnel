@@ -356,7 +356,7 @@ BRAND_INTRO_TOKEN = "de-group-reveal-aUGgB40aZsd9yQ"
 
 
 def send_brand_intro(pool, settings, dest9: str, by: str = "Lisa",
-                     base_url: str = "https://3cx-sales-funnel-production.up.railway.app") -> bool:
+                     base_url: str = "https://www.trmatrix.com.au") -> bool:
     """Lisa shares the DE Group brand intro to a BOOKED prospect via SMS (post-booking), ONCE — and records
     it so the closer never duplicates it. Skips if already shared or the prospect opted out. Guarded —
     never raises. Returns True only if an SMS actually went out."""

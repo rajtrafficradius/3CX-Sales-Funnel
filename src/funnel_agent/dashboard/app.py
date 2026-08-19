@@ -513,6 +513,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
         path = request.url.path
+        # Canonical domain: the old *.up.railway.app address 301-redirects to trmatrix.com.au so there's ONE
+        # public URL. Health checks + ACME are EXEMPT — Railway probes /healthz (and renews certs via
+        # /.well-known) and expects 200; redirecting those would fail the deployment.
+        _host = (request.headers.get("host") or "").split(":")[0].lower()
+        if (_host == "3cx-sales-funnel-production.up.railway.app"
+                and path not in ("/healthz", "/readyz")
+                and not path.startswith("/.well-known/")):
+            _q = ("?" + request.url.query) if request.url.query else ""
+            return RedirectResponse("https://www.trmatrix.com.au" + path + _q, status_code=301)
         user = None
         # Kiosk: an office TV may pass ?token=<KIOSK_TOKEN> once (then a cookie) for
         # a read-only ALL view without a personal login.

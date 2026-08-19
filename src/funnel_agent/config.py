@@ -143,7 +143,7 @@ class Settings(BaseSettings):
     lisa_sms_numbers: str = ""                    # CSV of ALL SMS-capable numbers (backend picks one; e.g. 827,<new>)
     lisa_sms_agent_id: str = ""                   # (legacy) Retell chat agent — only used if Twilio isn't configured
     lisa_transfer_number: str = ""               # human closer's number for a live warm-transfer of a hot lead
-    public_base_url: str = "https://3cx-sales-funnel-production.up.railway.app"  # base for public share links (audit view links texted to prospects)
+    public_base_url: str = "https://www.trmatrix.com.au"  # base for public share links (audit view links texted to prospects)
     # SMS is a BACKEND process via Twilio direct (decoupled from the Retell voice agent → zero call-latency
     # impact; Lisa only talks). Set these to send SMS straight from Twilio instead of through Retell.
     twilio_account_sid: str = ""                 # Twilio Account SID (AC…) — used in the API URL

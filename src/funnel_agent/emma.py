@@ -962,7 +962,7 @@ _BRAND_TEXT = "#33404f"      # body copy
 _BRAND_PANEL = "#f4f7fb"     # light panel behind the date-time line
 _BRAND_LINE = "#dce3ec"
 # Hosted wordmark asset (served publicly at /logo.png, auth-exempt) under the public base.
-_LOGO_URL = "https://3cx-sales-funnel-production.up.railway.app/logo.png"
+_LOGO_URL = "https://www.trmatrix.com.au/logo.png"
 _SITE_URL = "https://www.trafficradius.com.au"
 _SITE_LABEL = "trafficradius.com.au"
 # Opaque placement markers the caller fills in post-render (never template inputs).
