@@ -98,12 +98,13 @@ def _message(first_name: str, company: str, reveal_url: str, brand_url: str) -> 
 def preview(pool, limit: int = 50) -> dict:
     """Dry-run: who WOULD be messaged + the exact text — for review before enabling. Sends nothing."""
     from . import lisa as _l
+    from . import shortlink as _sl
     out = []
     for r in _targets(pool, limit):
         d9 = r["dest9"]
         nm = _l._first_name((r.get("prospect_name") or "") or "")
-        reveal = f"{_BASE}/api/lisa4/site/public/{r['reveal_token']}"
-        brand = f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}"
+        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{r['reveal_token']}")
+        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}")
         out.append({"dest9": d9, "company": r.get("company"), "mobile": "+61" + d9,
                     "reveal_token": r.get("reveal_token"),
                     "message": _message(nm, r.get("company"), reveal, brand)})
@@ -128,11 +129,19 @@ def send_recovery(pool, settings, dest9: str, by: str = "Lisa") -> bool:
         if not rt:
             return False
         token = rt[0]["share_token"]; company = rt[0].get("company")
+        # QA GATE: never send a site that hasn't passed the QA pipelines.
+        try:
+            from . import site_qa as _qa
+            if not _qa.qa_check(pool, settings, d9).get("passed"):
+                return False
+        except Exception:
+            return False
         info = _l._fetch(pool, "SELECT prospect_name FROM lisa_calls WHERE dest9=%s AND COALESCE(meeting_agreed,false) "
                          "ORDER BY started_at DESC LIMIT 1", (d9,))
         nm = _l._first_name((info[0].get("prospect_name") if info else "") or "")
-        reveal = f"{_BASE}/api/lisa4/site/public/{token}"
-        brand = f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}"
+        from . import shortlink as _sl
+        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{token}")
+        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}")
         body = _message(nm, company, reveal, brand)
         frm = _l._e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
         if not (_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, "+61" + d9, body, frm)):
@@ -144,6 +153,67 @@ def send_recovery(pool, settings, dest9: str, by: str = "Lisa") -> bool:
                         "recovery_sent_at=now(), recovery_channel='sms', recovery_status='sent', updated_at=now()", (d9,))
             cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
                         (d9, "No-show recovery: sent website + brand intro via SMS", by))
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+_LINK_ASK = _re.compile(
+    r"\b(link|website|web ?site|the site|url|web address|send (me )?(the|it|that|link|site)|"
+    r"see (it|the site|the website)|have a look|show me|can i see|where('?s| is) (it|the|my))\b", _re.I)
+
+
+def is_link_ask(text: str) -> bool:
+    t = (text or "").strip()
+    return bool(t) and bool(_LINK_ASK.search(t))
+
+
+def send_site_on_ask(pool, settings, dest9: str, by: str = "Lisa") -> bool:
+    """A prospect asked for the link and a QA-PASSED built site exists → send it + the brand intro (and the
+    comparison if one exists), human-like, with short links. Won't re-send within 18h. Guarded."""
+    from . import lisa as _l
+    d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+    if not d9 or not d9.startswith("4"):
+        return False
+    try:
+        rt = _l._fetch(pool, "SELECT s.share_token, s.company FROM lisa4_sites s WHERE s.dest9=%s AND s.status='built' "
+                       "AND COALESCE(s.kind,'reveal')='reveal' AND s.share_token IS NOT NULL ORDER BY s.built_at DESC LIMIT 1", (d9,))
+        if not rt:
+            return False
+        # don't re-send the site link if we already sent it in the last 18h
+        dup = _l._fetch(pool, "SELECT 1 FROM lisa_sms WHERE dest9=%s AND direction='outbound' "
+                        "AND created_at > now()-interval '18 hours' AND (body LIKE %s OR body ILIKE %s) LIMIT 1",
+                        (d9, "%/s/%", "%site we built%"))
+        if dup:
+            return False
+        token = rt[0]["share_token"]; company = rt[0].get("company")
+        try:
+            from . import site_qa as _qa
+            if not _qa.qa_check(pool, settings, d9).get("passed"):
+                return False
+        except Exception:
+            return False
+        info = _l._fetch(pool, "SELECT prospect_name FROM lisa_calls WHERE dest9=%s ORDER BY started_at DESC LIMIT 1", (d9,))
+        nm = _l._first_name((info[0].get("prospect_name") if info else "") or "")
+        from . import shortlink as _sl
+        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{token}")
+        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}")
+        cr = _l._fetch(pool, "SELECT comparison_token FROM booked_crm WHERE dest9=%s", (d9,))
+        cmp_tok = (cr[0].get("comparison_token") if cr else None)
+        cmp_line = (f" and a quick before/after vs your current site: "
+                    f"{_sl.short_url(pool, f'{_BASE}/api/lisa4/site/public/{cmp_tok}')}" if cmp_tok else "")
+        nmp = (" " + nm.lower()) if nm else ""
+        body = (f"hey{nmp}, absolutely — here's the new site we built for {_clean_co(company)}: {reveal}. and a "
+                f"quick intro to us: {brand}{cmp_line}. have a look and let me know what you think — happy to "
+                f"jump on a quick call and walk you through it whenever suits.")
+        frm = _l._e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
+        if not (_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, "+61" + d9, body, frm)):
+            return False
+        _l._log_sms(pool, "outbound", frm, "+61" + d9, body, d9)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
+                        (d9, "Sent website + brand intro on request (link-on-ask, QA-passed)", by))
             conn.commit()
         return True
     except Exception:

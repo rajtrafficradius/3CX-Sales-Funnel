@@ -2016,6 +2016,20 @@ def reply_to_inbound_sms(pool: ConnectionPool, settings: Settings, *, dest9: str
         except Exception:
             pass   # never let the delay gate block a reply on error
 
+    # 1.9) LINK-ON-ASK (Vysakh, 2026-08-19): if they're asking for the website link AND a QA-passed built site
+    #      exists, send it (+ brand intro + comparison if any) with short links and stop — the natural-delay
+    #      gate above already made this feel unhurried/human. Otherwise fall through to the normal responder,
+    #      which keeps the 'already built' framing for prospects who don't have a finished site yet.
+    if not dry_run:
+        try:
+            from . import noshow_recovery as _nsr
+            if _nsr.is_link_ask(body) and _nsr.send_site_on_ask(pool, settings, d9):
+                result["handled"] = "link_on_ask"
+                result["sent"] = True
+                return result
+        except Exception:
+            pass
+
     # 2) context: brief (first name only — NEVER the company/pitch in the text), booked state, full thread.
     br = _fetch(pool, "SELECT brief FROM lisa_briefs WHERE dest9=%s", (d9,))
     brief = (br[0]["brief"] if br and br[0].get("brief") else {}) or {}

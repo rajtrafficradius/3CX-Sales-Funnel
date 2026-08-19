@@ -5242,6 +5242,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ok = _nsr.send_recovery(pool, settings, d9, by=(u.get("email") or "admin")[:40])
         return JSONResponse({"ok": bool(ok)})
 
+    @app.get("/s/{code}")
+    def shortlink_redirect(code: str):
+        """Public short-link redirect for SMS (keeps outbound links clean). 302 -> the real public URL."""
+        from .. import shortlink as _sl
+        target = _sl.resolve(pool, code)
+        if not target:
+            raise HTTPException(404, "link not found")
+        return RedirectResponse(target, status_code=302)
+
     @app.get("/sw.js")
     def crm_service_worker():
         """Service worker at root scope for background web-push."""
