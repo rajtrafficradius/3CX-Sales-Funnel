@@ -5108,6 +5108,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _crm.crm_add_note(pool, str(body.get("dest9") or ""), str(body.get("body") or ""), who)
         return JSONResponse({"ok": True})
 
+    @app.post("/api/lisa/crm/quote")
+    async def lisa_crm_quote(request: Request) -> JSONResponse:
+        """Create or re-price the website quotation for a booked prospect (Alfred/admin edits the TOTAL;
+        the breakdown auto-adjusts). (Re)generates the DE-branded quote + publishes it to its share link.
+        NEVER auto-sent — the link is surfaced in the CRM for the closer to share manually."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        import re as _re, secrets, random
+        from ..quote import gen_quote_html
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        try:
+            total = max(1, int(float(body.get("total") or 1000)))
+        except Exception:
+            total = 1000
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        _crm.ensure_crm_tables(pool)
+        info = q("SELECT COALESCE(NULLIF(lc.company_name,''), lp.company, 'your business') company, "
+                 "       COALESCE(lp.domain, lc.domain) domain "
+                 "FROM lisa_calls lc LEFT JOIN lisa4_pool lp ON lp.dest9=lc.dest9 "
+                 "WHERE lc.dest9=%s ORDER BY lc.started_at DESC LIMIT 1", (d9,))
+        company = (info[0].get("company") if info else None) or "your business"
+        domain = (info[0].get("domain") if info else None) or ""
+        html = gen_quote_html(company, domain, total)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT quote_token FROM booked_crm WHERE dest9=%s", (d9,))
+            r = cur.fetchone()
+            tok = (r or {}).get("quote_token") if r else None
+            updated = 0
+            if tok:
+                cur.execute("UPDATE lisa4_sites SET html=%s, quote_total=%s, built_at=now() "
+                            "WHERE share_token=%s AND kind='quote'", (html, total, tok))
+                updated = cur.rowcount
+            if not tok or not updated:                      # first time (or row missing) → publish a new quote
+                slug = _re.sub(r"[^a-z0-9]+", "-", (company or "quote").lower()).strip("-")[:28] or "quote"
+                tok = f"{slug}-quote-" + secrets.token_urlsafe(8)
+                synth = "9" + "".join(str(random.randint(0, 9)) for _ in range(8))
+                cur.execute("INSERT INTO lisa4_sites (dest9,company,domain,html,status,share_token,kind,quote_total,built_at) "
+                            "VALUES (%s,%s,%s,%s,'built',%s,'quote',%s,now())", (synth, company, domain, html, tok, total))
+            cur.execute("INSERT INTO booked_crm (dest9, quote_token, quote_total, updated_by, updated_at) "
+                        "VALUES (%s,%s,%s,%s,now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "quote_token=EXCLUDED.quote_token, quote_total=EXCLUDED.quote_total, "
+                        "updated_by=EXCLUDED.updated_by, updated_at=now()", (d9, tok, total, who))
+            cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                        (d9, f"Quotation set to A${total:,}", who))
+            conn.commit()
+        return JSONResponse({"ok": True, "quote_token": tok, "quote_total": total})
+
     @app.get("/sw.js")
     def crm_service_worker():
         """Service worker at root scope for background web-push."""

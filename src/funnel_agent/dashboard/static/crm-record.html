@@ -206,6 +206,11 @@
   .btn.ghost{background:var(--panel2);color:var(--txt-dim);border-color:var(--line)}
   .btn.ghost:hover{border-color:var(--accent);color:var(--accent);filter:none}
   .divider{height:1px;background:var(--line);margin:16px 0}
+  .qedit{margin-top:13px;border-top:1px solid var(--line);padding-top:13px}
+  .qedit label{display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);font-weight:800;margin-bottom:7px}
+  .qrow{display:flex;gap:8px}
+  .qrow input{flex:1;min-width:0;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:var(--r2);padding:8px 10px;font-variant-numeric:tabular-nums}
+  .qrow input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
   .savedline{margin-top:12px;font-size:11px;color:var(--faint);line-height:1.5}
   .unreadbar{display:flex;align-items:center;gap:9px;background:var(--bad-soft);border:1px solid rgba(248,113,113,.3);border-radius:var(--r2);padding:9px 12px;margin-bottom:14px;font-size:12.5px;color:var(--txt-dim)}
   .unreadbar button{margin-left:auto;background:none;border:1px solid var(--line);border-radius:8px;color:var(--accent);font-weight:700;font-size:11px;padding:4px 10px;cursor:pointer;white-space:nowrap}
@@ -510,6 +515,18 @@ function renderRecord(r){
       </div></div>
     </div>
     <div class="panel">
+      <div class="panel-h">Documents <span class="rt">share manually</span></div>
+      <div class="panel-b"><div class="kv">
+        <div class="row"><span class="k">Comparison — old vs new</span><span class="v">${r.comparison_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.comparison_token)}" target="_blank" rel="noopener">Open ↗</a>`:'<span class="dim">—</span>'}</span></div>
+        <div class="row"><span class="k">Quotation</span><span class="v">${r.quote_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.quote_token)}" target="_blank" rel="noopener">Open ↗</a>${r.quote_total?` <span class="dim">· A$${(+r.quote_total).toLocaleString()}</span>`:''}`:'<span class="dim">not created</span>'}</span></div>
+      </div>
+      <div class="qedit">
+        <label for="qTotal">Quote total (A$) — breakdown auto-adjusts</label>
+        <div class="qrow"><input id="qTotal" type="number" min="1" step="50" value="${r.quote_total||1000}" />
+          <button class="btn ghost" type="button" id="qBtn" style="width:auto;padding:8px 14px;white-space:nowrap">${r.quote_token?'Update':'Generate'}</button></div>
+      </div></div>
+    </div>
+    <div class="panel">
       <div class="panel-h">Contact</div>
       <div class="panel-b"><div class="kv">
         <div class="row"><span class="k">Name</span><span class="v">${r.contact_name?esc(r.contact_name):'<span class="dim">—</span>'}${ev.who_answered?` <span class="tag">${esc(String(ev.who_answered).replace(/_/g,' '))}</span>`:''}</span></div>
@@ -596,6 +613,10 @@ function wire(){
   const noteBtn=document.getElementById('noteBtn'), noteEl=document.getElementById('noteEl');
   noteBtn.onclick=async()=>{const b=noteEl.value.trim();if(!b){noteEl.focus();return;}noteBtn.disabled=true;
     try{await post('/api/lisa/crm/note',{dest9:D9,body:b});toast('Note added');await loadRecord();}catch(e){toast('Failed: '+e.message,true);noteBtn.disabled=false;}};
+  const qBtn=document.getElementById('qBtn');
+  if(qBtn)qBtn.onclick=async()=>{const t=parseInt(document.getElementById('qTotal').value||'1000',10)||1000;qBtn.disabled=true;
+    try{await post('/api/lisa/crm/quote',{dest9:D9,total:t});toast('Quotation updated · A$'+t.toLocaleString());await loadRecord();}
+    catch(e){toast('Failed: '+e.message,true);qBtn.disabled=false;}};
   const seenBtn=document.getElementById('seenBtn');
   if(seenBtn)seenBtn.onclick=async()=>{try{await post('/api/lisa/crm/seen',{dest9:D9});await loadRecord();}catch(e){toast('Failed: '+e.message,true);}};
 }

@@ -28,6 +28,7 @@ def ensure_crm_tables(pool) -> None:
             ("stage", "text"), ("owner", "text"), ("next_action", "text"),
             ("next_action_at", "timestamptz"), ("outcome", "text"),
             ("contact_name", "text"), ("contact_email", "text"), ("created_at", "timestamptz DEFAULT now()"),
+            ("quote_token", "text"), ("comparison_token", "text"), ("quote_total", "integer"),
         ):
             cur.execute(f"ALTER TABLE booked_crm ADD COLUMN IF NOT EXISTS {col} {typ}")
         cur.execute(
@@ -66,6 +67,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        st.status AS site_status, st.share_token,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
        bc.note AS crm_note, bc.updated_by AS crm_by, bc.updated_at AS crm_at,
+       bc.quote_token, bc.comparison_token, bc.quote_total,
        (SELECT count(*) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
