@@ -280,10 +280,10 @@ def ensure_reveal_guide(pool, settings, dest9: str, company: str, domain: str,
             r = cur.fetchone()
             if r and (r.get("guideline_token") or ""):
                 return r["guideline_token"]
-            cur.execute("SELECT v FROM crm_config WHERE k='lisa4_designer_model'")
-            m = cur.fetchone()
-            model = (m.get("v") if m else None) or "claude-opus-5"
-        key = getattr(settings, "anthropic_api_key", "") or ""
+            cur.execute("SELECT k, v FROM crm_config WHERE k IN ('lisa4_designer_model','anthropic_api_key')")
+            cfg = {r["k"]: r["v"] for r in cur.fetchall()}
+            model = (cfg.get("lisa4_designer_model") or "claude-opus-5")
+        key = (cfg.get("anthropic_api_key") or getattr(settings, "anthropic_api_key", "") or "")
         ql = quote_line or "a bespoke website build from A$900 + GST, plus web & email hosting from A$100/month + GST"
         html = _rg.gen_reveal_guide(key, model, company or "the business", domain or "", industry or "", finding or "", ql)
         if not html:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 
 from psycopg.types.json import Json
@@ -614,10 +615,23 @@ def _designer_model(pool: ConnectionPool, settings: Settings) -> str:
     return getattr(settings, "lisa4_designer_model", None) or "claude-opus-5"
 
 
+def _anthropic_key(pool: ConnectionPool, settings: Settings) -> str:
+    """Anthropic API key — a crm_config override wins over the ANTHROPIC_API_KEY env. This lets us point the
+    cloud at a FUNDED key with a plain DB write (safe, instant) instead of an env change that would trigger a
+    GitHub redeploy of stale code and kill the dialer. Falls back to the env key."""
+    try:
+        r = _fetch(pool, "SELECT v FROM crm_config WHERE k='anthropic_api_key'")
+        if r and (r[0].get("v") or "").strip():
+            return r[0]["v"].strip()
+    except Exception:
+        pass
+    return getattr(settings, "anthropic_api_key", "") or ""
+
+
 def _claude(settings: Settings, system: str, user: str, *, max_tokens: int = 60000,
-            messages: list | None = None, model: str | None = None) -> str:
+            messages: list | None = None, model: str | None = None, key: str | None = None) -> str:
     """Call the Anthropic Messages API (Claude) via urllib, streaming. Returns text."""
-    key = getattr(settings, "anthropic_api_key", "") or ""
+    key = key or getattr(settings, "anthropic_api_key", "") or ""
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY not set — cannot run the Lisa-4 AI designer")
     body = {
@@ -633,15 +647,29 @@ def _claude(settings: Settings, system: str, user: str, *, max_tokens: int = 600
         headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json",
                  "accept": "text/event-stream"})
     out: list[str] = []
-    with urllib.request.urlopen(req, timeout=90) as resp:   # timeout = max idle gap between chunks
+    try:
+        resp = urllib.request.urlopen(req, timeout=90)   # timeout = max idle gap between chunks
+    except urllib.error.HTTPError as e:
+        # Surface the REAL API error (max_tokens, model, message shape…) instead of a blind "Bad Request",
+        # so a failed build records something actionable in lisa4_sites.error.
+        try:
+            detail = e.read().decode("utf-8", "ignore")[:400]
+        except Exception:
+            detail = ""
+        raise RuntimeError(f"Anthropic HTTP {e.code} (model={body['model']}, max_tokens={body['max_tokens']}): {detail}") from None
+    with resp:
         for raw in resp:
             line = raw.decode("utf-8", "ignore").strip()
+            if line.startswith("event: error"):
+                continue
             if not line.startswith("data: "):
                 continue
             try:
                 ev = json.loads(line[6:])
             except Exception:
                 continue
+            if ev.get("type") == "error":
+                raise RuntimeError(f"Anthropic stream error (model={body['model']}): {str(ev.get('error'))[:300]}")
             if ev.get("type") == "content_block_delta":
                 out.append((ev.get("delta") or {}).get("text", ""))
     return "".join(out)
@@ -666,6 +694,15 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
     ensure_lisa4_tables(pool)
     r = _fetch(pool, "SELECT company, domain, bucket, issue FROM lisa4_pool WHERE dest9=%s", (dest9,))
     if not r:
+        # Not a Lisa-4 website prospect (e.g. a Lisa-5 audit booking, or stale data). Retire any queued row
+        # so it can't sit at the head of the queue forever consuming a build slot every pass.
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE lisa4_sites SET status='error', error='prospect not in lisa4_pool' "
+                            "WHERE dest9=%s AND status IN ('queued','building')", (dest9,))
+                conn.commit()
+        except Exception:
+            pass
         return {"error": "prospect not in lisa4_pool"}
     p = dict(r[0])
     disp = _pick_name(p.get("company"), p.get("title"), p.get("domain")) or p.get("company") or ""
@@ -701,6 +738,7 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
     user = (context + "\n\nBuild this business a brand-new website. Infer their industry + services from the "
             "name. Make it genuinely impressive so they want to publish it.")
     dmodel = _designer_model(pool, settings)
+    akey = _anthropic_key(pool, settings)
     # mark building — REUSE the prospect's existing active row. The partial unique index
     # idx_lisa4_sites_active allows only ONE active (queued/building/built) row per dest9, so a blind INSERT
     # collides with the 'queued' row the booking flow already created — and that INSERT sits OUTSIDE the try
@@ -722,7 +760,7 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
             site_id = cur.fetchone()["id"]
         conn.commit()
     try:
-        html = _strip_md_fences(_claude(settings, _DESIGNER_SYSTEM, user, model=dmodel))
+        html = _strip_md_fences(_claude(settings, _DESIGNER_SYSTEM, user, model=dmodel, key=akey))
         # CONTINUATION: a full multi-page site can exceed one completion — resume until the file is
         # genuinely complete (</html> present AND the <script> exists so nav/pages actually work).
         tries = 0
@@ -733,7 +771,7 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
                 {"role": "user", "content": "You stopped mid-file. Continue EXACTLY from where you left "
                  "off — output ONLY the remaining raw HTML/CSS/JS (no repetition of anything already "
                  "written, no commentary), finishing the COMPLETE document: all remaining pages, the "
-                 "full <script> with the working hash-router/nav/reveals, through to </html>."}], model=dmodel)
+                 "full <script> with the working hash-router/nav/reveals, through to </html>."}], model=dmodel, key=akey)
             if not cont.strip():
                 break
             html += _strip_md_fences(cont)
