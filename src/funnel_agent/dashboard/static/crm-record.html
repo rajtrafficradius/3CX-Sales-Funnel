@@ -522,6 +522,7 @@ function renderRecord(r){
         <div class="row"><span class="k">Comparison — old vs new</span><span class="v">${r.comparison_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.comparison_token)}" target="_blank" rel="noopener">Open ↗</a>`:'<span class="dim">—</span>'}</span></div>
         <div class="row"><span class="k">Quotation</span><span class="v">${r.quote_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.quote_token)}" target="_blank" rel="noopener">Open ↗</a>${r.quote_total?` <span class="dim">· A$${(+r.quote_total).toLocaleString()}</span>`:''}`:'<span class="dim">not created</span>'}</span></div>
         <div class="row"><span class="k">Reveal playbook <span class="dim">(Alfred)</span></span><span class="v">${r.guideline_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.guideline_token)}" target="_blank" rel="noopener">Open ↗</a>`:'<span class="dim">—</span>'}</span></div>
+        <div class="row"><span class="k">Growth audit <span class="dim">(for prospect)</span></span><span class="v">${r.audit_token?`<a class="asset" href="/api/lisa4/site/public/${esc(r.audit_token)}" target="_blank" rel="noopener">Open ↗</a> `:''}<button class="btn ghost" type="button" id="gaBtn" style="width:auto;padding:6px 12px;font-size:12px;white-space:nowrap">${r.audit_token?'Regenerate':'Generate'}</button></span></div>
       </div>
       <div class="qedit">
         <label for="qTotal">Quote total (A$) — breakdown auto-adjusts</label>
@@ -622,6 +623,12 @@ function wire(){
     catch(e){toast('Failed: '+e.message,true);qBtn.disabled=false;}};
   const seenBtn=document.getElementById('seenBtn');
   if(seenBtn)seenBtn.onclick=async()=>{try{await post('/api/lisa/crm/seen',{dest9:D9});await loadRecord();}catch(e){toast('Failed: '+e.message,true);}};
+  const gaBtn=document.getElementById('gaBtn');
+  if(gaBtn)gaBtn.onclick=async()=>{gaBtn.disabled=true;gaBtn.textContent='Generating…';
+    try{const r=await post('/api/lisa/crm/audit',{dest9:D9});
+      if(r&&r.token){toast('Growth audit generated');await loadRecord();}
+      else{toast(r&&r.reason?r.reason:'No SEO data for this domain yet',true);gaBtn.disabled=false;gaBtn.textContent='Generate';}}
+    catch(e){toast('Failed: '+e.message,true);gaBtn.disabled=false;gaBtn.textContent='Generate';}};
 }
 
 async function loadRecord(){

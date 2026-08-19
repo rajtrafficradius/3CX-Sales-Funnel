@@ -31,6 +31,7 @@ def ensure_crm_tables(pool) -> None:
             ("quote_token", "text"), ("comparison_token", "text"), ("quote_total", "integer"),
             ("guideline_token", "text"),
             ("brand_intro_sent_at", "timestamptz"), ("brand_intro_sent_by", "text"),
+            ("audit_token", "text"),
         ):
             cur.execute(f"ALTER TABLE booked_crm ADD COLUMN IF NOT EXISTS {col} {typ}")
         cur.execute(
@@ -70,7 +71,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
        bc.note AS crm_note, bc.updated_by AS crm_by, bc.updated_at AS crm_at,
        bc.quote_token, bc.comparison_token, bc.quote_total, bc.guideline_token,
-       bc.brand_intro_sent_at, bc.brand_intro_sent_by,
+       bc.brand_intro_sent_at, bc.brand_intro_sent_by, bc.audit_token,
        (SELECT count(*) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
@@ -297,6 +298,50 @@ def ensure_reveal_guide(pool, settings, dest9: str, company: str, domain: str,
             cur.execute("INSERT INTO booked_crm (dest9,guideline_token,updated_by,updated_at) "
                         "VALUES (%s,%s,'autopilot',now()) ON CONFLICT (dest9) DO UPDATE SET "
                         "guideline_token=EXCLUDED.guideline_token, updated_at=now()", (d9, tok))
+            conn.commit()
+        return tok
+    except Exception:
+        return None
+
+
+def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
+                        avg_ticket: float | None = None, force: bool = False):
+    """Generate a PLAIN-LANGUAGE growth audit (Opus-5, on top of audit.assemble_audit) for a prospect whose
+    domain HAS enrichment, store it (kind='audit'), and link booked_crm.audit_token so it surfaces on the
+    booking page. Returns None if the domain has no enrichment (can't build a data-backed audit) or on any
+    error. Guarded — never raises into the caller."""
+    import re as _re, secrets, random
+    d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+    dom = (domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if not d9 or not dom:
+        return None
+    try:
+        ensure_crm_tables(pool)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT audit_token FROM booked_crm WHERE dest9=%s", (d9,))
+            r = cur.fetchone()
+            if r and (r.get("audit_token") or "") and not force:
+                return r["audit_token"]
+            cur.execute("SELECT k, v FROM crm_config WHERE k IN ('lisa4_designer_model','anthropic_api_key')")
+            cfg = {x["k"]: x["v"] for x in cur.fetchall()}
+        model = cfg.get("lisa4_designer_model") or "claude-opus-5"
+        key = cfg.get("anthropic_api_key") or getattr(settings, "anthropic_api_key", "") or ""
+        from . import audit as _a, growth_audit as _ga
+        audit_model = _a.assemble_audit(pool, dom, avg_ticket=avg_ticket)
+        if not audit_model:
+            return None
+        html = _ga.gen_growth_audit(key, model, audit_model, avg_ticket=avg_ticket, company=company or "")
+        if not html:
+            return None
+        slug = _re.sub(r"[^a-z0-9]+", "-", (company or "growth").lower()).strip("-")[:24] or "growth"
+        tok = f"{slug}-audit-" + secrets.token_urlsafe(8)
+        synth = "9" + "".join(str(random.randint(0, 9)) for _ in range(8))
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa4_sites (dest9,company,domain,html,status,share_token,kind,built_at) "
+                        "VALUES (%s,%s,%s,%s,'built',%s,'audit',now())", (synth, company, dom, html, tok))
+            cur.execute("INSERT INTO booked_crm (dest9,audit_token,updated_by,updated_at) "
+                        "VALUES (%s,%s,'autopilot',now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "audit_token=EXCLUDED.audit_token, updated_at=now()", (d9, tok))
             conn.commit()
         return tok
     except Exception:

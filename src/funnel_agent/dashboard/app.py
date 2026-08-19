@@ -5158,6 +5158,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.commit()
         return JSONResponse({"ok": True, "quote_token": tok, "quote_total": total})
 
+    @app.post("/api/lisa/crm/audit")
+    async def lisa_crm_audit(request: Request) -> JSONResponse:
+        """Generate the plain-language GROWTH AUDIT for a booked prospect (Opus-5, on top of the audit
+        engine) and surface it on the booking page. Returns {token} on success, or {ok:false,reason} when the
+        domain has no SEO enrichment yet (nothing to audit). Never auto-sent — the closer shares the link."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        import re as _re
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        try:
+            avg_ticket = float(body.get("avg_ticket")) if body.get("avg_ticket") else None
+        except Exception:
+            avg_ticket = None
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        info = q("SELECT COALESCE(NULLIF(lc.company_name,''), lp.company, 'your business') company, "
+                 "       COALESCE(lp.domain, lc.domain) domain "
+                 "FROM lisa_calls lc LEFT JOIN lisa4_pool lp ON lp.dest9=lc.dest9 "
+                 "WHERE lc.dest9=%s ORDER BY lc.started_at DESC LIMIT 1", (d9,))
+        company = (info[0].get("company") if info else None) or "your business"
+        domain = (info[0].get("domain") if info else None) or ""
+        if not domain:
+            return JSONResponse({"ok": False, "reason": "No website on file for this prospect."})
+        tok = _crm.ensure_growth_audit(pool, settings, d9, domain, company, avg_ticket=avg_ticket, force=True)
+        if not tok:
+            return JSONResponse({"ok": False, "reason": "No Google/SEO data for this website yet — can't build a data-backed audit."})
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                        (d9, "Growth audit generated", who))
+            conn.commit()
+        return JSONResponse({"ok": True, "token": tok})
+
     @app.get("/sw.js")
     def crm_service_worker():
         """Service worker at root scope for background web-push."""
