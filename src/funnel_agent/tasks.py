@@ -246,7 +246,7 @@ def run_post_booking_readiness(pool, settings) -> dict:
           SELECT b.dest9,
                  COALESCE(NULLIF(bc.contact_name,''), NULLIF(lp.company,''), lc.company, b.dest9) AS who,
                  a.max_talk, a.answered, a.attempts, ff.outcome AS ff_outcome,
-                 bc.next_action_at, bc.audit_token, st.status AS site_status
+                 bc.next_action_at, bc.next_action, bc.stage, bc.audit_token, st.status AS site_status
           FROM booked b
           LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
           LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
@@ -282,6 +282,36 @@ def run_post_booking_readiness(pool, settings) -> dict:
                 warn.append(f"closer has NOT called yet: {who}")
             else:
                 out["confirmed"] += 1
+            # AUTOPILOT RETRY next-action (standard CRM behaviour): until the closer actually REACHES an
+            # unconfirmed booking, the CRM next-action must say "call again to confirm" — a voicemail must
+            # never look done. Only writes when next_action is empty or already a retry line (never clobbers
+            # a genuine reschedule/next-step), and clears itself once the prospect is reached.
+            stage = (r.get("stage") or "").strip().lower()
+            cur_next = (r.get("next_action") or "").strip()
+            unconfirmed = stage in ("", "new", "confirming")
+            is_retry_line = cur_next.startswith("Call again") or cur_next.startswith("Closer to call")
+            retry_msg = None
+            if unconfirmed and not reached and ffo not in ("confirmed", "reschedule", "callback"):
+                retry_msg = (f"Call again to confirm — closer hasn't reached {who} yet "
+                             f"(last attempt: voicemail/no answer; {attempts} tried)") if attempts > 0 \
+                            else f"Closer to call {who} to confirm the reveal"
+            try:
+                if retry_msg and (not cur_next or is_retry_line):
+                    with pool.connection() as _cn, _cn.cursor() as _cu:
+                        _cu.execute(
+                            "UPDATE booked_crm SET next_action=%s, "
+                            "  next_action_at=COALESCE(next_action_at, now() + interval '2 hours'), "
+                            "  updated_by='closer-retry', updated_at=now() "
+                            "WHERE dest9=%s AND COALESCE(next_action,'') IS DISTINCT FROM %s",
+                            (retry_msg, r["dest9"], retry_msg))
+                        _cn.commit()
+                elif reached and is_retry_line:          # reached now — drop the stale retry nag
+                    with pool.connection() as _cn, _cn.cursor() as _cu:
+                        _cu.execute("UPDATE booked_crm SET next_action=NULL, updated_at=now() "
+                                    "WHERE dest9=%s AND next_action=%s", (r["dest9"], cur_next))
+                        _cn.commit()
+            except Exception:
+                pass
             if not r.get("next_action_at"):
                 out["no_time"] += 1
                 minor.append(f"no firm reveal TIME set: {who}")

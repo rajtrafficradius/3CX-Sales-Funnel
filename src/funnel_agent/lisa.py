@@ -1452,6 +1452,30 @@ def classify_lisa_transcript(settings: Settings, transcript: str | None, *, dura
     }
 
 
+def sync_lisa_meeting_booked(pool: ConnectionPool) -> int:
+    """Keep the FUNNEL's booking flag in lock-step with Lisa's AUTHORITATIVE classifier (Vysakh: the CRM /
+    Lisa classifier is the single source of truth for a Lisa booking — never a second classifier). For every
+    Lisa call, force classifications.meeting_booked := lisa_calls.meeting_agreed. This stops the outbound
+    funnel EVER showing a Lisa booking the CRM doesn't (test calls, bot-to-bot errors, callbacks the funnel
+    over-flags) or missing one the CRM has. Touches ONLY Lisa calls (join on lisa_calls) so human-BDE calls
+    are untouched. Idempotent, cheap (indexed diff), fully guarded — safe to run every aggregate cycle."""
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE classifications cl SET meeting_booked = COALESCE(lc.meeting_agreed, false) "
+                "FROM lisa_calls lc "
+                "WHERE lc.call_id = cl.call_id "
+                "  AND cl.meeting_booked IS DISTINCT FROM COALESCE(lc.meeting_agreed, false)")
+            n = cur.rowcount
+            conn.commit()
+        if n:
+            log.info("sync_lisa_meeting_booked", reconciled=n)
+        return n
+    except Exception as exc:
+        log.warning("sync_lisa_meeting_booked_failed", error=str(exc)[:140])
+        return 0
+
+
 def reclassify_degraded_lisa_calls(pool: ConnectionPool, settings: Settings, limit: int = 8) -> dict:
     """AUTO-RECOVERY / self-heal (Vysakh: the system must keep booking + updating the CRM in autopilot even
     across an OpenAI-credit outage, and catch up automatically when credits return). Finds recent Lisa calls

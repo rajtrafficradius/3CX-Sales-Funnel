@@ -111,6 +111,11 @@ def classify_window(
             analyze_rpc_actions(analytics_pool, settings, day, run_global=False)
         except Exception as exc:
             log.warning("rpc_actions_failed", error=str(exc)[:160])
+        try:  # funnel booking flag := Lisa's authoritative meeting_agreed (no second classifier)
+            from .lisa import sync_lisa_meeting_booked
+            sync_lisa_meeting_booked(analytics_pool)
+        except Exception as exc:
+            log.warning("sync_lisa_meeting_booked_failed", error=str(exc)[:160])
         aggregate_day(analytics_pool, settings, day)
         set_state(analytics_pool, day)
 

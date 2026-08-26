@@ -60,8 +60,10 @@ _SYS = (
     "- next_action: the agreed NEXT step in a few words (e.g. 'reveal Thu 2pm', 'call back Friday', "
     "'send proposal'), or null.\n"
     "- meeting_datetime: the day/time agreed for the meeting/reveal, in the speakers' own words, or null.\n"
-    "- meeting_when_text: the EXACT spoken meeting day/time phrase, VERBATIM as said (e.g. 'Monday the "
-    "24th at 12:30pm', 'next Tuesday 10am', 'tomorrow at 3'), or null. Copy the words as spoken — do NOT "
+    "- meeting_when_text: the EXACT spoken day/time the meeting/reveal is set for, OR — for a reschedule "
+    "or callback — the day/time the prospect asked to be CALLED BACK or to move the meeting to, VERBATIM "
+    "as said (e.g. 'Monday the 24th at 12:30pm', 'next Tuesday 10am', 'call me Monday', 'next week'). If "
+    "they name more than one day, use the FIRST/soonest actionable one. Copy the words as spoken — do NOT "
     "reformat, resolve a calendar date, or infer anything that was not said.\n"
     "- outcome: exactly one of confirmed, reschedule, callback, not_interested, no_answer, other.\n"
     "- summary: one plain sentence summarising the call.\n"
@@ -264,30 +266,59 @@ def _active_meeting_row(pool, dest9: str) -> dict | None:
 
 def _parse_reschedule_dt(phrase: str, booked_at, cur_start, tz: str):
     """Parse the rescheduled day/time into a CONCRETE FUTURE datetime, REUSING emma.parse_agreed_time
-    (never a new parser). When the phrase names only a DAY ('call back Monday') the parser returns
-    None; we then KEEP the existing meeting slot's time-of-day (append it and re-parse) so the DATE
-    advances sensibly while the time stays put — exactly the manual MASPION fix. Only a future
-    result is returned. Never raises."""
+    (never a new parser). Handles three shapes: (a) a full 'day + time' phrase; (b) a DAY-ONLY phrase
+    ('call back Monday') — attach a time-of-day (the prior slot's, else a 10am default) so the DATE
+    advances while the time stays sensible; (c) a messy SENTENCE that names a day amongst other words
+    ('call Monday to schedule for Tuesday') — pull the FIRST actionable day token and parse that alone.
+    Only a FUTURE result is returned. Never raises."""
     if not phrase or not booked_at:
         return None
     try:
+        import re as _re
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo
         from .emma import parse_agreed_time
         tz = tz or "Australia/Melbourne"
-        dt = parse_agreed_time(phrase, booked_at, tz)
-        if dt is None and cur_start is not None:                # day-only phrase → reuse prior slot's time
-            try:
-                local = cur_start.astimezone(ZoneInfo(tz))
-                hh, mm = local.hour, local.minute
-                suffix = " %d:%02d%s" % (hh % 12 or 12, mm, "am" if hh < 12 else "pm")
-                dt = parse_agreed_time(str(phrase) + suffix, booked_at, tz)
-            except Exception:
-                dt = None
-        if dt is None:
-            return None
-        now = _dt.now(dt.tzinfo) if dt.tzinfo else _dt.now()
-        return dt if dt > now else None
+
+        def _future(dt):
+            if dt is None:
+                return None
+            now = _dt.now(dt.tzinfo) if dt.tzinfo else _dt.now()
+            return dt if dt > now else None
+
+        def _suffix():                                          # time-of-day to attach to a day-only phrase
+            if cur_start is not None:                           # keep the prior slot's time when we have one
+                try:
+                    local = cur_start.astimezone(ZoneInfo(tz))
+                    hh, mm = local.hour, local.minute
+                    return " %d:%02d%s" % (hh % 12 or 12, mm, "am" if hh < 12 else "pm")
+                except Exception:
+                    pass
+            return " 10:00am"                                  # sensible business-hours default
+
+        # (a) parse the phrase exactly as spoken
+        dt = _future(parse_agreed_time(phrase, booked_at, tz))
+        if dt:
+            return dt
+        # (b) day-only phrase → attach a time-of-day and re-parse
+        dt = _future(parse_agreed_time(str(phrase) + _suffix(), booked_at, tz))
+        if dt:
+            return dt
+        # (c) messy sentence → extract the FIRST actionable day token and parse that alone
+        m = _re.search(r"\b(today|tomorrow|next\s+week|monday|tuesday|wednesday|thursday|friday|"
+                       r"saturday|sunday|mon|tues?|weds?|thur?s?|fri|sat|sun)\b", str(phrase), _re.I)
+        if m:
+            tok = _re.sub(r"\s+", " ", m.group(1).strip().lower())
+            if tok.startswith("next"):                         # 'next week' with no named day → next Monday
+                tok = "next monday"
+            else:
+                tok = {"mon": "monday", "tue": "tuesday", "tues": "tuesday", "wed": "wednesday",
+                       "weds": "wednesday", "thu": "thursday", "thur": "thursday", "thurs": "thursday",
+                       "fri": "friday", "sat": "saturday", "sun": "sunday"}.get(tok, tok)
+            dt = _future(parse_agreed_time(tok + _suffix(), booked_at, tz))
+            if dt:
+                return dt
+        return None
     except Exception:
         return None
 
@@ -343,6 +374,15 @@ def _apply_reschedule(pool, settings, dest9: str, *, outcome: str, phrase: str,
                 conn.commit()
         except Exception as exc:
             _log_warn("bde_capture_next_at_failed", dest9=dest9, error=str(exc))
+        # A reschedule/callback means the slot is no longer a firm CONFIRMED time — reflect that in the
+        # stage so the dashboard stops showing a stale 'confirmed' (never touch a human's terminal call).
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE booked_crm SET stage='confirming', updated_at=now() "
+                            "WHERE dest9=%s AND stage IN ('confirmed','revealed')", (dest9,))
+                conn.commit()
+        except Exception as exc:
+            _log_warn("bde_capture_stage_nudge_failed", dest9=dest9, error=str(exc))
         if moved:
             _append_note(pool, dest9, "Meeting rescheduled", who or "aircall-capture",
                          _fmt_dt(new_dt, tz), (outcome or ""), (phrase or ""),

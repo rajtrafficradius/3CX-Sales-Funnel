@@ -119,8 +119,12 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
           AND c.answered AND COALESCE(c.talk_seconds,0) >= 15) AS last_contacted_any,
        -- The CLOSER's (Alfred's) most-recent confirmation-call OUTCOME — so every booking clearly shows
        -- whether Alfred reached them, hit voicemail, or got no answer (never leave it ambiguous).
+       -- 'reached' requires a real two-way conversation. A ~15s "answered" call is Alfred leaving a
+       -- voicemail (or the greeting counted as talk) — NEVER a confirmation. Real confirmations run 40s+
+       -- (observed voicemails=15s, reached=75-171s), so the floor is 30s; err toward 'voicemail' so an
+       -- unconfirmed booking keeps getting a retry instead of being falsely marked reached.
        (SELECT CASE WHEN c.is_voicemail THEN 'voicemail'
-                    WHEN c.answered AND COALESCE(c.talk_seconds,0) >= 15 THEN 'reached'
+                    WHEN c.answered AND COALESCE(c.talk_seconds,0) >= 30 THEN 'reached'
                     WHEN c.answered THEN 'voicemail'
                     ELSE 'no answer' END
           FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
