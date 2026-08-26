@@ -193,11 +193,38 @@ def _stage_reason(r: dict) -> str:
     return " · ".join(bits)
 
 
+_NON_NAMES = {
+    "there", "yeah", "yep", "yes", "no", "nope", "hi", "hello", "hey", "hi there", "hey there",
+    "there you go", "mate", "sir", "madam", "maam", "ma'am", "ok", "okay", "okey", "mhm", "mm", "uh",
+    "um", "speaking", "thanks", "thank you", "cheers", "bye", "goodbye", "owner", "the owner", "manager",
+    "reception", "admin", "good", "fine", "sure", "alright", "right", "hello there", "yes please",
+    "no thanks", "this is he", "this is she", "that's me", "thats me", "good morning", "good afternoon",
+}
+
+
+def clean_person_name(name):
+    """Reject the conversational fillers the classifier sometimes mis-extracts as a NAME (a greeting
+    'hi there' -> 'there'). Returns a genuine name, or '' when it's garbage — so the CRM shows '—' instead
+    of a fake name. Shared so the same rule applies at capture-time and at display."""
+    n = (name or "").strip()
+    if not n:
+        return ""
+    import re as _re
+    low = n.lower().strip(" .,!?'\"")
+    words = [w for w in low.split() if w]
+    if low in _NON_NAMES or (words and all(w in _NON_NAMES for w in words)):
+        return ""
+    if not _re.search(r"[A-Za-z]{2,}", n):        # must contain a real alphabetic token
+        return ""
+    return n
+
+
 def crm_rows(q, closers: list[str]) -> list[dict]:
     rows = q(LIST_SQL, {"closers": closers or ["__none__"]})
     for r in rows:
         r["stage"] = _derived_stage(r)
         r["stage_reason"] = _stage_reason(r)
+        r["contact_name"] = clean_person_name(r.get("contact_name"))   # never show 'there'/'mate'/etc.
     return rows
 
 

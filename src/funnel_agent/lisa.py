@@ -1826,7 +1826,11 @@ def _book_meeting(pool: ConnectionPool, settings: Settings, call_id: str, dyn: d
         conn.commit()
     # A confirmed booking must ALSO land in the booked CRM (not only the funnel + calendar). Fill-blank +
     # idempotent; contact/time all come from OUR classifier (cad) / the dialed brief (dyn), never Retell.
-    _crm_mark_booked(pool, d9, contact_name=(dyn.get("prospect_name") or cad.get("contact_name")),
+    # Prefer OUR classifier's real extracted name; the dialed 'prospect_name' is a Retell voice fallback that
+    # can be the literal "there" (from "Hi there") — sanitise both so a greeting never becomes the CRM name.
+    from .crm import clean_person_name as _clean_nm
+    _crm_mark_booked(pool, d9,
+                     contact_name=(_clean_nm(cad.get("contact_name")) or _clean_nm(dyn.get("prospect_name"))),
                      contact_email=email, agreed_day_time=when_txt, next_action_at=start, agent="Lisa")
     return eid
 
