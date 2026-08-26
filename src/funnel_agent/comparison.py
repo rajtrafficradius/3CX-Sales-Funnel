@@ -187,9 +187,12 @@ def gen_comparison_html(company: str, domain: str, *, old_desktop=None, new_desk
  .phone{{width:100%;max-width:300px}}
  .ptag{{text-align:center;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:5px 12px;margin:0 auto 10px;width:max-content}}
  .ptag.old{{background:#fdeceb;color:var(--red)}} .ptag.new{{background:#e7f6ee;color:var(--green)}}
- .pscreen{{border:9px solid #0b1524;border-radius:30px;overflow:hidden;box-shadow:var(--sh);background:#0b1524}}
- .pscreen .scan{{border:none;border-radius:20px}} .pscreen .empty{{margin:0;border-radius:20px}}
- .pscreen .scanhint{{color:#7f8ea3;background:#0b1524}}
+ /* the phone is a FIXED-HEIGHT frame; the full-page screenshot SCROLLS inside it (a real phone view) —
+    otherwise a tall screenshot stretches the frame down the whole page and reads as broken on mobile. */
+ .pscreen{{border:9px solid #0b1524;border-radius:30px;overflow-y:auto;overflow-x:hidden;height:min(74vh,580px);box-shadow:var(--sh);background:#0b1524;-webkit-overflow-scrolling:touch;scrollbar-width:thin}}
+ .pscreen .scan{{border:none;border-radius:20px;overflow:visible}}
+ .pscreen .scan img{{width:100%;height:auto;display:block}} .pscreen .empty{{margin:0;border-radius:20px;height:100%}}
+ .pscreen .scanhint{{color:#7f8ea3;background:#0b1524;position:sticky;bottom:0;padding:4px 0}}
  /* better list */
  .diff{{background:var(--bg);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh-sm);padding:22px 24px;margin:8px 0 16px}}
  .rows{{display:grid;grid-template-columns:1fr 1fr;gap:12px 26px}} @media(max-width:640px){{.rows{{grid-template-columns:1fr}}}}
