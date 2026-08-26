@@ -1017,6 +1017,74 @@ def _svg_sized(svg: str, height_px: int = 40) -> str:
         return svg
 
 
+def _niche_image_queries(settings, company, industry_hint=""):
+    """2-3 short photo-search phrases for the business's NICHE (e.g. a pet groomer -> ['pet grooming',
+    'dog grooming salon']) so a prospect with NO real photos still gets on-trade imagery instead of empty
+    slots. LLM-derived (guarded), with a keyword fallback from the industry/name."""
+    import re as _re2
+    words = [w for w in _re2.split(r"[^A-Za-z]+", f"{industry_hint} {company}") if len(w) > 3]
+    fb = [((words[0] if words else "small") + " business")]
+    key = (getattr(settings, "anthropic_api_key", "") or "").strip()
+    if not key:
+        return fb
+    try:
+        import anthropic
+        import json as _j
+        model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
+        sysp = ("Given an Australian small business, return 2-3 SHORT photo-search phrases that find warm, "
+                "on-trade photos of what they do (pet groomer -> ['pet grooming','dog grooming salon','cute "
+                "groomed dog']; gardener -> ['garden maintenance','lawn mowing']; cafe -> ['cozy cafe','barista "
+                "coffee']). No brand or location words. Output ONLY a JSON array of 2-3 lowercase strings.")
+        usr = f"Business: {company}\nIndustry: {industry_hint or '(infer from the name)'}"
+        r = anthropic.Anthropic(api_key=key).messages.create(
+            model=model, max_tokens=120, temperature=0, system=sysp,
+            messages=[{"role": "user", "content": usr}])
+        txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
+        m = _re2.search(r"\[.*\]", txt, _re2.S)
+        arr = _j.loads(m.group(0)) if m else []
+        qs = [str(s).strip().lower() for s in arr if isinstance(s, str) and 2 < len(str(s).strip()) < 50]
+        return qs[:3] or fb
+    except Exception:
+        return fb
+
+
+def _fetch_niche_images(queries, want=6, timeout=12.0):
+    """On-trade imagery for a prospect with NO real photos: commercial-safe (CC0 / public-domain) images from
+    Openverse (keyless), downloaded and returned as data URIs. Guarded — returns [] on any failure, so the
+    build is never blocked; the site just falls back to the old CSS-art tiles as before."""
+    import base64
+    try:
+        import httpx
+    except Exception:
+        return []
+    out: list[str] = []
+    hdr = {"User-Agent": "TrafficRadius-SiteBuilder/1.0"}
+    for q in (queries or []):
+        if len(out) >= want:
+            break
+        try:
+            resp = httpx.get("https://api.openverse.org/v1/images/",
+                             params={"q": q, "license": "cc0,pdm", "size": "large",
+                                     "per_page": max(want, 8), "mature": "false"},
+                             timeout=timeout, headers=hdr)
+            for it in ((resp.json() or {}).get("results") or []):
+                if len(out) >= want:
+                    break
+                url = it.get("url") or it.get("thumbnail")
+                if not url:
+                    continue
+                try:
+                    ir = httpx.get(url, timeout=timeout, follow_redirects=True, headers=hdr)
+                except Exception:
+                    continue
+                ct = (ir.headers.get("content-type") or "").split(";")[0].strip()
+                if ir.status_code == 200 and ct.startswith("image/") and 2000 < len(ir.content) < 3_000_000:
+                    out.append("data:%s;base64,%s" % (ct, base64.b64encode(ir.content).decode("ascii")))
+        except Exception:
+            continue
+    return out[:want]
+
+
 def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_run: bool = False) -> dict:
     """AI designer: generate the prospect's website with Claude, store the HTML in lisa4_sites (status
     'built'). Called when a reveal is booked. For critical-issue prospects we feed the scraped content of
@@ -1181,6 +1249,19 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
         for _uri in (_photos or []):
             real_images.append(_uri)
             real_image_descs.append("real Google Business Profile photo of this business")
+    # NICHE-IMAGE GUARANTEE (any prospect): if we gathered NO real photos — a no-website prospect with no GBP
+    # photos, or a site we couldn't pull usable images from — the report would ship with CSS-art tiles / empty
+    # slots and not look like the trade at all (the pet-groomer-with-no-images failure). Source on-trade CC0
+    # imagery so every site reads as the right kind of business. Fully guarded — a fetch failure leaves it as
+    # before (CSS-art fallback). These are design-concept images for the REVEAL, not claimed as the client's own.
+    if not real_images:
+        try:
+            _iq = _niche_image_queries(settings, disp or p.get("company") or "", "")
+            for _uri in _fetch_niche_images(_iq, want=6):
+                real_images.append(_uri)
+                real_image_descs.append("representative on-trade photo of this kind of business (design-concept image)")
+        except Exception:
+            pass
     # A verified Google category is their real trade too (has-site OR no-site) — enough to forbid guessing.
     if known_industry:
         have_real_trade = True
