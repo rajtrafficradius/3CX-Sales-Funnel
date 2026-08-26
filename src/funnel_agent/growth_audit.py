@@ -150,6 +150,52 @@ def default_avg_ticket(industry, sub_industry=None):
     return _default_ticket(industry, sub_industry)
 
 
+def service_seeds(settings, company, industry=None, sub_industry=None, limit=14):
+    """Derive the business's core buyer-intent SERVICE/PRODUCT search terms (AU market) so keyword-demand
+    discovery ALWAYS has real seeds — even when the domain has no SEO footprint. This is the durable fix for
+    THIN audits (a low-footprint builder/gardener/etc. otherwise discovers nothing and the report collapses).
+    LLM-derived (guarded), with a light fallback from the industry text. Returns short keywords (no brand,
+    no suburb/location, no filler); [] only if there's truly nothing to go on."""
+    def _fallback():
+        text = f"{sub_industry or ''} {industry or ''}".lower()
+        base = [w for w in _re.split(r"[^a-z]+", text) if len(w) > 3 and w not in
+                ("services", "service", "other", "general", "nonresidential", "residential", "building")]
+        seeds = []
+        for w in base[:4]:
+            seeds += [w, w + " services", w + " company", w + " near me"]
+        return list(dict.fromkeys(seeds))[:limit]
+    key = (getattr(settings, "anthropic_api_key", "") or "").strip()
+    if not key and not (industry or sub_industry):
+        return []
+    if not key:
+        return _fallback()
+    try:
+        import anthropic
+        import json as _json
+        model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
+        sys_p = (
+            "You are an SEO analyst for AUSTRALIAN small businesses. Given a business, list the SHORT, "
+            "buyer-intent SERVICE or PRODUCT search terms its customers actually type into Google. Rules: "
+            "no brand names, no suburb/city/location words, no generic filler ('services', 'company', 'best'). "
+            "Concrete services/products only (e.g. for a home builder: 'custom home builder', 'knockdown rebuild', "
+            "'home extensions', 'new home designs', 'duplex builder'). Output ONLY a JSON array of "
+            f"{limit} lowercase strings.")
+        usr = f"Business name: {company or '?'}\nIndustry: {industry or '?'} / {sub_industry or '?'}"
+        r = anthropic.Anthropic(api_key=key).messages.create(
+            model=model, max_tokens=400, temperature=0,
+            system=sys_p, messages=[{"role": "user", "content": usr}])
+        txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
+        mobj = _re.search(r"\[.*\]", txt, _re.S)
+        arr = _json.loads(mobj.group(0)) if mobj else []
+        seeds = [str(s).strip().lower() for s in arr if isinstance(s, str) and 2 < len(str(s).strip()) < 60]
+        seeds = list(dict.fromkeys(seeds))[:limit]
+        if len(seeds) >= 3:
+            return seeds
+    except Exception:
+        pass
+    return _fallback()
+
+
 def estimate_avg_ticket(settings, company, industry=None, sub_industry=None, services_hint="", location=""):
     """Market-GROUNDED estimate of the average value of ONE NEW CUSTOMER (AUD) for an Australian SMB — asks
     Anthropic to apply real AU market standards and, crucially, to use the ANNUAL customer value for a

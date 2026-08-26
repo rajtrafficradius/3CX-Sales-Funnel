@@ -111,12 +111,19 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s) AND c.answered) AS last_contacted,
-       -- WHO last actually spoke to this lead (any line: Lisa 4/5 or the closer) — shown on the CRM so the
-       -- team sees at a glance who touched it last, without opening the record.
+       -- LAST CONTACT = the most recent ATTEMPT on this lead (any line: Lisa 4/5 or the closer), answered OR
+       -- NOT. A closer who rang to confirm and got no answer still did his job, so he must show as the last
+       -- person who worked it — not the last person who happened to pick up.
        (SELECT c.bde_name FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
-          AND c.answered AND COALESCE(c.talk_seconds,0) >= 15 ORDER BY c.started_at DESC LIMIT 1) AS last_contacted_by,
+          ORDER BY c.started_at DESC LIMIT 1) AS last_contacted_by,
+       (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9)
+          AS last_contacted_any,
+       -- LAST SPOKEN = who last actually had a real two-way conversation (answered + >=15s) — distinct from a
+       -- no-answer attempt, so the team can read the process at a glance (Lisa booked it, Alfred confirming).
+       (SELECT c.bde_name FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
+          AND c.answered AND COALESCE(c.talk_seconds,0) >= 15 ORDER BY c.started_at DESC LIMIT 1) AS last_spoke_by,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
-          AND c.answered AND COALESCE(c.talk_seconds,0) >= 15) AS last_contacted_any,
+          AND c.answered AND COALESCE(c.talk_seconds,0) >= 15) AS last_spoke_at,
        -- The CLOSER's (Alfred's) most-recent confirmation-call OUTCOME — so every booking clearly shows
        -- whether Alfred reached them, hit voicemail, or got no answer (never leave it ambiguous).
        -- 'reached' requires a real two-way conversation. A ~15s "answered" call is Alfred leaving a
@@ -435,27 +442,28 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
         model = cfg.get("lisa4_designer_model") or "claude-opus-5"
         key = cfg.get("anthropic_api_key") or getattr(settings, "anthropic_api_key", "") or ""
         from . import audit as _a, growth_audit as _ga
-        try:   # make sure the domain has the full SEO dataset (paid, idempotent) so the audit isn't thin
-            _a.ensure_audit_data(pool, settings, dom, company or "")
+        # Firmographics ONCE — drives BOTH the service-keyword seeds (so a low-footprint domain still
+        # discovers demand and the audit is never thin) and the average-job-value estimate.
+        industry = sub_industry = None
+        try:
+            from psycopg.rows import dict_row
+            with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT industry, sub_industry FROM companies WHERE domain=%s "
+                            "ORDER BY revenue_musd DESC NULLS LAST LIMIT 1", (dom,))
+                crow = cur.fetchone() or {}
+            industry, sub_industry = crow.get("industry"), crow.get("sub_industry")
         except Exception:
             pass
-        # ROOT BUG FIX: avg_ticket arrives as None, which collapses the hero to the tiny SEO click-value.
-        # Derive a sensible average job value from the prospect's industry so the enquiry→job→dollars bridge
-        # (and the recurring-loss hero) always renders. Fed to assemble_audit so the whole model's revenue
-        # figures agree, and flagged so the report labels it honestly as an estimate.
+        try:   # full SEO dataset (paid, idempotent), SEEDED with the business's real service terms so a
+               # low-footprint domain still discovers keyword demand and the report isn't thin.
+            _seeds = _ga.service_seeds(settings, company or "", industry, sub_industry)
+            _a.ensure_audit_data(pool, settings, dom, company or "", extra_seeds=_seeds or None)
+        except Exception:
+            pass
+        # avg_ticket: market-grounded per-business estimate when the caller didn't supply one (recurring->
+        # annual, one-off->per-job), flagged as an estimate so the report labels it honestly.
         ticket_estimated = False
         if not avg_ticket:
-            industry = sub_industry = None
-            try:
-                from psycopg.rows import dict_row
-                with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute("SELECT industry, sub_industry FROM companies WHERE domain=%s "
-                                "ORDER BY revenue_musd DESC NULLS LAST LIMIT 1", (dom,))
-                    crow = cur.fetchone() or {}
-                industry, sub_industry = crow.get("industry"), crow.get("sub_industry")
-            except Exception:
-                pass
-            # market-grounded per-business estimate (recurring->annual, one-off->per-job) — not a coarse guess
             avg_ticket, _bucket, _est = _ga.estimate_avg_ticket(settings, company, industry, sub_industry)
             ticket_estimated = True
         audit_model = _a.assemble_audit(pool, dom, avg_ticket=avg_ticket)

@@ -242,6 +242,7 @@ const COLS=[
   {k:'next',t:'Next action',g:r=>(r.next_action||'').toLowerCase()},
   {k:'confirm',t:'Confirm (closer)',g:r=>(r.closer_status||'zzz')},
   {k:'last',t:'Last contact',g:r=>tval(r.last_contacted_any||r.last_contacted)},
+  {k:'spoke',t:'Last spoken',g:r=>tval(r.last_spoke_at)},
   {k:'asset',t:'Asset',g:r=>(r.share_token||r.audit_token)?1:0},
   {k:'booked',t:'Received',g:r=>tval(r.booked_at)}
 ];
@@ -274,6 +275,8 @@ function renderTable(){
     const next=r.next_action?`<span class="tnext">${esc(r.next_action)}${r.next_action_at?` <span class="when">· ${frel(r.next_action_at)}</span>`:''}</span>`:'<span class="dim">—</span>';
     const lastwhen=r.last_contacted_any||r.last_contacted;
     const last=r.last_contacted_by?`<span class="tby">${esc(r.last_contacted_by)}</span>${lastwhen?`<span class="when"> · ${frel(lastwhen)}</span>`:''}`:(lastwhen?frel(lastwhen):'<span class="dim">—</span>');
+    const spokewhen=r.last_spoke_at;
+    const spoke=r.last_spoke_by?`<span class="tby">${esc(r.last_spoke_by)}</span>${spokewhen?`<span class="when"> · ${frel(spokewhen)}</span>`:''}`:'<span class="dim">—</span>';
     const cs=r.closer_status, catt=r.bde_attempts||0;
     const confirm=cs?`<span class="cst cst-${cs.replace(/[^a-z]/g,'')}">${cs==='reached'?'✓ reached':cs==='voicemail'?'⌥ voicemail':'✕ no answer'}</span>${catt>1?`<span class="when"> ·${catt}×</span>`:''}`:'<span class="dim">not called</span>';
     return `<tr class="trow" data-d9="${esc(r.dest9)}">
@@ -285,6 +288,7 @@ function renderTable(){
       <td>${next}</td>
       <td>${confirm}</td>
       <td>${last}</td>
+      <td>${spoke}</td>
       <td>${assetCell(r)}</td>
       <td>${r.booked_at?esc(fdate(r.booked_at)):'<span class="dim">—</span>'}</td>
       <td><a class="openlink" href="/lisa-crm/${esc(r.dest9)}">Open ↗</a></td>
