@@ -5938,7 +5938,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not _lisa_allowed(request):
             raise HTTPException(403, "no access")
         from .. import lisa4 as _l4
-        snap = await run_in_threadpool(_l4.floor_snapshot, pool, settings)
+        rng = (request.query_params.get("range") or "today")[:12]
+        snap = await run_in_threadpool(_l4.floor_snapshot, pool, settings, rng)
         return JSONResponse(jsonable_encoder(snap))
 
     @app.post("/api/lisa4/autodial")

@@ -604,15 +604,29 @@ pull();setInterval(pull,60000);})();
     </div>
   </div>
 
-  <!-- ═══ FLOOR TODAY strip — all agents combined ═══ -->
+  <!-- ═══ FLOOR strip — all agents combined, date-range filterable ═══ -->
+  <style>
+  .fsrange{margin-left:auto;display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center}
+  .fsrange button{font:inherit;font-size:11px;font-weight:600;letter-spacing:.02em;color:#a99fd6;
+    background:transparent;border:1px solid rgba(255,255,255,.13);border-radius:999px;padding:3px 11px;cursor:pointer;transition:all .15s}
+  .fsrange button:hover{color:#fff;border-color:rgba(255,255,255,.32)}
+  .fsrange button.on{color:#140a2e;background:#c9b8ff;border-color:#c9b8ff}
+  </style>
   <div class="floorstrip" id="floorstrip">
-    <span class="fs-t">FLOOR TODAY</span>
+    <span class="fs-t" id="fsLabel">FLOOR TODAY</span>
     <span><b id="fsCalls">–</b> calls</span><span class="sep"></span>
     <span><b id="fsConvos">–</b> convos</span><span class="sep"></span>
     <span><b id="fsBooked">–</b> booked</span><span class="sep"></span>
     <span><b id="fsCb">–</b> callbacks</span><span class="sep"></span>
     <span><b id="fsCost">–</b> spend</span>
     <span class="win" id="fsWin"><span class="dot"></span><span id="fsWinTxt">–</span></span>
+    <span class="fsrange" id="fsRange">
+      <button data-r="today" class="on" onclick="setFloorRange('today')">Today</button>
+      <button data-r="yesterday" onclick="setFloorRange('yesterday')">Yesterday</button>
+      <button data-r="3d" onclick="setFloorRange('3d')">Last 3 days</button>
+      <button data-r="7d" onclick="setFloorRange('7d')">Last 7 days</button>
+      <button data-r="30d" onclick="setFloorRange('30d')">Last 30 days</button>
+    </span>
   </div>
 
   <!-- ═══ REP RAIL — one card per AI agent; click to scope the page ═══ -->
@@ -1190,19 +1204,28 @@ async function previewBrief(){
   catch(e){ alert('Could not build brief: '+(e.message||e)); }
 }
 /* ═══════════ Outbound Intelligence 2.0 — floor strip · rep rail · drawer · Lisa 4 ═══════════ */
-window.__agent='all'; window.__floor=null;
+window.__agent='all'; window.__floor=null; window.__floorRange='today';
 function agentNums(k){const f=window.__floor; if(!f)return[]; const a=(f.agents||[]).find(x=>x.key===k); return (a&&a.numbers)||[];}
 function fmtMoney(c){return '$'+((+c||0)/100).toFixed(2)}
 
+function floorRangeLabel(r){return ({today:'TODAY',yesterday:'YESTERDAY','3d':'LAST 3 DAYS','7d':'LAST 7 DAYS','30d':'LAST 30 DAYS'})[r]||'TODAY';}
+function setFloorRange(r){
+  window.__floorRange=r;
+  var box=document.getElementById('fsRange');
+  if(box) box.querySelectorAll('button').forEach(function(b){b.classList.toggle('on', b.getAttribute('data-r')===r);});
+  loadFloor();
+}
 async function loadFloor(){
   try{
-    const f=await jget('/api/lisa/floor'); window.__floor=f;
+    const rng=window.__floorRange||'today';
+    const f=await jget('/api/lisa/floor?range='+encodeURIComponent(rng)); window.__floor=f;
     // floor strip
     const t=f.floor_today||{};
     $('fsCalls').textContent=t.calls||0; $('fsConvos').textContent=t.convos||0;
     $('fsBooked').textContent=t.booked||0; $('fsCb').textContent=t.callbacks||0;
     $('fsCost').textContent=fmtMoney(t.cost_cents);
-    const w=$('fsWin'); w.className='win'+(f.in_window?' open':'');
+    var _L=document.getElementById('fsLabel'); if(_L) _L.textContent='FLOOR · '+floorRangeLabel(f.range||rng);
+    const w=$('fsWin'); w.className='win'+(f.in_window?' open':''); w.style.display=((f.range||rng)==='today'?'':'none');
     $('fsWinTxt').textContent=(f.in_window?'window OPEN · ':'window closed · ')+(f.window||'')+' · '+(f.now_local||'');
     renderRail(); renderL4();
   }catch(e){ /* floor is additive — never break the page */ }

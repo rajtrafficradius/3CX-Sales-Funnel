@@ -2220,7 +2220,8 @@ _L5_PRED = ("(COALESCE(from_number,'') ~ %s "
             "OR COALESCE(to_number,'') ~ %s)")
 
 
-def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: list[str]) -> dict:
+def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: list[str],
+                 start: str | None = None, end: str | None = None) -> dict:
     """Today's numbers for one agent under the either-leg attribution rule.
     'calls' = OUTBOUND legs only (from_number is the line's own caller ID); convos/booked/
     callbacks/cost count BOTH directions — an inbound call-back that books (prospect is
@@ -2244,8 +2245,9 @@ def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: lis
         "  count(*) FILTER (WHERE call_outcome='callback_requested') callbacks, "
         "  COALESCE(sum(cost_cents),0) cost_cents "
         f"FROM lisa_calls WHERE {attr} "
-        "  AND (created_at AT TIME ZONE %s)::date=(now() AT TIME ZONE %s)::date",
-        (out_param, *attr_params, tz, tz))[0]
+        "  AND (created_at AT TIME ZONE %s)::date BETWEEN "
+        "      COALESCE(%s::date,(now() AT TIME ZONE %s)::date) AND COALESCE(%s::date,(now() AT TIME ZONE %s)::date)",
+        (out_param, *attr_params, tz, start, tz, end, tz))[0]
     return dict(r)
 
 
@@ -2262,7 +2264,7 @@ def _agent_inflight(pool: ConnectionPool, *, lisa4: bool) -> dict | None:
     return dict(r[0]) if r else None
 
 
-def floor_snapshot(pool: ConnectionPool, settings: Settings) -> dict:
+def floor_snapshot(pool: ConnectionPool, settings: Settings, range_key: str = "today") -> dict:
     """Everything the rep rail + floor strip needs, in one cheap payload: per-agent status (Lisa 1 + Lisa 4),
     today's numbers, in-flight call, pool/queue depth, autodial state, heartbeat, and Lisa 4's build
     pipeline. All queries are small aggregates."""
@@ -2273,6 +2275,15 @@ def floor_snapshot(pool: ConnectionPool, settings: Settings) -> dict:
     n1 = list(getattr(settings, "lisa_numbers", []) or [])
     n4 = list(getattr(settings, "lisa4_numbers", []) or [])
     now = datetime.now(ZoneInfo(tz))
+    # Date-range filter for the Outbound-Intelligence cards + overall strip: today | yesterday | 3d | 7d | 30d.
+    from datetime import timedelta as _td
+    _today = now.date()
+    _RANGES = {"today": (_today, _today), "yesterday": (_today - _td(days=1), _today - _td(days=1)),
+               "3d": (_today - _td(days=2), _today), "7d": (_today - _td(days=6), _today),
+               "30d": (_today - _td(days=29), _today)}
+    _sd, _ed = _RANGES.get(str(range_key or "today"), _RANGES["today"])
+    r_start, r_end, r_days = _sd.isoformat(), _ed.isoformat(), (_ed - _sd).days + 1
+    is_today = (str(range_key or "today") == "today")
     wstart = int(getattr(settings, "lisa_call_window_start", 9))
     wsmin = int(getattr(settings, "lisa_call_window_start_min", 0))
     wend = int(getattr(settings, "lisa_call_window_end", 17))
@@ -2283,11 +2294,12 @@ def floor_snapshot(pool: ConnectionPool, settings: Settings) -> dict:
     l1 = {
         "key": "lisa1", "name": "Lisa 1", "role": "Appointment setter", "campaign": "GAds prospects · $2-50M",
         "numbers": n1, "autodial": _L1.get_autodial_state(pool, settings), "in_window": in_window,
-        "today": _agent_today(pool, tz, lisa4=False, out_numbers=n1), "inflight": _agent_inflight(pool, lisa4=False),
+        "today": _agent_today(pool, tz, lisa4=False, out_numbers=n1, start=r_start, end=r_end),
+        "inflight": _agent_inflight(pool, lisa4=False) if is_today else None,
         "pool": _fetch(pool, "SELECT count(*) n FROM lisa_pool")[0]["n"],
         "queue_due": _fetch(pool, "SELECT count(*) n FROM calendar_events WHERE bde_name='Lisa' AND status='pending' "
                             "AND type IN ('fresh_call','retry','callback','reached_call') AND start_at<=now()")[0]["n"],
-        "target": int(getattr(settings, "lisa_daily_target", 300)),
+        "target": int(getattr(settings, "lisa_daily_target", 300)) * r_days,
         "heartbeat_s": (hb[0]["s"] if hb and hb[0].get("s") is not None else None),
     }
     # Lisa 4
@@ -2302,11 +2314,12 @@ def floor_snapshot(pool: ConnectionPool, settings: Settings) -> dict:
     l4 = {
         "key": "lisa4", "name": "Lisa 4", "role": "Website selling", "campaign": "No/broken-website SMBs",
         "numbers": n4, "autodial": get_lisa4_autodial(pool, settings), "in_window": in_window,
-        "today": _agent_today(pool, tz, lisa4=True, out_numbers=n4), "inflight": _agent_inflight(pool, lisa4=True),
+        "today": _agent_today(pool, tz, lisa4=True, out_numbers=n4, start=r_start, end=r_end),
+        "inflight": _agent_inflight(pool, lisa4=True) if is_today else None,
         "pool": _fetch(pool, "SELECT count(*) n FROM lisa4_pool")[0]["n"],
         "queue_due": _fetch(pool, "SELECT count(*) n FROM calendar_events WHERE bde_name='Lisa4' AND status='pending' "
                             "AND type='fresh_call' AND start_at<=now()")[0]["n"],
-        "target": int(getattr(settings, "lisa4_daily_target", 200)),
+        "target": int(getattr(settings, "lisa4_daily_target", 200)) * r_days,
         "buckets": buckets,
         "pipeline": {"queued": pipe.get("queued", 0), "building": pipe.get("building", 0),
                      "built": pipe.get("built", 0), "error": pipe.get("error", 0)},
@@ -2323,7 +2336,7 @@ def floor_snapshot(pool: ConnectionPool, settings: Settings) -> dict:
             "  count(*) FILTER (WHERE meeting_agreed IS TRUE) booked "
             "FROM lisa_calls WHERE (right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9)=ANY(%s) "
             "  OR right(regexp_replace(COALESCE(to_number,''),'[^0-9]','','g'),9)=ANY(%s)) "
-            "  AND (created_at AT TIME ZONE %s)::date=(now() AT TIME ZONE %s)::date", (n5d, n5d, n5d, tz, tz))[0]
+            "  AND (created_at AT TIME ZONE %s)::date BETWEEN %s::date AND %s::date", (n5d, n5d, n5d, tz, r_start, r_end))[0]
         l5_auto = _fetch(pool, "SELECT autodial FROM lisa5_control WHERE id=1")
         l5_pool = _fetch(pool, "SELECT count(*) n FROM lisa5_pool")[0]["n"]
         l5_queue = _fetch(pool, "SELECT count(*) n FROM calendar_events WHERE bde_name='Lisa5' AND status='pending' "
@@ -2335,12 +2348,14 @@ def floor_snapshot(pool: ConnectionPool, settings: Settings) -> dict:
         "numbers": n5, "autodial": (bool(l5_auto[0]["autodial"]) if l5_auto else False), "in_window": in_window,
         "today": l5_today, "inflight": _agent_inflight(pool, lisa4=False) if False else None,
         "pool": l5_pool, "queue_due": l5_queue,
-        "target": int(getattr(settings, "lisa5_daily_target", 200)),
+        "target": int(getattr(settings, "lisa5_daily_target", 200)) * r_days,
     }
     floor = {k: (l1["today"].get(k, 0) or 0) + (l4["today"].get(k, 0) or 0) + (l5["today"].get(k, 0) or 0)
              for k in ("calls", "convos", "booked", "callbacks", "cost_cents")}
     return {"agents": [l1, l4, l5], "floor_today": floor, "in_window": in_window,
             "window": f"{wstart:02d}:{wsmin:02d}–{wend:02d}:00 Mon–Fri",
+            "range": str(range_key or "today"), "range_days": r_days,
+            "range_start": r_start, "range_end": r_end,
             "now_local": now.strftime("%a %H:%M")}
 
 
