@@ -138,10 +138,14 @@ def sync_roster(pool: ConnectionPool, client: ThreeCXClient, settings: Settings)
             # Anyone not returned this run is no longer active in 3CX. Aircall agents
             # (extension 'aircall:<id>') aren't in the 3CX user list — exclude them so
             # this 3CX sweep never deactivates them (their own ingest keeps them active).
+            # Same for the AI callers (LISA / LISA4 / LISA5): they aren't 3CX extensions,
+            # so this sweep would otherwise flip them inactive every run and drop them from
+            # the funnel/leaderboard (the bug that hid Lisa 5). Their own loops keep them active.
             if seen:
                 cur.execute(
                     "UPDATE bde_agents SET active = false, synced_at = %s "
-                    "WHERE extension <> ALL(%s) AND extension NOT LIKE 'aircall:%%'",
+                    "WHERE extension <> ALL(%s) AND extension NOT LIKE 'aircall:%%' "
+                    "AND extension NOT LIKE 'LISA%%'",
                     (now, seen),
                 )
                 deactivated = cur.rowcount

@@ -30,6 +30,8 @@ from psycopg_pool import ConnectionPool
 
 from .config import Settings
 from .logging import get_logger
+from .qa import dynvars as _qa_dyn   # G10 clean-prospect-name (pure, in-memory) used in build_brief
+from .qa import outbound as _qa_outbound   # G11/G12 send-chokepoint sanitizer (banned phrases + link hygiene)
 
 log = get_logger(__name__)
 
@@ -232,8 +234,8 @@ _REPORT_WORDS = ("send me an email", "send an email", "email me", "email it", "e
 
 
 def _wants_report(cad: dict) -> bool:
-    """True if the prospect asked for a report / proposal / details in writing. Primary signal is the Retell
-    analysis flag `requested_report`; falls back to scanning the objection + summary text."""
+    """True if the prospect asked for a report / proposal / details in writing. Primary signal is OUR
+    classifier's `requested_report` flag; falls back to scanning the objection + summary text."""
     if not isinstance(cad, dict):
         return False
     flag = cad.get("requested_report")
@@ -251,8 +253,8 @@ _SMS_WORDS = ("text me", "text it", "text that", "text the link", "text through"
 
 
 def _wants_sms_link(cad: dict) -> bool:
-    """True if the prospect asked to be TEXTED the link/details on this call — the classifier's SMS flag
-    first, else a 'text me' phrasing in the analysis text."""
+    """True if the prospect asked to be TEXTED the link/details on this call — OUR classifier's SMS flag
+    first, else a 'text me' phrasing in the captured text."""
     if not isinstance(cad, dict):
         return False
     if any(cad.get(k) in (True, "true", "yes", "1") for k in ("sms_requested", "requested_sms", "sms_request")):
@@ -839,7 +841,8 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     company = (row or {}).get("company") or ""
     niche = (row or {}).get("industry") or ""
     email = (row or {}).get("email") or ""
-    contact = _first_name((row or {}).get("contact") or "")   # FIRST name only (never "Clint Robinson")
+    # FIRST name only (never "Clint Robinson"); G10 also drops placeholders/legal-entities/junk -> ""
+    contact = _qa_dyn.clean_prospect_name(_first_name((row or {}).get("contact") or ""))
 
     # company/industry from companies table if missing
     if domain and (not company or not niche):
@@ -976,7 +979,7 @@ def build_brief(pool: ConnectionPool, settings: Settings, *, dest9: str | None =
     except Exception:
         b["runs_google_ads"] = "false"
     if facts.get("dm_name") and not contact:
-        b["decision_maker"] = facts["dm_name"]
+        b["decision_maker"] = _qa_dyn.clean_prospect_name(facts["dm_name"]) or facts["dm_name"]
     if facts.get("what_they_do") and not niche:
         b["prospect_niche"] = facts["what_they_do"]
     # never leave niche blank (a blank field is what makes the model echo a placeholder)
@@ -1054,6 +1057,84 @@ def _retell(settings: Settings, method: str, path: str, body: dict | None = None
     return json.loads(t) if t.strip() else {}
 
 
+# --------------------------------------------------------------------------- #
+# Dynamic-variable safety net — never let Retell SPEAK a raw "{{placeholder}}"
+# --------------------------------------------------------------------------- #
+# Retell interpolates {{var}} from the dynamic-variables dict we hand it when the call
+# is created. If a variable the PROMPT references is MISSING (or blank) — exactly what
+# happens on an inbound / briefless call where no brief was built — Retell voices the
+# placeholder literally to the prospect ("is that the owner of {{company_name}}?").
+# So right before ANY variables dict is handed to Retell we pass it through
+# _fill_dynamic_var_defaults(): every variable the prompt can speak gets a natural,
+# non-empty fallback, and every expected KEY at least exists (so a raw "{{...}}" can
+# never reach the prospect). Fallbacks are written to read naturally mid-sentence.
+_LISA_VAR_DEFAULTS: dict[str, str] = {
+    # --- identity (spoken constantly → must sound natural) ---
+    "company_name":          "your business",
+    "prospect_name":         "there",            # "Hi there" / "thanks, there"
+    "decision_maker":        "the owner",        # "could I grab the owner?"
+    "dm_name":               "the owner",
+    "dm_role":               "the owner",
+    "prospect_niche":        "your industry",
+    "what_they_do":          "your business",
+    "location":              "your area",
+    "ideal_customer":        "your customers",
+    # --- the audit hook (Lisa's opening line) ---
+    "finding_1":             "a few things worth a quick look on how you're showing up online",
+    "finding_2":             "",                 # secondary insight — legitimately optional
+    "finding_proof":         "",                 # optional supporting proof
+    "primary_channel":       "your online presence",
+    "competitor_hook":       "your competitors",
+    "website_issue":         "a few things on your site",   # prompt references it; brief never set it
+    # --- web / contact identifiers ---
+    "prospect_website":      "your website",
+    "company_domain":        "your website",
+    "prospect_email_domain": "your website",     # bare email domain (used in the send-audit move)
+    "prospect_email":        "",                 # emails are CONFIRMED verbally, never read out — keep blank
+    "apollo_email":          "",                 # internal, gated by have_contact
+    "apollo_mobile":         "",
+    "confirmed_email":       "",
+    # --- objection library (only spoken when the objection is actually raised) ---
+    "objection_agency":      "Makes sense — the session's completely independent, so it gives you a sharper read either way.",
+    "objection_price":       "Fair question — the session and the audit are free; anything paid only comes later, and only if it's worth it.",
+    "objection_email":       "Happy to send something over — what's the one thing about your online enquiries you'd most want answered?",
+    "objection_not_interested": "",
+    "objection_no_time":     "",
+    # --- context / flags (gated in the prompt; keep value but ensure the key exists) ---
+    "known_context":         "",
+    "prior_contact_line":    "",
+    "contact_prefill":       "No email or mobile on file — ASK for the best email (and mobile) before you book.",
+    "avoid_list":            "",
+    "prior_positive":        "false",
+    "have_contact":          "false",
+    "runs_google_ads":       "false",
+    "inbound_callback":      "false",
+}
+
+
+def _fill_dynamic_var_defaults(dvars: dict | None) -> dict:
+    """Guarantee every dynamic variable the Lisa prompt can speak has a non-empty, natural fallback so
+    Retell can NEVER voice a raw "{{placeholder}}". For each KNOWN variable: replace None / "" / all-
+    whitespace with its fallback, and ADD any expected-but-missing key. Unknown keys pass through
+    untouched. Guarded: on any error the original dict is returned unchanged (never raises)."""
+    try:
+        out = dict(dvars or {})
+        for key, default in _LISA_VAR_DEFAULTS.items():
+            val = out.get(key)
+            if val is None:
+                out[key] = default
+            elif isinstance(val, str):
+                if not val.strip():
+                    out[key] = default
+            else:                                   # non-string (bool/int) → Retell needs strings
+                s = str(val).strip()
+                out[key] = s if s else default
+        return out
+    except Exception as exc:
+        log.warning("lisa_fill_dynamic_defaults_failed", error=str(exc)[:120])
+        return dvars or {}
+
+
 def inbound_variables(pool: ConnectionPool, settings: Settings, from_number: str) -> dict:
     """INBOUND: a prospect is calling Lisa's number BACK. Look them up by their number and hand Lisa their
     saved brief + name + prior context so she recognises them and picks up where they left off (instead of
@@ -1076,7 +1157,10 @@ def inbound_variables(pool: ConnectionPool, settings: Settings, from_number: str
                                    + " — thanks for calling back!")
     known = bool(r and r[0].get("brief"))
     log.info("lisa_inbound", d9=d9, known=known, name=name)
-    return {"dynamic_variables": {k: ("" if v is None else str(v)) for k, v in brief.items()},
+    # SAFETY NET: briefless / unknown inbound callers have an EMPTY brief → without this every prompt
+    # variable would be missing and Retell would speak the raw "{{...}}". Fill natural fallbacks first.
+    return {"dynamic_variables": _fill_dynamic_var_defaults(
+                {k: ("" if v is None else str(v)) for k, v in brief.items()}),
             "metadata": {"dest9": d9, "inbound": "true", "known": str(known).lower()}}
 
 
@@ -1196,7 +1280,10 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
         "from_number": frm,
         "to_number": to_number,
         "override_agent_id": getattr(settings, "lisa_agent_id", "") or None,
-        "retell_llm_dynamic_variables": brief,
+        # SAFETY NET: never let Retell speak a raw "{{var}}" — fill any missing/blank variable the prompt
+        # references with a natural fallback (covers manual + pool calls; inbound is guarded separately).
+        # We normalise ONLY the dict sent to Retell; the untouched `brief` below stores real values in the DB.
+        "retell_llm_dynamic_variables": _fill_dynamic_var_defaults(brief),
         "metadata": {"dest9": d9, "domain": brief.get("prospect_website") or (domain or "")},
     }
     try:
@@ -1218,6 +1305,282 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
 
 
 # --------------------------------------------------------------------------- #
+# OUR transcript classifier — the SOLE source of truth for a Lisa call's outcome.
+#
+# Operator directive (FIRM, repeated): take ONLY the transcript (+ recording URL / hard CDR facts) from
+# Retell — NEVER Retell's analytics. Retell's ``custom_analysis_data`` (meeting_agreed / call_outcome /
+# agreed_day_time / sentiment / any analysis flag) is NEVER read here or written to our records. Everything
+# below derives booked-or-not, agreed day/time, contact name/email, call outcome and voicemail/no-two-party
+# detection from the TRANSCRIPT TEXT alone. It runs post-call (off the dial loop — latency is fine).
+# --------------------------------------------------------------------------- #
+
+# machine / voicemail greeting fingerprints — a call that only reached one of these was NOT a two-party
+# conversation and can never be a booking. Detected from the TRANSCRIPT CONTENT (never Retell's disconnect
+# flag). Word/phrase level so it does not false-match inside ordinary speech.
+_VM_RX = re.compile(
+    r"(you(?:'?ve| have) reached|leave a (?:message|voicemail)|after the (?:tone|beep)|at the tone|"
+    r"not available (?:right now|to take|at the moment)|unavailable to take your call|please leave your|"
+    r"record your message|your call has been forwarded|the (?:person|number) you (?:have )?(?:called|dialed)|"
+    r"mailbox (?:is )?full|leave your (?:name|number)|voicemail (?:box|system|inbox)|this is the voicemail)",
+    re.IGNORECASE,
+)
+
+# outcomes OUR classifier may emit (mirrors _OUTCOME_MAP, plus a generic live 'conversation').
+_LISA_OUTCOMES = ("booked", "callback_requested", "not_interested", "do_not_call", "gatekeeper_only",
+                  "wrong_number", "conversation", "voicemail", "no_answer")
+
+_LISA_CLASSIFY_SYS = (
+    "You are a precise call-outcome classifier. You read the TRANSCRIPT of a phone call made by 'Lisa', our "
+    "company's AI sales agent, to an AUSTRALIAN business prospect. Lisa-1 calls as Traffic Radius (offering a "
+    "Google-Ads / SEO growth strategy session); Lisa-4 and Lisa-5 call under DE GROUP, our white-label "
+    "web-design brand (offering a brand-new website revealed in a short screen-share). Judge the call against "
+    "whatever was PITCHED ON THIS CALL — never against a different brand. Return ONLY a JSON object:\n"
+    "- call_outcome: exactly one of 'booked','callback_requested','not_interested','do_not_call',"
+    "'gatekeeper_only','wrong_number','conversation','voicemail','no_answer'. Use 'gatekeeper_only' if only a "
+    "receptionist/gatekeeper was reached (never the decision-maker); 'do_not_call' if they asked never to be "
+    "contacted again; 'wrong_number' if this is not the business; 'voicemail' if only a machine/recording "
+    "answered; 'no_answer' if nobody really engaged; 'conversation' for a genuine talk with the "
+    "owner/decision-maker that did not book and is not one of the categories above.\n"
+    "- meeting_agreed: true ONLY if the prospect CLEARLY COMMITTED to attending the offered meeting/reveal/"
+    "screen-share. A specific day/time is NOT required — it is STILL a booking when they committed to the "
+    "meeting but left the EXACT TIME to be confirmed later (e.g. 'yes, I want to see it — call me to lock in a "
+    "time', 'yes, tomorrow morning works, I'll confirm the exact time'). It is FALSE whenever they did NOT "
+    "commit to the meeting itself — and a bare request to be CALLED BACK or re-contacted, with no commitment "
+    "to the meeting, is a CALLBACK, NOT a booking ('call me back around 3:30', 'call me next week', 'call me "
+    "anytime', 'try me later'). Also false for 'send me some info first', a vague 'maybe', or 'not "
+    "interested'. Distinguish: committed-to-the-meeting = booking; asked-to-be-called-back = callback.\n"
+    "- agreed_day_time: if meeting_agreed, the agreed day/time in their words (e.g. 'Tuesday 2pm', 'tomorrow "
+    "morning'), or 'time to confirm' when they committed but the exact time is still to be set; else null.\n"
+    "- callback_when: if they asked to be called back at a particular time, that time in their words, else null.\n"
+    "- contact_name: the PROSPECT's own name (the person Lisa spoke to) — never Lisa's name — or null.\n"
+    "- contact_email: the prospect's email address if stated / spelled out / confirmed on the call, copied "
+    "EXACTLY (never invented or auto-completed), else null.\n"
+    "- main_objection: their main objection / concern in a few words, or null.\n"
+    "- asked_if_ai: true if the prospect asked whether Lisa is a bot / AI / a real person.\n"
+    "- requested_report: true if they asked for a report / proposal / audit / details to be sent in writing.\n"
+    "- sms_requested: true if they asked to be TEXTED the link / details.\n"
+    "- call_summary: one plain sentence summarising the call.\n"
+    "Use null / false (never a guess) for anything not clearly stated in the transcript. Output ONLY the JSON object."
+)
+
+_LISA_CAD_BLANK = {
+    "call_outcome": "", "meeting_agreed": False, "agreed_day_time": None, "confirmed_email": None,
+    "callback_when": None, "main_objection": None, "asked_if_ai": False, "call_summary": None,
+    "contact_name": None, "requested_report": False, "sms_requested": False, "is_voicemail": False,
+}
+
+
+def _transcript_no_conversation(transcript: str, duration_ms=None) -> str | None:
+    """Voicemail / no-two-party detection from the TRANSCRIPT CONTENT (machine greeting, single-party) — per
+    the operator directive this comes from the transcript, NOT Retell's disconnect flag alone (call duration
+    is only a light backstop). Returns 'voicemail', 'no_answer', or None (=a real two-party conversation)."""
+    tx = (transcript or "").strip()
+    if not tx:
+        return "no_answer"
+    # Diarized turns: Retell tags each turn 'Agent:' / 'User:'. If the other party never speaks a real turn,
+    # whatever we reached was a recording / an instant hang-up — not a live person.
+    turns = re.findall(r"(?im)^\s*(agent|assistant|ai|bot|user|human|prospect|customer)\s*[:\-]\s*(.*)$", tx)
+    if turns:
+        _agent = {"agent", "assistant", "ai", "bot"}
+        user_turns = [(t[1] or "").strip() for t in turns if t[0].lower() not in _agent]
+        user_words = sum(len(u.split()) for u in user_turns)
+        if user_words == 0:
+            return "voicemail" if _VM_RX.search(tx) else "no_answer"
+        # the other party's FIRST utterance is a machine greeting -> a recording answered, not a person.
+        if user_turns and _VM_RX.search(user_turns[0]):
+            return "voicemail"
+        if user_words <= 6 and _VM_RX.search(tx):
+            return "voicemail"
+    elif _VM_RX.search(tx):
+        return "voicemail"
+    # light duration backstop: a very short call carrying a machine-greeting fingerprint is a voicemail.
+    try:
+        if 0 < int(duration_ms or 0) < 8000 and _VM_RX.search(tx):
+            return "voicemail"
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def classify_lisa_transcript(settings: Settings, transcript: str | None, *, duration_ms=None,
+                             pool: ConnectionPool | None = None) -> dict:
+    """OUR OWN classifier for a completed Lisa call — reads ONLY the transcript (+ duration as a light
+    backstop), NEVER Retell's custom_analysis_data. Returns a dict shaped like the old Retell ``cad`` so the
+    post-call code paths are unchanged, with the extra key ``is_voicemail``. Guarded: if the LLM is
+    unavailable it degrades to a conservative transcript-length verdict (booking stays False) — it never
+    falls back to Retell analytics."""
+    tx = (transcript or "").strip()
+    if not tx:
+        return {**_LISA_CAD_BLANK, "call_outcome": "no_answer"}
+    nc = _transcript_no_conversation(tx, duration_ms)
+    if nc == "voicemail":
+        return {**_LISA_CAD_BLANK, "call_outcome": "voicemail", "is_voicemail": True}
+    if nc == "no_answer":
+        return {**_LISA_CAD_BLANK, "call_outcome": "no_answer"}
+    data = _llm_json(settings, _LISA_CLASSIFY_SYS, tx[:12000],
+                     model=(getattr(settings, "llm_model_cheap", "") or None),
+                     pool=pool, purpose="lisa_postcall_classify")
+    if not data:
+        # LLM unavailable → conservative telephony-agnostic fallback. A real-length transcript is at least a
+        # conversation; booking stays False (unverifiable without the classifier). NEVER reads Retell analytics.
+        oc = "conversation"
+        try:
+            if 0 < int(duration_ms or 0) < 20000:
+                oc = "no_answer"
+        except (TypeError, ValueError):
+            pass
+        return {**_LISA_CAD_BLANK, "call_outcome": oc}
+    outcome = str(data.get("call_outcome") or "").strip().lower()
+    if outcome not in _LISA_OUTCOMES:
+        outcome = "conversation"
+    booked = bool(data.get("meeting_agreed"))
+    if booked:
+        outcome = "booked"
+    return {
+        "call_outcome": outcome,
+        "meeting_agreed": booked,
+        "agreed_day_time": (data.get("agreed_day_time") or None),
+        "confirmed_email": (data.get("contact_email") or None),
+        "callback_when": (data.get("callback_when") or None),
+        "main_objection": (data.get("main_objection") or None),
+        "asked_if_ai": bool(data.get("asked_if_ai")),
+        "call_summary": (data.get("call_summary") or None),
+        "contact_name": (data.get("contact_name") or None),
+        "requested_report": bool(data.get("requested_report")),
+        "sms_requested": bool(data.get("sms_requested")),
+        "is_voicemail": outcome == "voicemail",
+    }
+
+
+def reclassify_degraded_lisa_calls(pool: ConnectionPool, settings: Settings, limit: int = 8) -> dict:
+    """AUTO-RECOVERY / self-heal (Vysakh: the system must keep booking + updating the CRM in autopilot even
+    across an OpenAI-credit outage, and catch up automatically when credits return). Finds recent Lisa calls
+    that got a DEGRADED classification while the LLM was unavailable — a real conversation that fell back to
+    call_outcome='conversation' with an EMPTY summary, so a booking may have been silently missed — and re-runs
+    the REAL classifier (OpenAI, or the deployed Anthropic fallback). When a booking is now detected it marks
+    meeting_agreed + classifications.meeting_booked + upserts booked_crm, so the reveal-build autopilot and the
+    CRM pick it up with NO manual recovery. Throttled (~5 min) + bounded + fully guarded; never overwrites a
+    human edit or an existing booking; never raises into the loop."""
+    out = {"scanned": 0, "reclassified": 0, "recovered": 0}
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO crm_config (k,v) VALUES ('lisa_reclassify_last_run', now()::text) "
+                        "ON CONFLICT (k) DO UPDATE SET v=now()::text "
+                        "WHERE crm_config.v IS NULL OR crm_config.v::timestamptz < now() - interval '5 minutes' "
+                        "RETURNING v")
+            claimed = cur.fetchone()
+            conn.commit()
+        if not claimed:
+            return {"skipped": "throttled"}
+        rows = _fetch(pool,
+            "SELECT call_id, dest9, duration_ms, transcript FROM lisa_calls "
+            "WHERE started_at > now() - interval '3 days' AND COALESCE(meeting_agreed,false)=false "
+            "AND COALESCE(NULLIF(call_summary,''),'')='' AND COALESCE(duration_ms,0) >= 40000 "
+            "AND COALESCE(transcript,'')<>'' ORDER BY started_at DESC LIMIT %s", (int(limit),))
+        for r in rows:
+            out["scanned"] += 1
+            cad = classify_lisa_transcript(settings, r.get("transcript"), duration_ms=r.get("duration_ms"), pool=pool)
+            if not cad or not (cad.get("call_summary") or "").strip():
+                continue  # still degraded (LLM still unavailable) — leave it for a later pass
+            out["reclassified"] += 1
+            cid = r["call_id"]; d9 = r["dest9"]; booked = bool(cad.get("meeting_agreed"))
+            try:
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE lisa_calls SET call_outcome=%s, call_summary=%s, "
+                                "main_objection=COALESCE(main_objection,%s), meeting_agreed=%s, "
+                                "agreed_day_time=COALESCE(%s,agreed_day_time), "
+                                "confirmed_email=COALESCE(NULLIF(%s,''),confirmed_email), "
+                                "prospect_name=COALESCE(NULLIF(prospect_name,''),NULLIF(%s,'')), updated_at=now() "
+                                "WHERE call_id=%s",
+                                (cad.get("call_outcome"), cad.get("call_summary"), cad.get("main_objection"),
+                                 booked, cad.get("agreed_day_time"), cad.get("confirmed_email"),
+                                 cad.get("contact_name"), cid))
+                    cur.execute("UPDATE classifications SET meeting_booked=%s WHERE call_id=%s", (booked, cid))
+                    if booked:
+                        cur.execute("INSERT INTO booked_crm (dest9, contact_name, contact_email, updated_by, updated_at) "
+                                    "VALUES (%s,%s,%s,'auto-reclassify',now()) ON CONFLICT (dest9) DO UPDATE SET "
+                                    "contact_name=COALESCE(NULLIF(booked_crm.contact_name,''),EXCLUDED.contact_name), "
+                                    "contact_email=COALESCE(NULLIF(booked_crm.contact_email,''),EXCLUDED.contact_email), "
+                                    "updated_at=now()", (d9, cad.get("contact_name"), cad.get("confirmed_email")))
+                    conn.commit()
+                if booked:
+                    out["recovered"] += 1
+                    log.info("lisa_reclassify_recovered_booking", dest9=d9, call_id=cid)
+            except Exception as exc:
+                log.warning("lisa_reclassify_write_failed", call_id=cid, error=str(exc)[:140])
+        return out
+    except Exception as exc:
+        log.warning("lisa_reclassify_failed", error=str(exc)[:160])
+        return {"error": str(exc)[:160]}
+
+
+def _lisa_postcall_cad(pool: ConnectionPool, settings: Settings, call: dict, cid: str) -> dict:
+    """OUR classifier's verdict for a completed Lisa call, in the cad-shaped dict the post-call code consumes.
+    SOLE source of truth — reads ONLY the transcript; NEVER Retell's custom_analysis_data. Returns {} when
+    there is no transcript yet (call_started / never-connected) so the callers' telephony-only handling still
+    fires exactly as before. Idempotent: a webhook RETRY reuses the verdict already stored on lisa_calls
+    rather than paying for the LLM again."""
+    tx = call.get("transcript")
+    if not tx:
+        return {}
+    try:
+        prior = _fetch(pool, "SELECT status, call_outcome, meeting_agreed, agreed_day_time, callback_when, "
+                       "  main_objection, asked_if_ai, call_summary, prospect_email, prospect_name "
+                       "FROM lisa_calls WHERE call_id=%s", (cid,))
+        if prior and prior[0].get("status") == "analyzed" and prior[0].get("call_outcome"):
+            r = prior[0]
+            return {"call_outcome": r["call_outcome"], "meeting_agreed": bool(r["meeting_agreed"]),
+                    "agreed_day_time": r["agreed_day_time"], "confirmed_email": r["prospect_email"],
+                    "callback_when": r["callback_when"], "main_objection": r["main_objection"],
+                    "asked_if_ai": bool(r["asked_if_ai"]), "call_summary": r["call_summary"],
+                    "contact_name": r["prospect_name"], "requested_report": False, "sms_requested": False,
+                    "is_voicemail": (r["call_outcome"] == "voicemail")}
+    except Exception:
+        pass
+    return classify_lisa_transcript(settings, tx,
+                                    duration_ms=call.get("duration_ms") or call.get("call_length_ms"),
+                                    pool=pool)
+
+
+def _crm_mark_booked(pool: ConnectionPool, d9: str, *, contact_name: str | None = None,
+                     contact_email: str | None = None, agreed_day_time: str | None = None,
+                     next_action_at=None, agent: str = "Lisa") -> None:
+    """Land a confirmed Lisa booking in ``booked_crm`` (the CRM the team works from) AT THE MOMENT it is
+    booked — so a Lisa booking always appears in BOTH the funnel AND the booked CRM (this closes the split
+    where a booked prospect showed on the dashboard but never reached the CRM). Fill-blank on identity fields
+    (never clobbers a human's edit), idempotent per dest9, and it never downgrades a further-along status
+    (won / lost / revealed). Fully guarded — a CRM write must never break the booking flow."""
+    d9 = _d9(d9 or "")
+    if not d9 or len(d9) < 9:
+        return
+    na = ("Booked by " + agent + ((": " + agreed_day_time) if agreed_day_time else "")).strip()
+    try:
+        from .crm import ensure_crm_tables
+        ensure_crm_tables(pool)
+    except Exception:
+        pass
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO booked_crm (dest9, status, contact_name, contact_email, next_action, "
+                "  next_action_at, updated_by, updated_at) VALUES (%s,'booked',%s,%s,%s,%s,%s,now()) "
+                "ON CONFLICT (dest9) DO UPDATE SET "
+                "  status = CASE WHEN booked_crm.status='revealed' THEN 'revealed' ELSE 'booked' END, "
+                "  contact_name = COALESCE(NULLIF(booked_crm.contact_name,''), EXCLUDED.contact_name), "
+                "  contact_email = COALESCE(NULLIF(booked_crm.contact_email,''), EXCLUDED.contact_email), "
+                "  next_action = COALESCE(NULLIF(booked_crm.next_action,''), EXCLUDED.next_action), "
+                "  next_action_at = COALESCE(booked_crm.next_action_at, EXCLUDED.next_action_at), "
+                "  updated_by = EXCLUDED.updated_by, updated_at = now() "
+                "WHERE booked_crm.status NOT IN ('won','lost')",
+                (d9, (contact_name or None), (contact_email or None), (na or None), next_action_at,
+                 agent.lower().replace(" ", "")))
+            conn.commit()
+        log.info("lisa_crm_marked_booked", dest9=d9, agent=agent)
+    except Exception as exc:
+        log.warning("lisa_crm_mark_booked_failed", dest9=d9, error=str(exc)[:140])
+
+
+# --------------------------------------------------------------------------- #
 # Post-call webhook handling — record outcome, book if agreed, SMS if missed
 # --------------------------------------------------------------------------- #
 def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> dict:
@@ -1231,13 +1594,36 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
     if not cid:
         return {"ok": False, "error": "no call_id"}
 
-    analysis = call.get("call_analysis") or {}
-    cad = analysis.get("custom_analysis_data") or {}
     meta = call.get("metadata") or {}
     dyn = call.get("retell_llm_dynamic_variables") or {}
     d9 = _d9(meta.get("dest9") or call.get("to_number"))
+    # SOLE SOURCE OF TRUTH = OUR transcript classifier (never Retell's custom_analysis_data). `cad` below is
+    # OUR classifier's verdict shaped like the old Retell payload; it is {} until a transcript exists (so the
+    # call_started / never-connected telephony-only paths behave exactly as before). Idempotent per call_id.
+    cad = _lisa_postcall_cad(pool, settings, call, cid)
     outcome = (cad.get("call_outcome") or "").strip().lower()
     meeting_agreed = bool(cad.get("meeting_agreed"))
+    # QA G1 (runs in the WEBHOOK handler — off the dial loop): belt-and-suspenders on top of OUR classifier —
+    # honour a "booked" only if the call was a genuine two-party conversation (per disconnect reason +
+    # duration) with a concrete agreed time in the transcript. A gate-fail UN-BOOKS here so the DB row, the
+    # calendar booking and the funnel mirror all agree. The verdict comes ONLY from the transcript +
+    # telephony facts, never Retell analytics.
+    if meeting_agreed:
+        from .qa import gates as _qa_gates, audit as _qa_audit
+        _v = _qa_gates.booking_verdict(
+            transcript=call.get("transcript"), disconnect_reason=call.get("disconnection_reason"),
+            duration_ms=call.get("duration_ms") or call.get("call_length_ms"),
+            claimed_time=cad.get("agreed_day_time"))
+        if not _v.ok:
+            meeting_agreed = False
+            try:
+                _qa_audit.log_event(pool, gate="G1", kind="unbooked", call_id=cid, agent="Lisa",
+                                    detail={"reason": _v.reason, "classifier_meeting_agreed": True,
+                                            "disconnect": call.get("disconnection_reason"),
+                                            "duration_ms": call.get("duration_ms"),
+                                            "agreed_day_time": cad.get("agreed_day_time")})
+            except Exception:
+                pass
     cost_cents = None
     try:
         cost_cents = (call.get("call_cost") or {}).get("combined_cost")
@@ -1270,7 +1656,7 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
              call.get("disconnection_reason"), json.dumps(dyn) if dyn else None))
         conn.commit()
 
-    # save the full custom-analysis payload (incl. the post-booking qualification answers) for the strategist.
+    # save OUR classifier's verdict (never Retell's analysis) as the qualification blob for the strategist.
     if cad:
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("UPDATE lisa_calls SET qualification=%s, updated_at=now() WHERE call_id=%s",
@@ -1282,8 +1668,9 @@ def handle_postcall(pool: ConnectionPool, settings: Settings, payload: dict) -> 
         return result  # actions only run on the final analyzed event
 
     # 0) mirror into the funnel so Lisa appears as a BDE in the leaderboard/reports (admin-isolated).
+    #    Pass the G1-gated booking verdict through so the funnel flag matches the DB row + calendar.
     try:
-        _write_funnel_call(pool, cid, dyn, cad, call)
+        _write_funnel_call(pool, cid, dyn, cad, call, booked_override=meeting_agreed)
     except Exception as exc:
         log.warning("lisa_funnel_write_failed", call_id=cid, error=str(exc)[:160])
     # 0a-bis) COMPLIANCE: if the prospect asked not to be contacted, suppress them for good — drop from the
@@ -1413,6 +1800,10 @@ def _book_meeting(pool: ConnectionPool, settings: Settings, call_id: str, dyn: d
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("UPDATE lisa_calls SET booked_event_id=%s, updated_at=now() WHERE call_id=%s", (eid, call_id))
         conn.commit()
+    # A confirmed booking must ALSO land in the booked CRM (not only the funnel + calendar). Fill-blank +
+    # idempotent; contact/time all come from OUR classifier (cad) / the dialed brief (dyn), never Retell.
+    _crm_mark_booked(pool, d9, contact_name=(dyn.get("prospect_name") or cad.get("contact_name")),
+                     contact_email=email, agreed_day_time=when_txt, next_action_at=start, agent="Lisa")
     return eid
 
 
@@ -1427,8 +1818,22 @@ def _parse_when(txt: str) -> datetime | None:
         return None
     t = txt.lower().strip()
     now = datetime.now(ZoneInfo(_TZ))
-    is_pm = ("pm" in t) or ("afternoon" in t) or ("evening" in t)
-    # hour: explicit '2pm'/'8 am' first; else spelled-out ('eight' -> 8); else part-of-day; else 10am
+    is_pm = ("pm" in t) or ("p.m" in t) or ("afternoon" in t) or ("evening" in t) or ("tonight" in t) or ("noon" in t)
+    explicit_am = ("morning" in t) or bool(re.search(r"\d\s*a\.?m\b", t))
+
+    def _resolve(raw: int) -> int:
+        """Spoken hour (1–12) -> 24h. An explicit am/pm/morning/afternoon cue wins; otherwise a bare
+        '1–7 o'clock' is the AFTERNOON (nobody books a 1–7 AM sales meeting), 8–11 is the morning,
+        12 is noon. This stops 'four o'clock' becoming 4 AM (then clamped up to 8 AM)."""
+        if raw == 12:
+            return 12                                  # noon; 12am midnight is never a booking slot
+        if is_pm:
+            return raw + 12
+        if explicit_am:
+            return raw
+        return raw + 12 if 1 <= raw <= 7 else raw
+
+    # hour: explicit '2pm'/'8 am' first; else spelled-out ('four' -> 4); else a bare hour digit; else part-of-day
     hour = None
     m = re.search(r"(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)", t)
     if m:
@@ -1438,8 +1843,12 @@ def _parse_when(txt: str) -> datetime | None:
                 "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
         for w, n in _NUM.items():
             if re.search(rf"\b{w}\b", t):
-                hour = n % 12 + (12 if is_pm else 0)
+                hour = _resolve(n)
                 break
+    if hour is None:                                   # a bare hour digit with no am/pm, e.g. '4 tomorrow'
+        md = re.search(r"(?<![\d:])\b(\d{1,2})(?![\d:/-])(?!\s*(?:st|nd|rd|th))", t)
+        if md:
+            hour = _resolve(int(md.group(1)))
     if hour is None:
         hour = 14 if "afternoon" in t else 17 if "evening" in t else 10
     day = None
@@ -1481,11 +1890,17 @@ def _twilio_ready(settings: Settings) -> bool:
     return bool(acct.startswith("AC") and secret)
 
 
-def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number: str) -> bool:
+def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number: str,
+                     pool: ConnectionPool | None = None) -> bool:
     """Send one SMS DIRECTLY via the Twilio REST API (backend process — never through the Retell voice
     agent, so it can't touch Lisa's call latency). Auth prefers an API Key (SK…:secret) and falls back to
     Account SID:Auth Token; the URL always uses the AC… account. Uses a Messaging Service if configured,
-    else the given from-number. Returns True on 2xx. Raises on HTTP error (caller logs)."""
+    else the given from-number. Returns True on 2xx. Raises on HTTP error (caller logs).
+
+    QA G11/G12 (single send chokepoint — off the dial loop): every message body is passed through the
+    outbound sanitizer here, so it applies to EVERY caller (code-composed AND LLM-composed replies).
+    The banned-phrase scrub is pure-CPU and always runs; the URL->branded-shortlink hygiene runs only
+    when a ``pool`` is supplied (best-effort, guarded)."""
     # Landlines / non-mobiles CANNOT receive SMS — never attempt one (audit links, follow-ups, any SMS).
     if not _is_mobile_au(to_number):
         log.info("sms_skipped_not_mobile", to=to_number)
@@ -1496,6 +1911,7 @@ def _send_sms_twilio(settings: Settings, to_number: str, body: str, from_number:
     user = key_sid or acct                                            # API key SID if present, else account SID
     if not (acct.startswith("AC") and user and secret):
         return False
+    body = _qa_outbound.sanitize_outbound(body, pool)                 # G11/G12: scrub banned phrases + link hygiene
     params = {"To": _e164_au(to_number), "Body": body}
     msvc = getattr(settings, "twilio_messaging_service_sid", "") or ""
     if msvc:
@@ -1558,7 +1974,7 @@ def _send_followup_sms(pool: ConnectionPool, settings: Settings, call_id: str, t
     sent = False
     try:
         if _twilio_ready(settings):
-            sent = _send_sms_twilio(settings, to_number, body, sms_from)          # backend Twilio (preferred)
+            sent = _send_sms_twilio(settings, to_number, body, sms_from, pool)    # backend Twilio (preferred)
         elif getattr(settings, "lisa_sms_agent_id", "") and sms_from:            # legacy Retell fallback
             _retell(settings, "POST", "create-sms-chat", {
                 "from_number": sms_from, "to_number": _e164_au(to_number),
@@ -2103,7 +2519,7 @@ def reply_to_inbound_sms(pool: ConnectionPool, settings: Settings, *, dest9: str
         else:
             sms_from = _pick_sms_from(settings, to_number)
         try:
-            if _twilio_ready(settings) and sms_from and _send_sms_twilio(settings, to_number, reply, sms_from):
+            if _twilio_ready(settings) and sms_from and _send_sms_twilio(settings, to_number, reply, sms_from, pool):
                 _log_sms(pool, "outbound", sms_from, to_number, reply, d9)
                 result["sent"] = True
         except Exception as exc:
@@ -2261,7 +2677,7 @@ def send_audit_link(pool: ConnectionPool, settings: Settings, *, domain: str, to
             f"how {dom.split('.')[0].title()} is showing up on Google: {url}\nHappy to walk you through it. — Lisa")
     sms_from = _pick_sms_from(settings, to_number)
     try:
-        sent = _send_sms_twilio(settings, to_number, body, sms_from)
+        sent = _send_sms_twilio(settings, to_number, body, sms_from, pool)
     except Exception as exc:
         return {"ok": False, "error": f"sms failed: {str(exc)[:120]}", "url": url}
     if sent:
@@ -2278,6 +2694,7 @@ _OUTCOME_MAP = {
     "callback_requested": (True, True, "conversation", False),
     "not_interested": (True, True, "conversation", False),
     "do_not_call": (True, True, "conversation", False),
+    "conversation": (True, True, "conversation", False),   # OUR classifier's generic live-DM conversation
     "gatekeeper_only": (True, False, "gatekeeper", False),
     "voicemail": (False, False, "voicemail", True),
     "no_answer": (False, False, "no_answer", False),
@@ -2286,12 +2703,69 @@ _OUTCOME_MAP = {
 
 
 def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, call: dict,
-                       *, bde_ext: str = "LISA", bde_name: str = "Lisa") -> None:
+                       *, bde_ext: str = "LISA", bde_name: str = "Lisa",
+                       booked_override: bool | None = None,
+                       classifier_booked: bool | None = None) -> None:
     """Mirror a completed AI-agent call into `calls` + `classifications` (provider='retell') so the
     leaderboard / funnel / reports treat her like any BDE. Defaults to Lisa-1; Lisa-4 passes her own
-    identity. Isolation to admins is via PRIVATE_BDE_NAMES. Idempotent per call_id."""
+    identity. Isolation to admins is via PRIVATE_BDE_NAMES. Idempotent per call_id.
+
+    `cad` here is OUR transcript classifier's verdict (shaped like the old Retell payload) — Retell's
+    custom_analysis_data is never read anywhere in the Lisa path.
+
+    QA gates (all off the dial loop — this is the post-call funnel mirror):
+      * ``classifier_booked`` (G2): when the heavyweight transcript classifier's own booking verdict is
+        supplied (the batch classify_ai_calls pass), it is AUTHORITATIVE for the funnel booking flag.
+      * G1 booking gate: a booking is honoured only if it passes qa.gates.booking_verdict (a genuine
+        two-party conversation with a concrete agreed time). A gate-fail UN-BOOKS. ``booked_override``
+        lets a webhook handler that already gated pass its verdict straight through."""
     outcome = (cad.get("call_outcome") or "").strip().lower()
-    booked = bool(cad.get("meeting_agreed"))
+    raw_booked = bool(cad.get("meeting_agreed"))
+    # G2 — transcript classifier is authoritative for the booking flag when its verdict is supplied.
+    base_booked = bool(classifier_booked) if classifier_booked is not None else raw_booked
+    if classifier_booked is not None and raw_booked and not base_booked:
+        try:
+            from .qa import audit as _qa_audit
+            _qa_audit.log_event(pool, gate="G2", kind="unbooked_classifier", call_id=cid, agent=bde_name,
+                                detail={"webhook_meeting_agreed": True, "classifier_booked": False})
+        except Exception:
+            pass
+    # G1 — honour a booking only if it passes the QA booking gate. booked_override short-circuits when
+    # the caller already gated; otherwise gate here (covers the classify path) so a fake booking can be
+    # un-booked. Booking verdict derives ONLY from the transcript + hard telephony facts.
+    if booked_override is not None:
+        booked = bool(booked_override)
+    else:
+        booked = base_booked
+        if booked:
+            from .qa import gates as _qa_gates
+            _tx = call.get("transcript")
+            _dr = call.get("disconnection_reason")
+            _dur = call.get("duration_ms") or call.get("call_length_ms")
+            if _tx is None or _dr is None:          # classify path carries neither — read stored facts
+                try:
+                    _r = _fetch(pool, "SELECT transcript, disconnect_reason, duration_ms "
+                                "FROM lisa_calls WHERE call_id=%s", (cid,))
+                    if _r:
+                        _tx = _tx if _tx is not None else _r[0].get("transcript")
+                        _dr = _dr if _dr is not None else _r[0].get("disconnect_reason")
+                        _dur = _dur or _r[0].get("duration_ms")
+                except Exception:
+                    pass
+            _v = _qa_gates.booking_verdict(transcript=_tx, disconnect_reason=_dr, duration_ms=_dur,
+                                           claimed_time=cad.get("agreed_day_time"))
+            if not _v.ok:
+                booked = False
+                # a genuine conversation that merely lacked a firm time -> record as a conversation/callback
+                if _v.downgraded_outcome == "conversation" and outcome in ("", "booked", "meeting_booked"):
+                    outcome = "callback_requested"
+                try:
+                    from .qa import audit as _qa_audit
+                    _qa_audit.log_event(pool, gate="G1", kind="unbooked_funnel", call_id=cid, agent=bde_name,
+                                        detail={"reason": _v.reason, "webhook_meeting_agreed": raw_booked,
+                                                "classifier_booked": classifier_booked})
+                except Exception:
+                    pass
     callback = outcome == "callback_requested" or bool(cad.get("callback_when"))
     answered, reached, co, is_vm = _OUTCOME_MAP.get(outcome, (False, False, "no_answer", False))
     if booked:
@@ -2350,7 +2824,9 @@ def _write_funnel_call(pool: ConnectionPool, cid: str, dyn: dict, cad: dict, cal
                 "INSERT INTO transcripts (call_id, source, diarized, text, sentiment, summary) "
                 "VALUES (%s,'retell',true,%s,%s,%s) ON CONFLICT (call_id) DO UPDATE SET "
                 "text=EXCLUDED.text, summary=EXCLUDED.summary",
-                (cid, tx, (call.get("call_analysis") or {}).get("user_sentiment"), cad.get("call_summary")))
+                # sentiment is a Retell analysis field (banned as an input/record) — store NULL; our own
+                # coach/classifier derives everything it needs from the transcript text + summary.
+                (cid, tx, None, cad.get("call_summary")))
         conn.commit()
 
 
@@ -2367,21 +2843,24 @@ _AI_CLASSIFY_CONTEXT = (
 
 def classify_ai_calls(pool: ConnectionPool, settings: Settings, limit: int = 6) -> dict:
     """Stage-by-stage classification for AI-agent calls — the SAME evidence panel human calls get — with
-    brand context injected. Retell's own post-call analysis stays authoritative for the funnel FLAGS
-    (re-asserted after the classifier writes its evidence), so a rubric quirk can never un-book a meeting."""
+    brand context injected. QA G2: OUR (heavyweight) transcript classifier is authoritative for the funnel
+    booking flag (its verdict is passed to _write_funnel_call as classifier_booked); Retell's analysis is
+    never consulted, and the G1 gate inside _write_funnel_call can un-book a call that isn't a genuine
+    two-party conversation with a concrete agreed time."""
     rows = _fetch(pool,
         "SELECT c.call_id, c.answered, c.is_voicemail, c.dest_number, c.started_at, "
         "  t.text, t.sentiment, t.summary, t.diarized "
         "FROM calls c JOIN transcripts t ON t.call_id=c.call_id "
         "JOIN classifications cl ON cl.call_id=c.call_id "
-        "WHERE c.bde_name IN ('Lisa','Lisa 4') AND c.in_scope AND c.answered "
+        "WHERE c.bde_name IN ('Lisa','Lisa 4','Lisa 5','Lisa5') AND c.in_scope AND c.answered "
         "  AND cl.evidence IS NULL AND length(t.text) > 250 LIMIT %s", (limit,))
     if not rows:
         return {"classified": 0}
     from .classify.classifier import Classifier, upsert_classification
     clf = Classifier(settings)
     l4nums = set(getattr(settings, "lisa4_numbers", []) or [])
-    agent_nums = l4nums | set(getattr(settings, "lisa_numbers", []) or [])
+    l5nums = set(getattr(settings, "lisa5_numbers", []) or [])
+    agent_nums = l4nums | l5nums | set(getattr(settings, "lisa_numbers", []) or [])
     n = 0
     for row in rows:
         try:
@@ -2405,10 +2884,19 @@ def classify_ai_calls(pool: ConnectionPool, settings: Settings, limit: int = 6) 
                 except Exception:
                     dyn = {}
                 is_l4 = (r["from_number"] in l4nums) or ((r["to_number"] or "") in l4nums)
+                is_l5 = (r["from_number"] in l5nums) or ((r["to_number"] or "") in l5nums)
+                # G2: hand the classifier's OWN transcript-based booking verdict to the funnel mirror
+                # (authoritative), and surface the transcript so the G1 gate can check for a real time.
+                _cbk = bool(rec.get("meeting_booked"))
+                call["transcript"] = row.get("text")
                 if is_l4:
-                    _write_funnel_call(pool, row["call_id"], dyn, cad, call, bde_ext="LISA4", bde_name="Lisa 4")
+                    _write_funnel_call(pool, row["call_id"], dyn, cad, call, bde_ext="LISA4",
+                                       bde_name="Lisa 4", classifier_booked=_cbk)
+                elif is_l5:
+                    _write_funnel_call(pool, row["call_id"], dyn, cad, call, bde_ext="LISA5",
+                                       bde_name="Lisa 5", classifier_booked=_cbk)
                 else:
-                    _write_funnel_call(pool, row["call_id"], dyn, cad, call)
+                    _write_funnel_call(pool, row["call_id"], dyn, cad, call, classifier_booked=_cbk)
             n += 1
         except Exception as exc:
             log.warning("classify_ai_call_failed", call_id=row.get("call_id"), error=str(exc)[:120])
@@ -2648,6 +3136,122 @@ def sync_reveal_calls(pool: ConnectionPool, settings: Settings) -> dict:
         return {"error": str(exc)[:160]}
 
 
+def reap_stuck_ongoing(pool, settings, max_calls: int = 12) -> dict:
+    """Webhook-outage resilience: if Retell's call-end webhook was dropped (e.g. during a container
+    restart), a finished call stays status='ongoing' and jams the 1-call-at-a-time inflight gate for
+    the full 8-min window, throttling dialing. Poll Retell for the REAL status of each stuck call and
+    clear only the ones Retell CONFIRMS ended (never a live call -> no concurrency risk). Complements
+    the 15-min SQL reaper (which is the backstop for calls Retell has no record of). Fully guarded;
+    never raises."""
+    key = getattr(settings, "retellai_api_key", "") or ""
+    if not key:
+        return {"skipped": "no key"}
+    # Only poll calls older than ~150s (never a just-started call) and younger than 20 min (the existing
+    # 15-min SQL reaper already handles anything older — Retell may no longer have a record of it).
+    try:
+        rows = _fetch(pool,
+            "SELECT call_id FROM lisa_calls WHERE status='ongoing' AND call_id IS NOT NULL "
+            "  AND created_at < now() - interval '150 seconds' "
+            "  AND created_at > now() - interval '20 minutes' "
+            "ORDER BY created_at LIMIT %s", (max_calls,))
+    except Exception as exc:
+        log.warning("reap_stuck_ongoing_select_failed", error=str(exc)[:120])
+        return {"error": str(exc)[:120]}
+    polled = 0
+    cleared = 0
+    for r in rows:
+        cid = r.get("call_id")
+        if not cid:
+            continue
+        # Each call's poll+update is isolated: one bad call must never abort the batch.
+        try:
+            polled += 1
+            req = urllib.request.Request(
+                f"{RETELL_BASE}/v2/get-call/{cid}",
+                headers={"Authorization": f"Bearer {key}"}, method="GET")
+            resp = urllib.request.urlopen(req, timeout=8)
+            body = resp.read().decode()
+            st = (json.loads(body).get("call_status") or "") if body.strip() else ""
+            # Clear ONLY when Retell CONFIRMS a terminal status (anything that is NOT ongoing/registered).
+            # An empty/unknown status is treated as still-live and left alone — zero concurrency risk.
+            if st and st not in ("ongoing", "registered"):
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE lisa_calls SET status='analyzed' "
+                                "WHERE call_id=%s AND status='ongoing'", (cid,))
+                    conn.commit()
+                cleared += 1
+        except Exception as exc:
+            log.warning("reap_stuck_ongoing_poll_failed", call_id=str(cid)[:40], error=str(exc)[:120])
+    if cleared:
+        log.info("reap_stuck_ongoing", polled=polled, cleared=cleared)
+    return {"polled": polled, "cleared": cleared}
+
+
+def backfill_retell_transcripts(pool, settings, limit: int = 10) -> dict:
+    """SECOND-OPTION transcript source for Lisa/Retell calls. When Retell's post-call webhook is dropped
+    (e.g. a morning dialer stall) the call's `transcript` is never stored, and the OpenAI-Whisper backfill
+    (transcribe.py) can't help during an OpenAI-credit outage — so the call has NO transcript and can never
+    be analysed. Retell itself already transcribed the call, so fetch ONLY the raw `transcript` text from
+    Retell's get-call API and store it, giving the existing classifier something to read. We DELIBERATELY
+    ignore every other Retell post-call field (call_analysis / user_sentiment / custom_analysis_data /
+    summary / booking-agreed flags) — those are distrusted here; only the raw transcript text is used. Needs
+    no OpenAI, so it works during the outage. Fully guarded; never raises. Idempotent — a call that already
+    has a usable transcript (>250 chars) is never re-selected or re-fetched."""
+    key = getattr(settings, "retellai_api_key", "") or ""
+    if not key:
+        return {"skipped": "no key"}
+    # Recent Lisa/Retell calls (the Retell call_id lives on lisa_calls) that have NO usable transcript yet.
+    # lisa_calls has no `answered` flag — the answered signal is `call_outcome`; a dropped webhook leaves it
+    # NULL (exactly the calls we need to rescue), so INCLUDE NULL and only EXCLUDE the confirmed dead
+    # outcomes (the per-call length>250 gate below is the real answered check for anything that slips in).
+    try:
+        rows = _fetch(pool,
+            "SELECT lc.call_id FROM lisa_calls lc "
+            "WHERE lc.call_id IS NOT NULL "
+            "  AND lc.created_at > now() - interval '3 days' "
+            "  AND (lc.call_outcome IS NULL OR lc.call_outcome NOT IN ('no_answer','voicemail','wrong_number')) "
+            "  AND NOT EXISTS (SELECT 1 FROM transcripts t "
+            "                  WHERE t.call_id=lc.call_id AND length(t.text) > 250) "
+            "ORDER BY lc.created_at DESC LIMIT %s", (limit,))
+    except Exception as exc:
+        log.warning("backfill_retell_transcripts_select_failed", error=str(exc)[:120])
+        return {"error": str(exc)[:120]}
+    scanned = 0
+    backfilled = 0
+    for r in rows:
+        cid = r.get("call_id")
+        if not cid:
+            continue
+        # Each call's fetch+store is isolated: one bad call must never abort the batch.
+        try:
+            scanned += 1
+            req = urllib.request.Request(
+                f"{RETELL_BASE}/v2/get-call/{cid}",
+                headers={"Authorization": f"Bearer {key}"}, method="GET")
+            resp = urllib.request.urlopen(req, timeout=8)
+            body = resp.read().decode()
+            # ONLY the raw transcript text — never Retell's analysis / sentiment / booking fields.
+            tx = (json.loads(body).get("transcript") or "") if body.strip() else ""
+            if not (isinstance(tx, str) and len(tx) > 250):
+                continue
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO transcripts (call_id, source, diarized, text, sentiment, summary) "
+                    "VALUES (%s, 'retell', false, %s, NULL, NULL) "
+                    "ON CONFLICT (call_id) DO UPDATE SET text = EXCLUDED.text, source = EXCLUDED.source",
+                    (cid, tx))
+                cur.execute("UPDATE lisa_calls SET transcript=%s, updated_at=now() "
+                            "WHERE call_id=%s AND (transcript IS NULL OR length(transcript) < 250)", (tx, cid))
+                cur.execute("UPDATE calls SET has_transcript = true WHERE call_id = %s", (cid,))
+                conn.commit()
+            backfilled += 1
+        except Exception as exc:
+            log.warning("retell_transcript_fetch_failed", call_id=str(cid)[:40], error=str(exc)[:120])
+    if backfilled:
+        log.info("backfill_retell_transcripts", scanned=scanned, backfilled=backfilled)
+    return {"scanned": scanned, "backfilled": backfilled}
+
+
 def run_lisa_autodial(pool: ConnectionPool, settings: Settings) -> dict:
     """GATED daily dialer. When lisa_autodial_enabled, dial Lisa's DUE calendar events (fresh/retry/
     callback) within the business-hours window, up to the daily target, a few at a time. Marks each dialed
@@ -2827,7 +3431,53 @@ def _llm_json(settings: Settings, system: str, user: str, model: str | None = No
         return json.loads(r.choices[0].message.content or "{}")
     except Exception as exc:
         log.warning("lisa_llm_json_failed", error=str(exc)[:160])
+        # FAIL OVER TO ANTHROPIC so booking classification NEVER silently stops when OpenAI is down / out of
+        # credits (the 2026-08-25 zero-bookings incident: OpenAI credit_balance_exhausted → classifier
+        # degraded to the no-booking fallback → real bookings were dropped all day). Anthropic funds the audit
+        # path already, so this keeps the whole classifier alive on one provider outage.
+        try:
+            d = _llm_json_anthropic(settings, system, user, pool=pool, purpose=purpose)
+            if d:
+                return d
+        except Exception as exc2:
+            log.warning("lisa_llm_json_anthropic_failed", error=str(exc2)[:160])
         return {}
+
+
+def _llm_json_anthropic(settings: Settings, system: str, user: str,
+                        pool: ConnectionPool | None = None, purpose: str = "") -> dict:
+    """Anthropic JSON fallback for _llm_json — used when the OpenAI classifier call fails (outage / no
+    credits). Anthropic has no json_object response mode, so we instruct JSON-only and extract the object.
+    Returns {} on any failure. Uses a fast, cheap model so per-call classification stays inexpensive."""
+    key = getattr(settings, "anthropic_api_key", "") or ""
+    if not key:
+        return {}
+    from anthropic import Anthropic
+    client = Anthropic(api_key=key)
+    model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
+    msg = client.messages.create(
+        model=model, max_tokens=1500, temperature=0.2,
+        system=system + "\n\nOutput ONLY a single valid JSON object — no prose, no code fences.",
+        messages=[{"role": "user", "content": user[:24000]}])
+    txt = "".join(getattr(b, "text", "") for b in (msg.content or []) if getattr(b, "type", None) == "text").strip()
+    if txt.startswith("```"):
+        txt = txt.split("\n", 1)[1] if "\n" in txt else txt[3:]
+        if txt.rstrip().endswith("```"):
+            txt = txt.rstrip()[:-3]
+    i, j = txt.find("{"), txt.rfind("}")
+    if i < 0 or j <= i:
+        return {}
+    try:
+        if pool is not None and getattr(msg, "usage", None):
+            it = getattr(msg.usage, "input_tokens", 0) or 0
+            ot = getattr(msg.usage, "output_tokens", 0) or 0
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO lisa_llm_usage (purpose, model, prompt_tokens, completion_tokens, cost_cents) "
+                            "VALUES (%s,%s,%s,%s,%s)", ((purpose or "lisa") + "-anthropic", model, it, ot, 0))
+                conn.commit()
+    except Exception:
+        pass
+    return json.loads(txt[i:j + 1])
 
 
 def refresh_playbook(pool: ConnectionPool, settings: Settings, *, force: bool = False) -> dict:
@@ -3439,16 +4089,21 @@ def recent_calls(pool: ConnectionPool, limit: int = 100, from_numbers: list[str]
     truncated by the recent-N window (at 600+ calls/day a morning booking falls outside the last
     300 rows). Line attribution = either-leg rule: a call is Lisa-4's iff from_number OR to_number
     contains her line digits (inbound bookings like Samantha's count for L4); else Lisa-1."""
-    from .lisa4 import L4_LINE_RX  # single source of truth for the Lisa-4 line registry (all lines ever)
+    from .lisa4 import L4_LINE_RX, L5_LINE_RX  # single source of truth for the Lisa-4/5 line registries (all lines ever)
     ensure_tables(pool)
     froms = list(from_numbers or [])
     l4_pred = ("(COALESCE(lc.from_number,'') ~ %(l4d)s "
                "OR COALESCE(lc.to_number,'') ~ %(l4d)s)")
-    conds, extra = [], {"l4d": L4_LINE_RX}
+    l5_pred = ("(COALESCE(lc.from_number,'') ~ %(l5d)s "
+               "OR COALESCE(lc.to_number,'') ~ %(l5d)s)")
+    conds, extra = [], {"l4d": L4_LINE_RX, "l5d": L5_LINE_RX}
     if agent == "lisa4":
         conds.append(l4_pred)
+    elif agent == "lisa5":
+        conds.append(l5_pred)
     elif agent == "lisa1":
-        conds.append(f"NOT {l4_pred}")
+        # Lisa-1 = neither Lisa-4 NOR Lisa-5 (mirrors the funnel partition; else Lisa-5's legs leak in).
+        conds.append(f"NOT {l4_pred} AND NOT {l5_pred}")
     if booked:
         conds.append("COALESCE(lc.meeting_agreed,false)")
     if date == "today":
@@ -3462,7 +4117,7 @@ def recent_calls(pool: ConnectionPool, limit: int = 100, from_numbers: list[str]
         "SELECT lc.call_id, lc.dest9, lc.prospect_name, lc.company_name, lc.domain, lc.status, lc.call_outcome, "
         # which agent owns this row (either-leg rule) — the UI scopes/chips by THIS, not by
         # comparing raw numbers client-side (formatting drift dropped inbound rows).
-        f"  CASE WHEN {l4_pred} THEN 'lisa4' ELSE 'lisa1' END AS agent, "
+        f"  CASE WHEN {l4_pred} THEN 'lisa4' WHEN {l5_pred} THEN 'lisa5' ELSE 'lisa1' END AS agent, "
         # ALWAYS-identifiable name: call record -> Lisa-4 pool (title/company/domain) -> the number itself
         "  COALESCE(NULLIF(lc.company_name,''), lp4.title, lp4.company, lp4.domain, NULLIF(lc.domain,''), "
         "           NULLIF(lc.prospect_name,''), lc.to_number) AS display_name, lp4.bucket AS pool_bucket, "

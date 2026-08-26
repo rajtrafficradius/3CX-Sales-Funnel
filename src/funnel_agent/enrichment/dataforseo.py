@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import re
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 import httpx
@@ -175,6 +176,169 @@ class DataForSEOClient:
             })
         return {"keywords": out, "count": res.get("total_count") or len(out), "cost": d.get("cost")}
 
+    def keyword_suggestions(self, seeds: list[str], location_code: int | None = None,
+                            per_seed: int = 25, max_seeds: int = 3) -> dict:
+        """Keyword-DEMAND discovery — the REAL service+location searches buyers actually type around a set
+        of SEED service terms. This is the signal `ranked_keywords` can't give: it only sees what a domain
+        ALREADY ranks for, so a low-footprint site (a machine shop ranking for ~3 terms) never reveals its
+        true addressable market ('cnc machining melbourne', 'line boring', 'engine reconditioning', …).
+
+        ENDPOINT CHOICE — dataforseo_labs/google/keyword_suggestions/live (SEED-CONTAINING long-tail), NOT
+        keyword_ideas/live: keyword_ideas returns CATEGORY-mates (for a machine-shop seed it hands back
+        'amazon australia', 'sydney weather' — huge-volume but wildly off-topic noise), whereas suggestions
+        returns keywords that literally CONTAIN the seed ('cnc machining' → 'cnc machining melbourne',
+        'precision cnc machining', …) — the actual service demand we want. We take keyword DATA only
+        (search volume + CPC + competition) and estimate capture/traffic ourselves — exactly like the
+        competitor gap — never buying a traffic figure.
+
+        One call per seed (capped at `max_seeds` to control cost); results are merged, deduped by keyword
+        (keeping the higher volume), and ordered by search volume (biggest demand first).
+
+        GUARDED: any failure, task-error, empty seed set or missing key returns {} and NEVER raises — a
+        discovery miss must fall back to today's behaviour, never sink an audit or inflate a number."""
+        try:
+            seeds_clean: list[str] = []
+            for s in (seeds or []):
+                s = (s or "").strip().lower()
+                if s and s not in seeds_clean:
+                    seeds_clean.append(s)
+            seeds_clean = seeds_clean[:max(1, max_seeds)]
+            if not seeds_clean:
+                return {}
+            loc = int(location_code or self.loc)
+            merged: dict[str, dict] = {}
+            total_cost = 0.0
+            for seed in seeds_clean:
+                body = [{
+                    "keyword": seed,
+                    "location_code": loc,
+                    "language_code": self.lang,
+                    "limit": min(max(per_seed, 10), 100),
+                    "include_seed_keyword": True,
+                    "order_by": ["keyword_info.search_volume,desc"],
+                    # real demand only — drop null/zero-volume suggestions server-side
+                    "filters": [["keyword_info.search_volume", ">", 0]],
+                }]
+                try:
+                    d = self._post("/v3/dataforseo_labs/google/keyword_suggestions/live", body)
+                except Exception as exc:
+                    log.warning("dataforseo_keyword_suggestions_call_failed", seed=seed, error=str(exc)[:120])
+                    continue
+                task = (d.get("tasks") or [{}])[0]
+                sc = task.get("status_code")
+                if sc is not None and int(sc) >= 40000:   # bad seed / no funds — skip this seed, don't raise
+                    log.warning("dataforseo_keyword_suggestions_task_error", seed=seed, status=str(sc),
+                                message=str(task.get("status_message"))[:120])
+                    continue
+                total_cost += (d.get("cost") or 0)
+                res = self._first_result(d)
+                for it in (res.get("items") or []):
+                    ki = it.get("keyword_info") or {}
+                    kw = it.get("keyword")
+                    if not kw:
+                        continue
+                    key = kw.strip().lower()
+                    vol = ki.get("search_volume") or 0
+                    row = {"keyword": kw, "search_volume": vol,
+                           "cpc": round(ki.get("cpc") or 0, 2), "competition": ki.get("competition")}
+                    prev = merged.get(key)
+                    if not prev or vol > (prev.get("search_volume") or 0):
+                        merged[key] = row
+            out = sorted(merged.values(), key=lambda r: r.get("search_volume") or 0, reverse=True)
+            return {"keywords": out, "count": len(out), "cost": round(total_cost, 4)}
+        except Exception as exc:
+            log.warning("dataforseo_keyword_suggestions_failed", error=str(exc)[:160])
+            return {}
+
+    def keyword_clusters(self, seeds: list[str], location_code: int | None = None,
+                         per_seed: int = 40, max_seeds: int = 6) -> dict:
+        """FULL keyword-DEMAND + product/service THEME CLUSTERS around a set of SEED service/product terms.
+
+        This is the audit's answer to a domain with NO SEO footprint of its own: keyword / search-volume /
+        CPC come from Google's keyword DATABASE (via keyword_suggestions), NOT from any domain's rankings —
+        so a brand-new or 'coming soon' site still yields the real shape of its market's demand. Wraps
+        keyword_suggestions (seed-containing long-tail), then groups the returned keywords into
+        product/service clusters (`cluster_keywords`) each carrying total monthly search volume, an average
+        CPC and its top example searches.
+
+        Returns {seeds, keywords, clusters, cost}; clusters are ordered by commercial value (volume × CPC).
+        GUARDED: returns {} on any failure and NEVER raises — a discovery miss must fall back, never sink an
+        audit."""
+        try:
+            sug = self.keyword_suggestions(seeds, location_code=location_code,
+                                           per_seed=per_seed, max_seeds=max_seeds)
+            kws = sug.get("keywords") or []
+            return {"seeds": [s for s in (seeds or []) if s],
+                    "keywords": kws, "clusters": cluster_keywords(kws), "cost": sug.get("cost")}
+        except Exception as exc:
+            log.warning("dataforseo_keyword_clusters_failed", error=str(exc)[:160])
+            return {}
+
+    def serp_competitors(self, keywords: list[str], limit: int = 20) -> dict:
+        """Domains competing across a SET OF KEYWORDS (DataForSEO Labs serp_competitors/live).
+        Used to find REAL same-vertical competitors for a low-footprint site by seeding with its
+        industry+location SERVICE terms (e.g. 'cnc machining melbourne') — far more accurate than
+        brand-lookalike domain-overlap matches (which returned metro-transport for a machine shop).
+        Ordered by how much each domain competes on the seed keywords."""
+        kws = [k for k in (keywords or []) if k][:20]
+        if not kws:
+            return {"items": []}
+        body = [{"keywords": kws, "location_code": self.loc, "language_code": self.lang,
+                 "limit": min(max(limit, 5), 50),
+                 # only domains ranking organically for a meaningful share of the seed set
+                 "filters": [["median_position", "<=", 50]]}]
+        d = self._post("/v3/dataforseo_labs/google/serp_competitors/live", body)
+        task = (d.get("tasks") or [{}])[0]
+        sc = task.get("status_code")
+        if sc is not None and int(sc) >= 40000:
+            raise RuntimeError(f"DataForSEO serp_competitors error {sc}: {task.get('status_message')}")
+        res = self._first_result(d)
+        out = []
+        for it in (res.get("items") or []):
+            dom = it.get("domain")
+            if not dom:
+                continue
+            met = ((it.get("full_domain_metrics") or {}).get("organic")
+                   or (it.get("metrics") or {}).get("organic") or {})
+            out.append({
+                "domain": dom,
+                "avg_position": it.get("avg_position"),
+                "median_position": it.get("median_position"),
+                "relevant_serp_items": it.get("relevant_serp_items"),
+                "visibility": it.get("visibility"),
+                "organic_keywords": met.get("count") or met.get("pos_1"),
+                "etv": met.get("etv"),
+            })
+        return {"items": out, "cost": d.get("cost")}
+
+    def serp_organic(self, query: str, depth: int = 10) -> list[dict]:
+        """Top ORGANIC Google results for a free-text query → [{domain, url, title, rank}].
+        Used by the website-finder to locate a booked prospect's real site by Googling the
+        business name (+ suburb/state). AU-scoped by the client's location/language. Returns
+        organic items only (ads / maps-pack / PAA stripped). Raises only on a task-level error;
+        the caller guards. `depth` is clamped 10-30 (one SERP page is plenty to find a homepage)."""
+        kw = " ".join((query or "").split())
+        if not kw:
+            return []
+        body = [{"keyword": kw[:700], "location_code": self.loc, "language_code": self.lang,
+                 "depth": min(max(depth, 10), 30), "device": "desktop"}]
+        d = self._post("/v3/serp/google/organic/live/advanced", body)
+        task = (d.get("tasks") or [{}])[0]
+        sc = task.get("status_code")
+        if sc is not None and int(sc) >= 40000:
+            raise RuntimeError(f"DataForSEO serp_organic error {sc}: {task.get('status_message')}")
+        res = self._first_result(d)
+        out = []
+        for it in (res.get("items") or []):
+            if (it.get("type") or "") != "organic":
+                continue
+            dom = (it.get("domain") or "").lower().removeprefix("www.")
+            if not dom:
+                continue
+            out.append({"domain": dom, "url": it.get("url"), "title": it.get("title"),
+                        "rank": it.get("rank_group") or it.get("rank_absolute")})
+        return out
+
     def backlinks_summary(self, domain: str) -> dict:
         """Domain authority + backlink profile (rank, referring domains, backlinks count)."""
         body = [{"target": domain, "internal_list_limit": 1, "backlinks_status_type": "live"}]
@@ -301,6 +465,92 @@ def money_score(kw: dict) -> float:
     vol = kw.get("search_volume") or 0
     cpc = kw.get("cpc") or 0
     return vol * cpc if cpc and cpc > 0 else vol * 0.12
+
+
+# ============================================================================================ #
+# KEYWORD CLUSTERING — group a flat keyword-demand list into product/service themes.
+# Self-contained (own stop/geo sets) so there is no import cycle with audit.py; used by
+# keyword_clusters() above AND by audit.discover_demand_keywords to cluster the FILTERED demand.
+# ============================================================================================ #
+_CLUSTER_STOP = {
+    "the", "and", "for", "with", "your", "you", "our", "are", "can", "get", "from", "that", "this",
+    "near", "me", "in", "on", "of", "to", "a", "an", "at", "by", "or", "is", "best", "top", "cheap",
+    "price", "prices", "pricing", "cost", "costs", "new", "used", "how", "what", "why", "vs", "versus",
+    "my", "we", "per", "australia", "australian", "au", "com", "www", "sale", "buy",
+}
+_CLUSTER_GEO = {
+    "sydney", "melbourne", "brisbane", "perth", "adelaide", "canberra", "hobart", "darwin", "gold",
+    "coast", "newcastle", "wollongong", "geelong", "nsw", "vic", "qld", "wa", "sa", "tas", "act", "nt",
+    "australia",
+}
+
+
+def _cluster_stem(t: str) -> str:
+    """Cheap singularisation so 'tool'/'tools' and 'scaffold'/'scaffolds' cluster together."""
+    if len(t) > 4 and t.endswith("s") and not t.endswith("ss"):
+        return t[:-3] if t.endswith("ies") else t[:-1]
+    return t
+
+
+def _cluster_sig_tokens(kw: str) -> list[str]:
+    toks = re.findall(r"[a-z][a-z]+", (kw or "").lower())
+    return [_cluster_stem(t) for t in toks if len(t) > 2 and t not in _CLUSTER_STOP and t not in _CLUSTER_GEO]
+
+
+def cluster_keywords(keywords: list[dict], *, max_clusters: int = 10, min_cluster: int = 2) -> list[dict]:
+    """Group keyword rows (each {keyword, search_volume|volume, cpc}) into product/service THEME clusters by
+    their most DISTINCTIVE shared token — so a no-footprint audit can still show the SHAPE of a market's
+    demand. Each cluster: {label, keywords_count, volume, avg_cpc, value, examples[]}. Ordered by commercial
+    value (monthly volume × average CPC); singletons collapse into a 'Long-tail / other' bucket. Pure +
+    fully guarded — returns [] on any failure and never raises."""
+    try:
+        rows = []
+        for r in (keywords or []):
+            vol = r.get("search_volume") or r.get("volume") or 0
+            if not r.get("keyword") or vol <= 0:
+                continue
+            rows.append({"keyword": r.get("keyword"), "volume": vol, "cpc": r.get("cpc") or 0,
+                         "_st": _cluster_sig_tokens(r.get("keyword"))})
+        if not rows:
+            return []
+        freq: Counter = Counter()
+        for r in rows:
+            for t in set(r["_st"]):
+                freq[t] += 1
+        n = len(rows)
+        # a token in >40% of the set is too generic to be a THEME (e.g. 'hire' for a hire company) — cluster
+        # on the most distinctive shared token instead so one head word doesn't swallow everything.
+        generic = {t for t, c in freq.items() if n and c > 0.40 * n}
+        surface: dict = {}
+        for r in rows:
+            for w in re.findall(r"[a-z][a-z]+", r["keyword"].lower()):
+                if len(w) > 2 and w not in _CLUSTER_STOP and w not in _CLUSTER_GEO:
+                    surface.setdefault(_cluster_stem(w), w)
+        buckets: dict = defaultdict(list)
+        for r in rows:
+            cand = [t for t in r["_st"] if t not in generic] or r["_st"]
+            key = max(cand, key=lambda t: (freq[t], len(t))) if cand else "other"
+            buckets[key].append(r)
+
+        def _agg(key, brows):
+            vol = sum(r["volume"] for r in brows)
+            cpcs = [r["cpc"] for r in brows if r["cpc"]]
+            avg_cpc = round(sum(cpcs) / len(cpcs), 2) if cpcs else 0.0
+            ex = [r["keyword"] for r in sorted(brows, key=lambda x: x["volume"], reverse=True)[:5]]
+            return {"label": (surface.get(key, key) or key).title(), "keywords_count": len(brows),
+                    "volume": vol, "avg_cpc": avg_cpc, "value": round(vol * avg_cpc), "examples": ex}
+
+        main, longtail = [], []
+        for key, brows in buckets.items():
+            (longtail.extend(brows) if (len(brows) < min_cluster or key == "other") else main.append((key, brows)))
+        clusters = [_agg(k, b) for k, b in main]
+        clusters.sort(key=lambda c: (c["value"], c["volume"]), reverse=True)
+        clusters = clusters[:max_clusters]
+        if longtail:
+            lt = _agg("other", longtail); lt["label"] = "Long-tail / other"; clusters.append(lt)
+        return clusters
+    except Exception:
+        return []
 
 
 def build_seo_audit(keywords: list[dict], *, brands: set[str] | None = None,

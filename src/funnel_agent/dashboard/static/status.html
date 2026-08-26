@@ -1,0 +1,92 @@
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Engine Status · AI Sales Floor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🩺</text></svg>">
+<style>
+ :root{--bg:#0b0f16;--panel:#10151e;--panel2:#161c27;--line:#222b39;--line-soft:#1a212c;--txt:#e8edf5;--muted:#8b96a6;--faint:#5b6675;
+   --ok:#34d399;--okb:#0e2a22;--warn:#fbbf24;--warnb:#2a2410;--down:#f87171;--downb:#2a1414;--idle:#5b8cff;--idleb:#111a2e;--unknown:#8b96a6;--unknownb:#1a1f28;}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;-webkit-font-smoothing:antialiased}
+ .wrap{max-width:1180px;margin:0 auto;padding:22px 20px 60px}
+ header{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+ header h1{font-size:20px;font-weight:850;letter-spacing:-.02em;margin:0}
+ header .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+ a.back{margin-left:auto;color:var(--muted);text-decoration:none;font-size:12.5px;border:1px solid var(--line);border-radius:8px;padding:6px 12px}
+ a.back:hover{color:var(--txt);border-color:var(--muted)}
+ .bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:14px 0 20px}
+ .odot{width:12px;height:12px;border-radius:50%}
+ .obig{font-size:16px;font-weight:850}
+ .pill{font-size:11.5px;font-weight:800;border-radius:999px;padding:4px 11px;display:inline-flex;align-items:center;gap:6px}
+ .pill i{width:7px;height:7px;border-radius:50%;display:inline-block}
+ .updated{margin-left:auto;color:var(--faint);font-size:11.5px}
+ .grpttl{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:22px 4px 10px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+ .tile{background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:12px;padding:14px 16px;position:relative}
+ .tile .top{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+ .tile .nm{font-weight:750;font-size:14px}
+ .tile .st{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 8px}
+ .tile .det{color:var(--muted);font-size:12.5px}
+ .tile .last{color:var(--faint);font-size:11px;margin-top:5px}
+ /* state colours */
+ .s-ok{border-left-color:var(--ok)} .s-ok .st{background:var(--okb);color:var(--ok)}
+ .s-warn{border-left-color:var(--warn)} .s-warn .st{background:var(--warnb);color:var(--warn)}
+ .s-down{border-left-color:var(--down)} .s-down .st{background:var(--downb);color:var(--down)}
+ .s-idle{border-left-color:var(--idle)} .s-idle .st{background:var(--idleb);color:var(--idle)}
+ .s-unknown{border-left-color:var(--unknown)} .s-unknown .st{background:var(--unknownb);color:var(--unknown)}
+ .c-ok{background:var(--ok)} .c-warn{background:var(--warn)} .c-down{background:var(--down)} .c-idle{background:var(--idle)} .c-unknown{background:var(--unknown)}
+ .empty{color:var(--muted);padding:40px;text-align:center}
+</style>
+<div class="wrap">
+  <header>
+    <div><div class="eyebrow">AI Sales Floor</div><h1>Engine &amp; Agent Status</h1></div>
+    <a class="back" href="/blueprint" style="margin-left:auto">System blueprint →</a>
+    <a class="back" href="/">← Dashboard</a>
+  </header>
+  <div class="bar">
+    <span class="odot c-ok" id="odot"></span>
+    <span class="obig" id="obig">Loading…</span>
+    <span id="counts"></span>
+    <span class="updated" id="updated"></span>
+  </div>
+  <div id="body"><div class="empty">Reading live engine signals…</div></div>
+</div>
+<script>
+var STLBL={ok:'OK',warn:'WARN',down:'DOWN',idle:'IDLE',unknown:'UNKNOWN'};
+var GRP_ORDER=['Core','Calling','Builders','Autopilot','Intelligence','Billing'];
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]});}
+function fmtTime(iso){try{return new Date(iso).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}catch(e){return '';}}
+function render(d){
+  var od=document.getElementById('odot'), ob=document.getElementById('obig');
+  od.className='odot c-'+d.overall;
+  ob.textContent = d.overall==='ok'?'All systems operational':(d.overall==='down'?'Attention needed — an engine is down':'Some engines need a look');
+  var c=d.counts||{}, order=['down','warn','unknown','idle','ok'], ch='';
+  order.forEach(function(s){ if(c[s]) ch+='<span class="pill"><i class="c-'+s+'"></i>'+c[s]+' '+STLBL[s]+'</span> '; });
+  document.getElementById('counts').innerHTML=ch;
+  document.getElementById('updated').textContent='updated '+fmtTime(d.generated_at);
+  var byg={}; (d.engines||[]).forEach(function(e){ (byg[e.group]=byg[e.group]||[]).push(e); });
+  var groups=Object.keys(byg).sort(function(a,b){var ia=GRP_ORDER.indexOf(a),ib=GRP_ORDER.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib);});
+  var h='';
+  groups.forEach(function(g){
+    h+='<div class="grpttl">'+esc(g)+'</div><div class="grid">';
+    byg[g].forEach(function(e){
+      h+='<div class="tile s-'+esc(e.state)+'"><div class="top"><span class="nm">'+esc(e.name)+'</span>'+
+         '<span class="st">'+esc(STLBL[e.state]||e.state)+'</span></div>'+
+         '<div class="det">'+esc(e.detail)+'</div>'+
+         (e.last?'<div class="last">last: '+esc(e.last)+'</div>':'')+'</div>';
+    });
+    h+='</div>';
+  });
+  document.getElementById('body').innerHTML=h||'<div class="empty">No engines reported.</div>';
+}
+function load(){
+  fetch('/api/status',{headers:{'cache-control':'no-cache'}}).then(function(r){
+    if(!r.ok) throw new Error(r.status); return r.json();
+  }).then(render).catch(function(e){
+    document.getElementById('obig').textContent='Status API error ('+e.message+')';
+    document.getElementById('odot').className='odot c-unknown';
+  });
+}
+load();
+setInterval(load,15000);          // real-time: refresh every 15s
+document.addEventListener('visibilitychange',function(){if(!document.hidden)load();});
+</script>

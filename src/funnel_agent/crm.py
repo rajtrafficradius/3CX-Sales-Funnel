@@ -44,6 +44,35 @@ def ensure_crm_tables(pool) -> None:
             "  id bigserial PRIMARY KEY, user_email text, endpoint text UNIQUE, p256dh text, auth text,"
             "  ua text, created_at timestamptz DEFAULT now(), last_ok timestamptz)")
         conn.commit()
+    # ---- performance: expression indexes for LIST_SQL's trailing-9 joins ----
+    # Without these the booked-CRM list did a full regexp scan of the 786k-row companies table and the
+    # 250k-row calls table PER booking (~24s for 39 rows). Each index EXACTLY matches the query expression
+    # so the planner will use it (an expression index is only used on an identical expression). Built in
+    # their own connections and individually guarded so a build failure never breaks table setup, and
+    # IF NOT EXISTS so they are idempotent. CONCURRENTLY is intentionally omitted (it cannot run inside a
+    # transaction and is unnecessary off-hours for these small/off-path builds).
+    _perf_indexes = (
+        # companies-by-phone LATERAL fallback (786k rows) — matches COALESCE(cc.phone,'') expression verbatim.
+        # NOTE: kept on `phone` (NOT phone_norm): phone_norm diverges from trailing-9(phone) on 38k rows and
+        # would silently change which company a booking matches — this is a pure index, zero semantic change.
+        "CREATE INDEX IF NOT EXISTS idx_companies_phone9 ON companies "
+        "(right(regexp_replace(coalesce(phone,''),'[^0-9]','','g'),9))",
+        # Alfred/closer attempts (bde_attempts) + last_contacted over calls (250k rows).
+        "CREATE INDEX IF NOT EXISTS idx_calls_dest9norm ON calls "
+        "(right(regexp_replace(coalesce(dest_number,''),'[^0-9]','','g'),9))",
+        # meeting_at over calendar_events — supports the trailing-9 equality that replaced the leading-% LIKE.
+        "CREATE INDEX IF NOT EXISTS idx_calevents_dest9norm ON calendar_events "
+        "(right(regexp_replace(coalesce(dest_number,''),'[^0-9]','','g'),9))",
+        # inbound-SMS lookups (last_in_body / unread).
+        "CREATE INDEX IF NOT EXISTS idx_lisa_sms_dest9_dir ON lisa_sms (dest9, direction, created_at DESC)",
+    )
+    for _ddl in _perf_indexes:
+        try:
+            with pool.connection() as _c, _c.cursor() as _cur:
+                _cur.execute(_ddl)
+                _c.commit()
+        except Exception:
+            pass
 
 
 # ---------- read: the enriched booked list ----------
@@ -52,20 +81,26 @@ WITH booked AS (
   SELECT DISTINCT ON (dest9) dest9, call_id, company_name, prospect_name, prospect_email,
          agreed_day_time, created_at AS booked_at,
          (right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) AS inbound,
-         (from_number ~ '(468030256|489266405|495044526)' OR to_number ~ '(468030256|489266405|495044526)') AS is_lisa4,
-         (from_number ~ '(468096730|468008827|468091513)' OR to_number ~ '(468096730|468008827|468091513)') AS is_lisa5
+         -- Canonical agent lines per Retell (nicknames "Lisa4/Lisa5 rotation") + call behaviour:
+         -- Lisa4 = 030256 (unlabelled but does website reveals) + 266405 + 044526 + 091513;
+         -- Lisa5 = 096730 + 008827. Was wrong: 091513 (a Lisa4 line) sat in Lisa5, causing the
+         -- /lisa-vs-/lisa-crm count mismatch. Keep this in sync with settings.lisa4/5_numbers.
+         (from_number ~ '(468030256|489266405|495044526|468091513)' OR to_number ~ '(468030256|489266405|495044526|468091513)') AS is_lisa4,
+         (from_number ~ '(468096730|468008827)' OR to_number ~ '(468096730|468008827)') AS is_lisa5
   FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
   ORDER BY dest9, created_at ASC)
 SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        CASE WHEN b.is_lisa5 THEN 'lisa5' WHEN b.is_lisa4 THEN 'lisa4' ELSE 'lisa1' END AS agent,
        COALESCE(NULLIF(bc.contact_name,''), NULLIF(b.prospect_name,''), cl.prospect_contact_name) AS contact_name,
        COALESCE(NULLIF(bc.contact_email,''), NULLIF(b.prospect_email,''), cl.prospect_email) AS contact_email,
-       COALESCE(NULLIF(b.company_name,''), lp.company, lb.company_name, cl.prospect_company, '(unknown)') AS company,
+       COALESCE(NULLIF(b.company_name,''), lp.company, lb.company_name, cl.prospect_company,
+                NULLIF(co.company_name,''), '0'||b.dest9) AS company,
        COALESCE(lp.domain, lb.domain, cl.prospect_website) AS domain,
        COALESCE(NULLIF(cl.problem_summary,''), NULLIF(lp.issue,'')) AS finding,
        (SELECT recording_url FROM lisa_calls WHERE call_id=b.call_id) AS recording_url,
        (SELECT count(*) FROM lisa_calls lc WHERE lc.dest9=b.dest9) AS total_calls,
-       (SELECT ce.start_at FROM calendar_events ce WHERE ce.dest_number LIKE '%%'||b.dest9
+       (SELECT ce.start_at FROM calendar_events ce
+          WHERE right(regexp_replace(COALESCE(ce.dest_number,''),'[^0-9]','','g'),9) = b.dest9
           AND ce.type IN ('reveal','meeting') ORDER BY (ce.status='pending') DESC, ce.start_at DESC LIMIT 1) AS meeting_at,
        st.status AS site_status, st.share_token, st.building_at AS site_building_at, st.built_at AS site_built_at,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
@@ -76,6 +111,20 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,
        (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s) AND c.answered) AS last_contacted,
+       -- WHO last actually spoke to this lead (any line: Lisa 4/5 or the closer) — shown on the CRM so the
+       -- team sees at a glance who touched it last, without opening the record.
+       (SELECT c.bde_name FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
+          AND c.answered AND COALESCE(c.talk_seconds,0) >= 15 ORDER BY c.started_at DESC LIMIT 1) AS last_contacted_by,
+       (SELECT max(c.started_at) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
+          AND c.answered AND COALESCE(c.talk_seconds,0) >= 15) AS last_contacted_any,
+       -- The CLOSER's (Alfred's) most-recent confirmation-call OUTCOME — so every booking clearly shows
+       -- whether Alfred reached them, hit voicemail, or got no answer (never leave it ambiguous).
+       (SELECT CASE WHEN c.is_voicemail THEN 'voicemail'
+                    WHEN c.answered AND COALESCE(c.talk_seconds,0) >= 15 THEN 'reached'
+                    WHEN c.answered THEN 'voicemail'
+                    ELSE 'no answer' END
+          FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
+          AND c.bde_name = ANY(%(closers)s) ORDER BY c.started_at DESC LIMIT 1) AS closer_status,
        (SELECT left(body,160) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound'
         ORDER BY created_at DESC LIMIT 1) AS last_in_body,
        ((SELECT max(created_at) FROM lisa_sms s WHERE s.dest9=b.dest9 AND s.direction='inbound')
@@ -85,9 +134,12 @@ FROM booked b
 LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
 LEFT JOIN lisa_briefs lb ON lb.dest9=b.dest9
 LEFT JOIN classifications cl ON cl.call_id=b.call_id
-LEFT JOIN LATERAL (SELECT status, share_token, building_at, built_at FROM lisa4_sites s WHERE s.dest9=b.dest9 ORDER BY id DESC LIMIT 1) st ON true
+LEFT JOIN LATERAL (SELECT status, share_token, building_at, built_at FROM lisa4_sites s WHERE s.dest9=b.dest9 ORDER BY (status='built') DESC, id DESC LIMIT 1) st ON true
+LEFT JOIN LATERAL (SELECT company_name FROM companies cc
+   WHERE right(regexp_replace(COALESCE(cc.phone,''),'[^0-9]','','g'),9)=b.dest9
+   ORDER BY (cc.source='gmaps') DESC LIMIT 1) co ON true
 LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
-ORDER BY b.booked_at DESC
+ORDER BY GREATEST(b.booked_at, bc.updated_at) DESC NULLS LAST
 """
 
 
@@ -103,10 +155,38 @@ def _derived_stage(r: dict) -> str:
     return "new"
 
 
+def _stage_reason(r: dict) -> str:
+    """Human 'why is it at this stage' shown on hover — so the team can see the BASIS of the stage without
+    opening the record (booking source + who last spoke + the confirming action)."""
+    stage = r.get("stage") or "new"
+    by = (r.get("crm_by") or "").strip()
+    byl = by.lower()
+    if "aircall" in byl:
+        src = "set by Alfred's confirmation call (Aircall)"
+    elif "fireflies" in byl:
+        src = "set from the reveal/confirmation transcript (Fireflies)"
+    elif byl in ("recovery", "recovery2", "auto-reclassify", "seed-audit"):
+        src = "auto-recovered by the classifier"
+    elif "@" in by:
+        src = f"set manually by {by}"
+    elif not by:
+        src = ("inferred from a real conversation on the call"
+               if r.get("last_contacted") else "booked by Lisa; not yet confirmed by the closer")
+    else:
+        src = f"set by {by}"
+    bits = [f"Stage “{stage}” — {src}"]
+    if r.get("last_contacted_by"):
+        bits.append(f"last spoke: {r['last_contacted_by']}")
+    if r.get("next_action"):
+        bits.append(str(r["next_action"])[:90])
+    return " · ".join(bits)
+
+
 def crm_rows(q, closers: list[str]) -> list[dict]:
     rows = q(LIST_SQL, {"closers": closers or ["__none__"]})
     for r in rows:
         r["stage"] = _derived_stage(r)
+        r["stage_reason"] = _stage_reason(r)
     return rows
 
 
@@ -193,21 +273,45 @@ _EDITABLE = {"stage", "owner", "next_action", "next_action_at", "outcome", "cont
 
 def crm_update(pool, dest9: str, fields: dict, who: str) -> None:
     d9 = re.sub(r"[^0-9]", "", dest9 or "")[-9:]
-    sets = {k: v for k, v in (fields or {}).items() if k in _EDITABLE}
-    if not d9 or not sets:
+    if not d9:
         return
-    cols = ", ".join(sets.keys())
-    ph = ", ".join(["%s"] * len(sets))
-    upd = ", ".join(f"{k}=EXCLUDED.{k}" for k in sets)
-    vals = list(sets.values())
-    with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            f"INSERT INTO booked_crm (dest9, {cols}, updated_by, updated_at) VALUES (%s, {ph}, %s, now()) "
-            f"ON CONFLICT (dest9) DO UPDATE SET {upd}, updated_by=EXCLUDED.updated_by, updated_at=now()",
-            (d9, *vals, who[:80]))
-        cur.execute("INSERT INTO crm_activity (dest9, kind, body, author, meta) VALUES (%s,'system',%s,%s,%s)",
-                    (d9, "updated " + ", ".join(sets.keys()), who[:80], json.dumps({k: str(v)[:200] for k, v in sets.items()})))
-        conn.commit()
+    sets = {k: v for k, v in (fields or {}).items() if k in _EDITABLE}
+    if sets:
+        cols = ", ".join(sets.keys())
+        ph = ", ".join(["%s"] * len(sets))
+        upd = ", ".join(f"{k}=EXCLUDED.{k}" for k in sets)
+        vals = list(sets.values())
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO booked_crm (dest9, {cols}, updated_by, updated_at) VALUES (%s, {ph}, %s, now()) "
+                f"ON CONFLICT (dest9) DO UPDATE SET {upd}, updated_by=EXCLUDED.updated_by, updated_at=now()",
+                (d9, *vals, who[:80]))
+            cur.execute("INSERT INTO crm_activity (dest9, kind, body, author, meta) VALUES (%s,'system',%s,%s,%s)",
+                        (d9, "updated " + ", ".join(sets.keys()), who[:80], json.dumps({k: str(v)[:200] for k, v in sets.items()})))
+            conn.commit()
+    # PROSPECT identity fields (name/company/email/website) live on lisa_calls — editable by admins/Alfred so a
+    # booking's details can be corrected by hand (the manual override for anything auto-capture missed).
+    _pm = {}
+    _f = fields or {}
+    if "prospect_name" in _f: _pm["prospect_name"] = (_f.get("prospect_name") or "").strip()[:120]
+    if "company" in _f: _pm["company_name"] = (_f.get("company") or "").strip()[:160]
+    if "email" in _f: _pm["prospect_email"] = (_f.get("email") or "").strip()[:160]
+    if "website" in _f:
+        _w = re.sub(r"^https?://", "", (_f.get("website") or "").strip()).strip("/").lower()
+        _pm["domain"] = _w[:160]
+    if _pm:
+        with pool.connection() as conn, conn.cursor() as cur:
+            setc = ", ".join(f"{k}=%s" for k in _pm)
+            cur.execute(f"UPDATE lisa_calls SET {setc} WHERE dest9=%s", (*_pm.values(), d9))
+            if "domain" in _pm:                      # keep the website-build pipeline's domain in sync
+                cur.execute("UPDATE lisa4_pool SET domain=%s WHERE dest9=%s", (_pm["domain"], d9))
+            if _pm.get("prospect_name"):             # mirror onto the CRM contact so it shows immediately
+                cur.execute("INSERT INTO booked_crm (dest9,contact_name,updated_by,updated_at) VALUES (%s,%s,%s,now()) "
+                            "ON CONFLICT (dest9) DO UPDATE SET contact_name=EXCLUDED.contact_name, updated_at=now()",
+                            (d9, _pm["prospect_name"], who[:80]))
+            cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
+                        (d9, "edited prospect details: " + ", ".join(_pm.keys()), who[:80]))
+            conn.commit()
     # CONFIRMED TRIGGER (Vysakh, 2026-08-19): the closer marking a booking 'confirmed' kicks off the
     # website build on autopilot (idempotent — no-op if a site is already queued/building/built). From the
     # confirm-gate cutover this is what STARTS a build; before it, builds run regardless.
@@ -331,12 +435,44 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
             _a.ensure_audit_data(pool, settings, dom, company or "")
         except Exception:
             pass
+        # ROOT BUG FIX: avg_ticket arrives as None, which collapses the hero to the tiny SEO click-value.
+        # Derive a sensible average job value from the prospect's industry so the enquiry→job→dollars bridge
+        # (and the recurring-loss hero) always renders. Fed to assemble_audit so the whole model's revenue
+        # figures agree, and flagged so the report labels it honestly as an estimate.
+        ticket_estimated = False
+        if not avg_ticket:
+            industry = sub_industry = None
+            try:
+                from psycopg.rows import dict_row
+                with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute("SELECT industry, sub_industry FROM companies WHERE domain=%s "
+                                "ORDER BY revenue_musd DESC NULLS LAST LIMIT 1", (dom,))
+                    crow = cur.fetchone() or {}
+                industry, sub_industry = crow.get("industry"), crow.get("sub_industry")
+            except Exception:
+                pass
+            avg_ticket, _bucket = _ga.default_avg_ticket(industry, sub_industry)
+            ticket_estimated = True
         audit_model = _a.assemble_audit(pool, dom, avg_ticket=avg_ticket)
         if not audit_model:
             return None
+        if ticket_estimated:   # tell the report the ticket is an industry estimate, not the owner's real number
+            audit_model.setdefault("revenue", {})["avg_ticket_estimated"] = True
         html = _ga.gen_growth_audit(key, model, audit_model, avg_ticket=avg_ticket, company=company or "")
         if not html:
             return None
+        # ACCURACY / THIN-DATA GATE — catch a defective or near-empty audit BEFORE it ships. We still
+        # persist it (a limited-data audit is a legitimate, honestly-labelled deliverable), but we LOG the
+        # issues so a thin/violating report is flagged for review rather than silently going out.
+        try:
+            qa = _ga.audit_qa_gate(audit_model, html)
+            if not qa.get("ok"):
+                from .logging import get_logger as _gl
+                _gl("funnel_agent.crm").warning("growth_audit_review",
+                                                domain=dom, dest9=d9, company=company or "",
+                                                thin=qa.get("thin"), issues=(qa.get("issues") or [])[:12])
+        except Exception:
+            pass
         slug = _re.sub(r"[^a-z0-9]+", "-", (company or "growth").lower()).strip("-")[:24] or "growth"
         tok = f"{slug}-audit-" + secrets.token_urlsafe(8)
         synth = "9" + "".join(str(random.randint(0, 9)) for _ in range(8))
@@ -376,20 +512,133 @@ def send_brand_intro(pool, settings, dest9: str, by: str = "Lisa",
                          "ORDER BY started_at DESC LIMIT 1", (d9,))
         name = _l._first_name((info[0].get("prospect_name") if info else "") or "")
         to = "+61" + d9
-        link = base_url.rstrip("/") + "/api/lisa4/site/public/" + BRAND_INTRO_TOKEN
+        from . import shortlink as _sl
+        link = _sl.short_url(pool, base_url.rstrip("/") + "/api/lisa4/site/public/" + BRAND_INTRO_TOKEN, dest9=d9)
         body = (f"hey{(' ' + name.lower()) if name else ''}, ahead of our chat here's a quick intro to who we "
                 f"are at DE Group: {link} — looking forward to showing you what we've built. cheers, lisa")
+        # SMS is PRIMARY (mobile-only); email is a SECONDARY reinforcement when we have an address on file.
         frm = _l._e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
-        if not (_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, to, body, frm)):
+        sms_ok = bool(d9.startswith("4") and _l._twilio_ready(settings) and frm
+                      and _l._send_sms_twilio(settings, to, body, frm))
+        if sms_ok:
+            _l._log_sms(pool, "outbound", frm, to, body, d9)
+        email_ok = False
+        try:
+            from . import emailer as _em
+            addr = _em.prospect_email(pool, d9)
+            if addr:
+                subj, html = _em.brand_intro_email(name, link)
+                email_ok = _em.send_email(settings, addr, subj, html, dest9=d9)
+        except Exception:
+            pass
+        if not (sms_ok or email_ok):
             return False
-        _l._log_sms(pool, "outbound", frm, to, body, d9)
+        chan = "SMS + email" if (sms_ok and email_ok) else ("SMS" if sms_ok else "email")
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO booked_crm (dest9,brand_intro_sent_at,brand_intro_sent_by,updated_at) "
                         "VALUES (%s,now(),%s,now()) ON CONFLICT (dest9) DO UPDATE SET "
                         "brand_intro_sent_at=now(), brand_intro_sent_by=EXCLUDED.brand_intro_sent_by, updated_at=now()", (d9, by))
             cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
-                        (d9, "Brand intro shared via SMS", by))
+                        (d9, f"Brand intro shared via {chan}", by))
             conn.commit()
         return True
     except Exception:
         return False
+
+
+def run_booking_docs_autopilot(pool, settings, heavy_budget: int = 2) -> dict:
+    """AUTOPILOT — ensure EVERY active booking reaches its full reveal document set, self-healing, with NO
+    manual step (Vysakh, 2026-08-19: "it must be in autopilot… I can't check and build"). Runs continuously
+    from the Lisa loop so a doc that never got created — or a doc TYPE added after the booking — still gets
+    made and back-filled:
+      • Website (Lisa-4): the site is queued at booking/confirm; once BUILT → old-vs-new comparison.
+      • Growth  (Lisa-5): growth audit (the reveal asset).
+    This pass only CREATES documents (no outbound SMS): the brand intro is a SEND, so it is NOT blasted here —
+    it goes out per-new-build (once) and, for anyone who didn't show, via no-show recovery (Vysakh's rule).
+    HEAVY generations (audit = DataForSEO+Opus, comparison = Chromium+Opus) are capped per pass (heavy_budget)
+    so a backlog is smoothed over several passes. Only active bookings (not lost/won/no-show) are touched.
+    Fully guarded — never raises into the loop."""
+    from . import lisa as _l
+    out = {"audit": 0, "comparison": 0, "site_queued": 0, "seen": 0}
+    try:
+        ensure_crm_tables(pool)
+        rows = _l._fetch(pool, """
+          WITH booked AS (
+            SELECT DISTINCT ON (dest9) dest9, company_name, created_at,
+              (from_number ~ '(468030256|489266405|495044526|468091513)' OR to_number ~ '(468030256|489266405|495044526|468091513)') AS is_lisa4,
+              (from_number ~ '(468096730|468008827)' OR to_number ~ '(468096730|468008827)') AS is_lisa5
+            FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
+            ORDER BY dest9, created_at ASC)
+          SELECT b.dest9, b.is_lisa4, b.is_lisa5,
+                 COALESCE(NULLIF(b.company_name,''), lp.company, l5.company) AS company,
+                 COALESCE(lp.domain, l5.domain) AS domain,
+                 bc.audit_token, bc.comparison_token, bc.brand_intro_sent_at, COALESCE(bc.stage,'') AS stage,
+                 st.status AS site_status, st.share_token,
+                 st.built_at AS site_built_at, cmp.built_at AS cmp_built_at
+          FROM booked b
+          LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
+          LEFT JOIN lisa5_pool l5 ON l5.dest9=b.dest9
+          LEFT JOIN LATERAL (SELECT status, share_token, built_at FROM lisa4_sites s
+                             WHERE s.dest9=b.dest9 AND s.kind IS DISTINCT FROM 'comparison'
+                             ORDER BY id DESC LIMIT 1) st ON true
+          LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
+          -- the CURRENT comparison's build time, to detect a STALE one (older than the built reveal)
+          LEFT JOIN LATERAL (SELECT built_at FROM lisa4_sites c
+                             WHERE c.share_token=bc.comparison_token AND COALESCE(c.kind,'')='comparison'
+                             ORDER BY id DESC LIMIT 1) cmp ON true
+          WHERE COALESCE(bc.stage,'') NOT IN ('lost','won','no_show')
+          ORDER BY b.created_at DESC NULLS LAST
+        """) or []
+        out["seen"] = len(rows)
+        from . import lisa4 as _l4
+        for r in rows:
+            d9 = r["dest9"]
+            is5 = bool(r.get("is_lisa5"))
+            is4 = bool(r.get("is_lisa4")) and not is5
+            # 1) GROWTH audit — the reveal asset for a Lisa-5 booking (this is the "—" the closer sees)
+            if is5 and not (r.get("audit_token") or "") and heavy_budget > 0:
+                if ensure_growth_audit(pool, settings, d9, r.get("domain") or "", r.get("company") or ""):
+                    out["audit"] += 1; heavy_budget -= 1
+            # 2) WEBSITE — safety net: queue a build if one never got created for a website booking
+            if is4 and not r.get("site_status"):
+                if _l4.enqueue_lisa4_build(pool, d9):
+                    out["site_queued"] += 1
+            # 3) WEBSITE comparison — old-vs-new, once the new site is BUILT. Self-heal STALE comparisons too:
+            #    if the stored comparison predates the CURRENT built reveal (the site was rebuilt/corrected
+            #    after the comparison was shot), force a regen so the shots always match the live site — the
+            #    safety net for when the build-time regen could not run (e.g. Chromium hiccup that pass).
+            _cmp_missing = not (r.get("comparison_token") or "")
+            _cmp_stale = bool(r.get("comparison_token") and r.get("site_built_at") and r.get("cmp_built_at")
+                              and r["cmp_built_at"] < r["site_built_at"])
+            if (is4 and r.get("site_status") == "built" and r.get("share_token")
+                    and (_cmp_missing or _cmp_stale) and heavy_budget > 0):
+                try:
+                    from . import comparison as _cmp
+                    if _cmp.ensure_comparison(pool, settings, d9, force=True):
+                        out["comparison"] += 1; heavy_budget -= 1
+                except Exception:
+                    pass
+            # 4) BRAND INTRO — send ONCE to EVERY booked prospect, autopilot (Vysakh, repeated: must not be
+            #    manual, and must cover Lisa-5 audit bookings too — not just Lisa-4 site builds). send_brand_intro
+            #    is idempotent (skips if already sent / opted out) and mobile-only; gate to the business-hours
+            #    send window so we never text at night.
+            if not r.get("brand_intro_sent_at"):
+                try:
+                    from . import noshow_recovery as _nsr
+                    if _nsr.send_window_open() and send_brand_intro(pool, settings, d9, by="autopilot"):
+                        out["brand_intro"] = out.get("brand_intro", 0) + 1
+                except Exception:
+                    pass
+        # 5) WEBSITE FINDER — bookings that aren't in the outbound pool (inbound / referrals) have NO
+        #    lisa4_pool row, so their reveal sits queued with domain=None forever and no site is built.
+        #    Resolve the prospect's REAL site by phone/name/SERP, VERIFY it (phone-match = gold), and wire
+        #    it in on HIGH confidence only. Self-throttled (paid SERP) + fully guarded — never blocks.
+        try:
+            from . import website_finder as _wf
+            _wf.find_missing_websites(pool, settings, limit=5, auto_wire=True)
+        except Exception as exc:
+            _l.log.warning("website_finder_autopilot_failed", error=str(exc)[:140])
+        return out
+    except Exception as exc:
+        out["error"] = str(exc)[:140]
+        return out

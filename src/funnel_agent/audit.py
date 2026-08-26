@@ -106,10 +106,46 @@ def _get(d, *path, default=None):
 
 
 # ---------- assembler ----------
-def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dict | None:
+_TRADE_STOP = {"the","for","and","with","your","you","our","near","best","top","local","service","services",
+               "company","business","pty","ltd","trust","unit","group","australia","from","this","have","more",
+               "get","are","that","who","how","what","new","all","not","can","near","them","they"}
+_TRADE_LOC = {"vic","victoria","nsw","qld","wa","sa","tas","act","nt","melbourne","sydney","brisbane","perth",
+              "adelaide","ballarat","geelong","bendigo","canberra","hobart","darwin","gold","coast","com","www",
+              "bellarine","surfcoast","warrnambool","shepparton","mildura"}
+
+
+def _trade_vocab(discovered, industry, sub_industry, name) -> set:
+    """The prospect's TRADE vocabulary — the service/product word-stems that define what they ACTUALLY sell —
+    from the discovered service keywords (freq>=2 = core), the verified industry/sub-industry, and the trading
+    name. Location + generic stop words are excluded so a bare suburb never reads as 'on-trade'. Used to drop
+    OFF-trade keywords/competitors (e.g. a concrete contractor's 'retirement village' PROJECT terms) BEFORE
+    the keyword universe / $ figures / diagnosis are built, so the whole audit reflects the real trade."""
+    from collections import Counter
+    cnt = Counter()
+    for r in (discovered or []):
+        kw = r.get("keyword") if isinstance(r, dict) else str(r)
+        for w in re.findall(r"[a-z]{4,}", (kw or "").lower()):
+            if w not in _TRADE_STOP and w not in _TRADE_LOC:
+                cnt[w] += 1
+    vocab = {w for w, n in cnt.items() if n >= 2}
+    for src in (industry, sub_industry, name):
+        for w in re.findall(r"[a-z]{4,}", (src or "").lower()):
+            if w not in _TRADE_STOP and w not in _TRADE_LOC:
+                vocab.add(w)
+    return vocab
+
+
+def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None,
+                   discover: bool = False) -> dict | None:
     """Read every enrichment source for `domain` and assemble the audit model. `avg_ticket` (the
     prospect's average sale/project value) turns the SEO upside into a REVENUE opportunity. Returns
-    None when the domain has no enrichment row at all."""
+    None when the domain has no enrichment row at all.
+
+    `discover` — fold in keyword-DEMAND discovery (the real service+location searches buyers type, not
+    just what this domain already ranks for). Cache-first: a cached `dataforseo->'discovered_kw'`
+    (populated by the paid ensure_audit_data step) is ALWAYS folded; a live (paid) keyword_ideas call is
+    made ONLY when `discover=True` AND nothing is cached — so Lisa's brief path and re-renders never hit
+    the network. Guarded end-to-end: a miss falls back to exactly today's behaviour."""
     from psycopg.rows import dict_row
     domain = (domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     if not domain:
@@ -146,6 +182,26 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dic
         def _is_branded(kw, b):
             return False
 
+    # shared keyword-scrub helpers (canonical home = growth_audit, so the report renderer + QA gate agree);
+    # lazy import to avoid any import cycle, with inert fallbacks so assembly never fails on them.
+    try:
+        from .growth_audit import (_competitor_brand_tokens, _service_business, _is_buy_intent_kw,
+                                    _is_low_value_gap, _norm_kw_join, _scrub_plan_rows, _GENERIC_BRAND_STOP)
+    except Exception:
+        _GENERIC_BRAND_STOP = set()
+        def _competitor_brand_tokens(comps, exclude=None):
+            return set()
+        def _service_business(industry, sub_industry=None):
+            return True
+        def _is_buy_intent_kw(kw):
+            return False
+        def _is_low_value_gap(row):
+            return False
+        def _norm_kw_join(s):
+            return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+        def _scrub_plan_rows(rows, comp_brands, is_service, scrubbed_norms):
+            return rows
+
     # Strip the prospect's OWN brand terms from the money-keyword & proof tables BEFORE any value is summed
     # — a business ranking for its own name isn't an "opportunity", and a high-CPC brand term (e.g. "clover"
     # at $19 CPC) otherwise dominates the table with an inflated, misleading $-value that kills credibility.
@@ -156,6 +212,115 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dic
             seo["money_keywords"] = _debrand(seo["money_keywords"])
         if seo.get("proof_winning"):
             seo["proof_winning"] = _debrand(seo["proof_winning"])
+
+    # Also strip the RIVALS' own brand names from every gap/opportunity list (defect: "rotomotion
+    # engineering" — a competitor's brand — was shown as a "money keyword competitors own"), and strip
+    # equipment-PURCHASE-intent terms ("… for sale / for hire", "buy a …") for a service business (defect:
+    # "line boring machines for sale" shown as a gap for a machining SERVICE). Done BEFORE any value is
+    # summed or the universe is built, so the dollar figures and totals only ever reflect real demand the
+    # prospect could actually win.
+    _comp_brands = _competitor_brand_tokens(ca.get("competitors") or [], exclude=_brands)
+    _is_service = _service_business((comp or {}).get("industry"), (comp or {}).get("sub_industry"))
+
+    def _scrub(rows):
+        out = []
+        for r in (rows or []):
+            kw = r.get("keyword") or ""
+            if _is_low_value_gap(r):            # zero-value navigational term ("rotomotion engineering")
+                continue
+            if _is_branded(kw, _comp_brands):
+                continue
+            if _is_service and _is_buy_intent_kw(kw):
+                continue
+            out.append(r)
+        return out
+    if isinstance(ca, dict):
+        _orig_gap_norms = {_norm_kw_join(r.get("keyword") or "") for r in (ca.get("keyword_gap") or [])}
+        if ca.get("keyword_gap"):
+            ca["keyword_gap"] = _scrub(ca["keyword_gap"])
+        if ca.get("outranked"):
+            ca["outranked"] = _scrub(ca["outranked"])
+        # a keyword we removed from the gap must not survive as a "Target 'X'" quick-win / plan step
+        _scrubbed_norms = _orig_gap_norms - {_norm_kw_join(r.get("keyword") or "") for r in (ca.get("keyword_gap") or [])}
+        if ca.get("quick_wins"):
+            ca["quick_wins"] = _scrub_plan_rows(ca["quick_wins"], _comp_brands, _is_service, _scrubbed_norms)
+        if ca.get("growth_plan"):
+            ca["growth_plan"] = _scrub_plan_rows(ca["growth_plan"], _comp_brands, _is_service, _scrubbed_norms)
+    if isinstance(seo, dict) and seo.get("money_keywords"):
+        # rival brands + zero-value terms can leak into the prospect's own ranked set too
+        seo["money_keywords"] = [r for r in seo["money_keywords"]
+                                 if not _is_low_value_gap(r) and not _is_branded(r.get("keyword"), _comp_brands)]
+
+    # ---- keyword-DEMAND discovery: complete the addressable universe with the REAL searches buyers type
+    # (not just what this — often low-footprint — domain already ranks for). CACHE-FIRST + GUARDED. Reads
+    # enrichment.dataforseo->'discovered_kw' (populated by the paid ensure_audit_data step); only when
+    # `discover=True` AND nothing is cached does it make the (paid) keyword_suggestions call itself. Rows are
+    # HARD-filtered upstream (on-topic, commercial, non-branded, not buy-a-machine, not already ranked/gapped);
+    # we re-run assemble's own scrub as a belt-and-braces defence, tag them discovered=True, and dedupe. The
+    # discovered set is FOLDED into the gap (so the $-value tables/totals reflect it) AND passed SEPARATELY to
+    # build_keyword_universe (so it's classified against the base terciles and only ever GROWS the base).
+    _orig_gap = list(ca.get("keyword_gap") or []) if isinstance(ca, dict) else []
+    try:
+        discovered = df.get("discovered_kw")
+        if discovered is None and discover:
+            from .config import get_settings
+            discovered = discover_demand_keywords(pool, get_settings(), domain)
+        discovered = discovered if isinstance(discovered, list) else []
+    except Exception:
+        discovered = []
+    _discovered_add = []
+    if discovered and isinstance(ca, dict):
+        _have = {_norm_kw_join(r.get("keyword") or "") for r in _orig_gap}
+        _have |= {_norm_kw_join(k.get("keyword") or "") for k in (df.get("ranked_kw") or [])}
+        for r in _scrub(discovered):     # same rival-brand / buy-a-machine / zero-value scrub as the gap
+            nk = _norm_kw_join(r.get("keyword") or "")
+            if not nk or nk in _have:
+                continue
+            _have.add(nk)
+            r = dict(r); r["discovered"] = True
+            _discovered_add.append(r)
+        if _discovered_add:
+            ca["keyword_gap"] = _orig_gap + _discovered_add
+
+    # ---- TRADE-RELEVANCE FILTER (accuracy guard, 2026-08-25) --------------------------------------------
+    # Root fix for OFF-TRADE audits: a prospect whose site lists PROJECTS/clients from other industries
+    # (a concrete-formwork contractor that built retirement villages) otherwise inherits those as its OWN
+    # keywords + competitors, so the audit presents "X retirement village" as the SEO opportunity — which
+    # destroys credibility with the client. Build the real TRADE vocabulary and keep ONLY on-trade keywords +
+    # competitors, so the keyword universe / clusters / $ figures / diagnosis / findings below are all built
+    # from the prospect's actual trade. Guarded; only applies with a confident (>=3-token) vocabulary so a
+    # legitimate niche audit is never over-filtered, and it FILTERS (keeps the relevant terms) rather than
+    # empties — the audit stays populated with the real service keywords.
+    _trade = set()
+    try:
+        _trade = _trade_vocab(_discovered_add, (comp or {}).get("industry"),
+                              (comp or {}).get("sub_industry"), name)
+        if len(_trade) >= 3:
+            def _on_trade(kw):
+                return bool(set(re.findall(r"[a-z]{4,}", (kw or "").lower())) & _trade)
+            def _kf(rows):
+                return [r for r in (rows or [])
+                        if _on_trade(r.get("keyword") if isinstance(r, dict) else str(r))]
+            if isinstance(ca, dict):
+                for _k in ("keyword_gap", "outranked", "content_gap", "quick_wins", "growth_plan"):
+                    if isinstance(ca.get(_k), list):
+                        ca[_k] = _kf(ca[_k])
+                if isinstance(ca.get("competitors"), list):
+                    ca["competitors"] = [c for c in ca["competitors"]
+                                         if set(re.findall(r"[a-z]{4,}",
+                                             ((c.get("domain") or "") + " " + (c.get("name") or "")).lower())) & _trade]
+            if isinstance(seo, dict):
+                for _k in ("money_keywords", "proof_winning"):
+                    if isinstance(seo.get(_k), list):
+                        seo[_k] = _kf(seo[_k])
+            df["ranked_kw"] = _kf(df.get("ranked_kw") or [])
+            _orig_gap = _kf(_orig_gap)
+            _discovered_add = _kf(_discovered_add)
+            _trade_applied = True
+        else:
+            _trade_applied = False
+    except Exception:
+        _trade_applied = False
 
     # ---- quantified opportunity ----
     seo_tot = seo.get("totals") or {}
@@ -172,7 +337,16 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dic
     geo = ca.get("geo_aeo") or {}
 
     # ---- keyword universe → clusters → funnel ----
-    universe = build_keyword_universe(df.get("ranked_kw") or [], ca.get("keyword_gap") or [], brands=_brands)
+    # Strip BOTH the prospect's own brand AND rival brand terms from the universe so no competitor's name
+    # (e.g. "rotomotion engineering") can slip into the transparent keyword table or the funnel maths — but
+    # NEVER strip a generic SERVICE word that merely sits inside the prospect's name ("Metro MACHINING"), or
+    # every real 'cnc machining' demand keyword would be wrongly nuked as the prospect's own brand.
+    # PROTECT the real trade vocabulary from brand-stripping: a business whose NAME embeds its trade (e.g.
+    # "Form Crete" → brand tokens form/crete) would otherwise nuke its own service keywords (con-CRETE,
+    # FORM-work) from the universe, leaving the keyword table empty. Never treat a trade word as the brand.
+    _uni_brands = ({b for b in _brands if b not in _GENERIC_BRAND_STOP} | _comp_brands) - _trade
+    universe = build_keyword_universe(df.get("ranked_kw") or [], _orig_gap,
+                                      brands=_uni_brands, discovered=_discovered_add)
 
     # ---- revenue opportunity model (avg-ticket driven) ----
     # Only COMMERCIAL-intent traffic converts to sales, so the addressable base is the quick-win
@@ -188,8 +362,10 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dic
         "addressable_traffic": addressable_traffic,
         "visitor_to_lead": VISITOR_TO_LEAD,
         "lead_to_sale": LEAD_TO_SALE,
-        "leads_per_mo": round(addressable_traffic * VISITOR_TO_LEAD, 1),
-        "sales_per_mo": round(addressable_traffic * VISITOR_TO_LEAD * LEAD_TO_SALE, 1),
+        # keep 3-dp precision so the renderer can show an honest decimal ("0.3 sales/mo") and the enquiry→
+        # job→dollars chain reconciles with the monthly figure instead of rounding sub-1 sales down to "0".
+        "leads_per_mo": round(addressable_traffic * VISITOR_TO_LEAD, 3),
+        "sales_per_mo": round(addressable_traffic * VISITOR_TO_LEAD * LEAD_TO_SALE, 3),
         "monthly": rev_monthly,
         "annual": rev_monthly * 12 if rev_monthly else None,
     }
@@ -265,6 +441,10 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None) -> dic
             "final_url": web.get("final_url"),
         },
         "universe": universe,
+        # seed-keyword theme clusters (from keyword-DEMAND discovery) — the market's search shape derived
+        # from service/product seeds, present EVEN when the domain has no SEO footprint of its own. Powers
+        # the keyword-cluster strategy so a thin/no-data audit is never empty.
+        "seed_clusters": (df.get("seed_clusters") or []),
         "revenue": revenue,
         "findings": findings,
         "recommendation": recommendation,
@@ -283,11 +463,16 @@ def _audit_data_status(pool, domain: str) -> dict:
             "competitor": bool(df.get("competitor_audit"))}
 
 
-def ensure_audit_data(pool, settings, domain: str, company: str = "") -> dict:
+def ensure_audit_data(pool, settings, domain: str, company: str = "",
+                      extra_seeds: list[str] | None = None) -> dict:
     """Idempotently fetch the DataForSEO datasets the growth audit needs — base rank+ads, the SEO keyword
     audit (ranked_kw + money keywords) and the competitor gap. PAID (a few cents per NEW domain); only runs
     the missing pieces, so a prospect that was only ads-checked (thin audit) gets filled out. Guarded
-    per-step — a failure in one never aborts the others; returns what ran. No-op if DataForSEO is disabled."""
+    per-step — a failure in one never aborts the others; returns what ran. No-op if DataForSEO is disabled.
+
+    `extra_seeds` — explicit service/product seed terms handed to keyword-demand discovery so a domain with
+    NO SEO footprint AND no crawlable copy (e.g. a 'coming soon' page) still yields the real keyword clusters
+    its market searches for. When supplied, discovery re-runs even if a prior (empty) result was cached."""
     domain = (domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     if not domain or not getattr(settings, "dataforseo_enabled", False):
         return {"skipped": "no domain / dataforseo disabled"}
@@ -334,9 +519,291 @@ def ensure_audit_data(pool, settings, domain: str, company: str = "") -> dict:
                 did.append("competitor")
             except Exception as exc:
                 errors.append("competitor:" + str(exc)[:120])
+        # keyword-DEMAND discovery — the real service+location searches buyers type, completing the
+        # addressable universe (cached under dataforseo->'discovered_kw'). Runs AFTER the competitor step
+        # so rival brands are known and the seeds are grounded in the fetched keywords. Guarded; only fetches
+        # when nothing is cached yet, so it costs one keyword_ideas call per NEW domain, then re-reads free.
+        try:
+            from psycopg.rows import dict_row as _dr
+            with pool.connection() as conn, conn.cursor(row_factory=_dr) as cur:
+                cur.execute("SELECT (dataforseo ? 'discovered_kw') AS has FROM enrichment WHERE domain=%s", (domain,))
+                _hr = cur.fetchone()
+            # explicit seeds always re-run discovery (they are how we rescue a no-data domain), otherwise
+            # only fetch when nothing is cached yet.
+            if extra_seeds or not (_hr and _hr.get("has")):
+                discover_demand_keywords(pool, settings, domain, extra_seeds=extra_seeds)
+                did.append("discovered")
+        except Exception as exc:
+            errors.append("discovered:" + str(exc)[:120])
     except Exception as exc:
         errors.append("setup:" + str(exc)[:120])
     return {"did": did, "errors": errors}
+
+
+# --------------------------------------------------------------------------------------------------- #
+# keyword-DEMAND discovery (real service+location search demand) — paid + cached, guarded
+# --------------------------------------------------------------------------------------------------- #
+# Geo guard: a Melbourne machine shop's addressable demand does NOT include 'engine reconditioning perth'
+# (that's another city's market). We keep the prospect's OWN metro/state (+ location-agnostic searches) and
+# drop any discovered keyword naming a DIFFERENT Australian metro/state — so the base is never inflated with
+# demand the business can't actually serve.
+_AU_STATE_GEO = {
+    "melbourne": {"melbourne", "victoria", "vic"},
+    "sydney": {"sydney", "new south wales", "nsw"},
+    "brisbane": {"brisbane", "queensland", "qld"},
+    "perth": {"perth", "western australia", "wa"},
+    "adelaide": {"adelaide", "south australia", "sa"},
+    "hobart": {"hobart", "tasmania", "tas"},
+    "canberra": {"canberra", "australian capital territory", "act"},
+    "darwin": {"darwin", "northern territory", "nt"},
+}
+_AU_ALL_GEO = {"sydney", "melbourne", "brisbane", "perth", "adelaide", "canberra", "hobart", "darwin",
+               "gold coast", "goldcoast", "newcastle", "wollongong", "geelong", "townsville", "cairns",
+               "toowoomba", "ballarat", "bendigo", "launceston", "mackay", "rockhampton",
+               "new south wales", "victoria", "queensland", "western australia", "south australia",
+               "tasmania", "northern territory", "australian capital territory",
+               "nsw", "vic", "qld", "wa", "sa", "tas", "act", "nt"}
+
+
+# Non-commercial intent: job hunting, education/training and pure reference searches are NEVER a service
+# enquiry — a machine shop cannot sell to someone searching 'engineering jobs' or 'uni engineering'. These
+# carry real CPC (so the commercial-value gate alone won't drop them) yet are the wrong demand, so they're
+# excluded outright before anything is summed.
+_NONCOMMERCIAL_RE = re.compile(
+    r"\b(jobs?|careers?|salar\w+|wages?|vacanc\w+|hiring|recruit\w*|apprentice\w*|intern|interns|"
+    r"internships?|graduate|cadetship|traineeship|university|uni|college|tafe|courses?|degree|diploma|"
+    r"certificate|qualif\w+|students?|institute|academy|tutor\w*|lesson\w*|definition|meaning|wikipedia|"
+    r"images?|videos?|download|\bpdf\b|template)\b", re.I)
+
+
+def _own_brand_tokens(domain: str, name: str, vocab: set) -> set:
+    """The prospect's DISTINCTIVE brand tokens for demand-filtering — the domain root + brand-prefix words
+    from the company name, but NEVER the generic SERVICE word that merely happens to sit inside the name
+    ('Metro MACHINING' → keep 'metro'/'metromachining', drop 'machining'). Without this, is_branded would
+    nuke every real service keyword ('cnc machining melbourne') as if it were the prospect's own brand."""
+    from .enrichment.dataforseo import brand_tokens
+    try:
+        from .growth_audit import _GENERIC_BRAND_STOP
+    except Exception:
+        _GENERIC_BRAND_STOP = set()
+    toks = brand_tokens(domain, name)
+    return {b for b in toks if b and b not in (vocab or set()) and b not in _GENERIC_BRAND_STOP}
+
+
+def _mentions_other_metro(keyword: str, allowed_geo: set) -> bool:
+    """True when the keyword names an AU metro/state that ISN'T the prospect's own — i.e. another market's
+    demand. Location-agnostic keywords (no geo token) return False (kept)."""
+    other = _AU_ALL_GEO - (allowed_geo or set())
+    kwl = (keyword or "").lower()
+    for g in other:
+        if re.search(r"\b" + re.escape(g) + r"\b", kwl):
+            return True
+    return False
+
+
+def _discovery_seeds(ranked_kw, money_keywords, industry, sub_industry, name, domain, location,
+                     *, website=None, extra_seeds=None):
+    """Build a handful of SERVICE seed phrases + the topic vocabulary for keyword-demand discovery,
+    REUSING competitor.py's relevance machinery. Seeds come from, in priority order:
+      (0) EXPLICIT caller seeds (extra_seeds) — known service/product terms; the ONLY reliable signal when a
+          site has no footprint AND no crawlable copy (a 'coming soon' page). Their tokens also join the
+          vocab so discovery accepts the demand they surface.
+      (a) the prospect's own on-topic, NON-branded ranked/money keyword phrases,
+      (b) distinctive industry SERVICE tokens (NEVER brand/company names), optionally paired with location,
+      (c) the website's own SERVICE COPY (title + headings + a content slice) — so a low-footprint site that
+          still has real pages yields real seeds even when it ranks for nothing.
+    Domain-SEO-data availability therefore never blocks seed derivation. Returns (seed_phrases, topic_vocab)."""
+    from .competitor import _seed_tokens, _topic_vocab, _on_topic, _registrable_label, _is_brand_prefix
+    from .enrichment.dataforseo import brand_tokens, is_branded
+    dlabel = _registrable_label(domain)
+    seed_tokens = _seed_tokens(industry or "", sub_industry or "", name or "")
+    # (c) mine the website's own copy for distinctive service tokens (title + headings + a content slice)
+    web = website if isinstance(website, dict) else {}
+    web_txt = " ".join([str(web.get("title") or ""),
+                        " ".join(str(h) for h in (web.get("headings") or [])[:40]),
+                        str(web.get("content") or "")[:2000]])
+    web_tokens = _seed_tokens(web_txt) if web_txt.strip() else set()
+    vocab = _topic_vocab(list(ranked_kw or []), seed=(seed_tokens | web_tokens), domain_label=dlabel)
+    own_brands = _own_brand_tokens(domain, name, vocab)
+    phrases: list[str] = []
+    # (0) explicit caller seeds — highest priority; seed the vocab with their tokens so on-topic accepts them
+    for s in (extra_seeds or []):
+        s = (s or "").strip()
+        if s and s.lower() not in [p.lower() for p in phrases]:
+            phrases.append(s)
+            for t in re.split(r"[^a-z0-9]+", s.lower()):
+                if t and len(t) > 2 and not _is_brand_prefix(t, dlabel):
+                    vocab.add(t)
+    # (a) the prospect's own on-topic, non-branded ranked/money keyword phrases — the cleanest earned seeds
+    for k in (list(money_keywords or []) + list(ranked_kw or [])):
+        kw = (k.get("keyword") or "").strip()
+        if kw and _on_topic(kw, vocab) and not is_branded(kw, own_brands):
+            if kw.lower() not in [p.lower() for p in phrases]:
+                phrases.append(kw)
+        if len(phrases) >= 6:
+            break
+    # (b) SERVICE-token seeds (+ location). Prefer the business's DISTINCTIVE service word — the one that
+    # lives inside its own domain label ('machining' in 'metromachining') — and NEVER seed on the brand
+    # prefix ('metro'). A GENERIC industry-category word ('engineering') that is NOT part of the brand is
+    # too broad to seed (it drags in university / jobs / structural-engineering demand a machine shop can't
+    # serve), so it's used ONLY as a last resort when nothing more specific exists.
+    svc = [t for t in seed_tokens if len(t) >= 5 and not _is_brand_prefix(t, dlabel)]
+    distinctive = [t for t in svc if t in dlabel]         # e.g. 'machining' — the real service identity
+    generic = [t for t in svc if t not in dlabel]         # e.g. 'engineering' — broad category label
+    # distinctive service words are always safe to seed. A bare GENERIC category word ('rental', 'leasing')
+    # is a LAST RESORT only — on its own it drags in a whole unrelated market (a bare 'rental' seed returns
+    # 'car rental', 'rental homes'…). So use it ONLY when we have neither a distinctive word NOR explicit
+    # caller seeds to anchor discovery; explicit seeds make the generic fallback unnecessary and risky.
+    fallback = list(distinctive[:2])
+    if not fallback and not extra_seeds:
+        fallback = generic[:1]
+    for t in fallback:
+        p = f"{t} {location}".strip() if location else t
+        if p.lower() not in [q.lower() for q in phrases]:
+            phrases.append(p)
+    phrases = [p for p in dict.fromkeys(phrases) if p][:8]
+    return phrases, vocab
+
+
+def discover_demand_keywords(pool, settings, domain: str, *, force: bool = False, limit: int = 20,
+                             extra_seeds: list[str] | None = None) -> list[dict]:
+    """PAID keyword-DEMAND discovery for ONE domain, cached under enrichment.dataforseo->'discovered_kw'
+    (with the theme clusters under ->'seed_clusters').
+
+    Completes the addressable keyword universe with the REAL service+location searches buyers type — not
+    just what this (often low- or NO-footprint) domain already ranks for. Seeds DataForSEO keyword clusters
+    with EXPLICIT caller terms (`extra_seeds`) and/or the prospect's own service/industry terms + website
+    copy (never brand names), then HARD-filters to on-topic, commercial (CPC>0, volume≥20), non-branded
+    (rival AND own), not-buy-a-machine searches it does NOT already rank for or hold in its gap. Each kept
+    row carries the SAME conservative capture model as the gap (search volume × assumed position-5 CTR;
+    value via CPC) and is tagged discovered=True. The filtered demand is also clustered into product/service
+    themes and cached so the audit can build a keyword-cluster STRATEGY even when the domain itself has no
+    SEO data at all.
+
+    CONSERVATIVE + GUARDED: real DataForSEO volumes ONLY, never invented; returns [] on any failure and
+    never raises. Caches even an empty result so re-reads are free and we never re-pay for a barren niche."""
+    from psycopg.rows import dict_row
+    from psycopg.types.json import Json
+    domain = (domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if not domain:
+        return []
+    try:
+        with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT dataforseo, website FROM enrichment WHERE domain=%s", (domain,))
+            enr = cur.fetchone() or {}
+            cur.execute("SELECT company_name, industry, sub_industry, suburb, state FROM companies "
+                        "WHERE domain=%s ORDER BY revenue_musd DESC NULLS LAST LIMIT 1", (domain,))
+            comp = cur.fetchone() or {}
+        df = (enr.get("dataforseo") or {}) if isinstance(enr, dict) else {}
+        website = (enr.get("website") or {}) if isinstance(enr, dict) else {}
+        # a FORCED run, or a run supplying explicit seeds, must be free to refetch even when a (possibly
+        # empty) discovery is already cached — the explicit seeds are exactly how we rescue a no-data domain.
+        if not force and not extra_seeds and isinstance(df, dict) and "discovered_kw" in df:
+            cached = df.get("discovered_kw")
+            return cached if isinstance(cached, list) else []
+        if not getattr(settings, "dataforseo_enabled", False):
+            return []       # cannot discover without the paid API; do NOT cache (a later enabled run may try)
+
+        ranked_kw = df.get("ranked_kw") or []
+        money_keywords = ((df.get("audit") or {}).get("money_keywords")) or []
+        ca = df.get("competitor_audit") or {}
+        gap = ca.get("keyword_gap") or []
+        name = comp.get("company_name") or ""
+        industry = comp.get("industry") or ""
+        sub_industry = comp.get("sub_industry") or ""
+        from .competitor import _STATE_CITY, _on_topic, _dedup_sig
+        st = (comp.get("state") or "").strip().lower()
+        location = _STATE_CITY.get(st, "") or (comp.get("suburb") or "").strip().lower() or st
+        # the prospect's OWN geo family (metro + state names) — everything else is another market
+        allowed_geo: set = set()
+        if location:
+            allowed_geo |= _AU_STATE_GEO.get(location, {location})
+        _cap = _STATE_CITY.get(st, "")
+        if _cap:
+            allowed_geo |= _AU_STATE_GEO.get(_cap, set())
+        if st:
+            allowed_geo.add(st)
+        seeds, vocab = _discovery_seeds(ranked_kw, money_keywords, industry, sub_industry, name, domain,
+                                        location, website=website, extra_seeds=extra_seeds)
+
+        rows: list[dict] = []
+        seed_clusters: list[dict] = []
+        if seeds and vocab:
+            from .enrichment.dataforseo import DataForSEOClient, is_branded, cluster_keywords
+            own_brands = _own_brand_tokens(domain, name, vocab)   # keep 'metro', NOT the service word 'machining'
+            comp_brands = set()
+            try:
+                from .growth_audit import _competitor_brand_tokens, _service_business, _is_buy_intent_kw
+                comp_brands = _competitor_brand_tokens(ca.get("competitors") or [], exclude=own_brands)
+                is_service = _service_business(industry, sub_industry)
+            except Exception:
+                is_service = True
+                def _is_buy_intent_kw(kw):
+                    return False
+            all_brands = set(own_brands) | set(comp_brands)
+            have = {_dedup_sig(k.get("keyword")) for k in ranked_kw}       # already-ranked (dedup signature)
+            have |= {_dedup_sig(g.get("keyword")) for g in gap}           # already a competitor gap
+            client = DataForSEOClient(settings)
+            try:
+                ideas = client.keyword_clusters(seeds, location_code=settings.dataforseo_location_code,
+                                                per_seed=30, max_seeds=min(6, max(3, len(seeds))))
+            finally:
+                client.close()
+            seen: set = set()
+            for it in (ideas.get("keywords") or []):
+                kw = (it.get("keyword") or "").strip()
+                vol = it.get("search_volume") or 0
+                cpc = round(it.get("cpc") or 0, 2)
+                if not kw or vol < 20:                       # commercial volume floor (documented)
+                    continue
+                if not (cpc and cpc > 0):                    # keep only COMMERCIAL demand (has a paid CPC)
+                    continue
+                sig = _dedup_sig(kw)
+                if not sig or sig in have or sig in seen:     # already ranked / gapped / a dup variant
+                    continue
+                if not _on_topic(kw, vocab):                 # off the prospect's actual topic
+                    continue
+                if is_branded(kw, all_brands):               # a rival's or the prospect's own brand
+                    continue
+                if is_service and _is_buy_intent_kw(kw):     # buy-a-machine, not a service enquiry
+                    continue
+                if _NONCOMMERCIAL_RE.search(kw):             # jobs / university / courses — not a customer
+                    continue
+                if _mentions_other_metro(kw, allowed_geo):   # another city's market, not this business's
+                    continue
+                seen.add(sig)
+                cap_t = round(vol * _ctr(5))                 # capturable at ~page 1 (assumed position 5)
+                comp_v = it.get("competition")
+                rows.append({
+                    "keyword": kw,
+                    "volume": vol,
+                    "search_volume": vol,
+                    "cpc": cpc,
+                    "competition": comp_v,
+                    "difficulty": round(comp_v * 100) if comp_v is not None else None,
+                    "money_value": round(vol * cpc),
+                    "est_capture_traffic": cap_t,
+                    "cap_value": round(cap_t * cpc),
+                    "competitor_domains": [],
+                    "discovered": True,
+                })
+            rows.sort(key=lambda r: r.get("search_volume") or 0, reverse=True)
+            rows = rows[:max(1, limit)]
+            # cluster the FILTERED, on-topic demand into product/service themes for the audit's strategy —
+            # this is the seed-keyword→cluster spine that works even with zero domain SEO data.
+            seed_clusters = cluster_keywords(rows)
+
+        # cache the FINAL filtered set (even when empty) so re-reads are free and we never re-pay a niche
+        patch = {"discovered_kw": rows, "seed_clusters": seed_clusters}
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO enrichment (domain, dataforseo, fetched_at) VALUES (%s,%s,now()) "
+                        "ON CONFLICT (domain) DO UPDATE SET dataforseo = "
+                        "COALESCE(enrichment.dataforseo,'{}'::jsonb) || %s::jsonb, fetched_at=now()",
+                        (domain, Json(patch), Json(patch)))
+            conn.commit()
+        return rows
+    except Exception:
+        return []
 
 
 def _ads_model(ads: dict, paid: dict) -> dict:
@@ -1135,14 +1602,19 @@ _SPEC_RE = _re.compile(r"\b\d{2,}\s?(?:mm|cm|nb|dn|pn|inch|in|kg|mpa|bar|class|k
                        r"|\bdn\s?\d+|\bpn\s?\d+|\bclass\s?\d+", _re.I)
 
 
-def _assign_stages(pool: list) -> None:
+def _assign_stages(pool: list, ref: list | None = None) -> None:
     """Map every keyword in the pool to a marketing-funnel stage (TOFU/MOFU/BOFU) in place.
 
     Intent is genuinely fuzzy for bare product terms, so we combine an explicit-intent lexicon with
     CPC as a commercial-intent proxy (advertisers pay more per click the closer a term is to purchase).
     CPC bands are computed as TERCILES *within this prospect's own keyword set*, so the split adapts to
-    the niche and always yields a realistic spread instead of dumping everything into one stage."""
-    cpcs = sorted(r["cpc"] for r in pool if (r.get("cpc") or 0) > 0)
+    the niche and always yields a realistic spread instead of dumping everything into one stage.
+
+    `ref` — compute the CPC terciles from a REFERENCE pool instead of `pool` itself. Used to classify the
+    DISCOVERED keywords against the base (ranked+gap) terciles, so a burst of high-CPC discovered demand
+    can't shift the boundaries and silently demote an existing commercial gap term to TOFU (which would
+    make discovery paradoxically shrink the addressable base)."""
+    cpcs = sorted(r["cpc"] for r in (ref if ref is not None else pool) if (r.get("cpc") or 0) > 0)
 
     def _pct(p):
         if not cpcs:
@@ -1185,10 +1657,32 @@ def _sig_tokens(kw: str) -> list:
     return [_stem(t) for t in toks if len(t) > 2 and t not in _STOP and t not in _AU_LOC]
 
 
-def build_keyword_universe(ranked: list, gap: list, *, brands=None) -> dict:
-    """Assemble a keyword UNIVERSE from the terms the prospect ranks for + the competitor gap, then
-    (1) map every keyword to a marketing-funnel stage by search intent, and (2) cluster keywords into
-    product/service themes with coverage (ranked vs missing) — the opportunity map."""
+def _gap_pool_row(k, _is_branded, brands, seen) -> dict | None:
+    """Turn a competitor-gap / discovered keyword row into a universe pool row (or None to skip)."""
+    kw = k.get("keyword")
+    if not kw or kw in seen or _is_branded(kw, brands):
+        return None
+    vol = k.get("volume") or k.get("search_volume") or 0
+    cpc = k.get("cpc") or 0
+    if vol < 20:
+        return None
+    cap_t = k.get("est_capture_traffic") or round(vol * _ctr(5))
+    return {"keyword": kw, "vol": vol, "cpc": cpc, "pos": None,
+            "value": k.get("money_value") or round(vol * cpc), "ranked": False,
+            "traffic": cap_t, "stage": None,
+            "competitor": (k.get("competitor_domains") or [None])[0] or k.get("competitor"),
+            "discovered": bool(k.get("discovered")),
+            "est_value": round(cap_t * cpc)}
+
+
+def build_keyword_universe(ranked: list, gap: list, *, brands=None, discovered=None) -> dict:
+    """Assemble a keyword UNIVERSE from the terms the prospect ranks for + the competitor gap (+ any
+    DISCOVERED search-demand keywords), then (1) map every keyword to a marketing-funnel stage by search
+    intent, and (2) cluster keywords into product/service themes with coverage (ranked vs missing).
+
+    `discovered` rows are classified against the BASE (ranked+gap) CPC terciles — never mixed into the
+    tercile computation — so real added demand can only GROW the commercial base, never reshuffle the
+    existing keywords' stages."""
     brands = set(brands or set())
     try:
         from .enrichment.dataforseo import is_branded as _is_branded
@@ -1200,26 +1694,37 @@ def build_keyword_universe(ranked: list, gap: list, *, brands=None) -> dict:
         vol = k.get("search_volume") or k.get("volume") or 0
         cpc = k.get("cpc") or 0
         pos = k.get("position")
-        if vol < 20 or _is_branded(k.get("keyword"), brands):   # drop the prospect's own brand terms
+        if vol < 20 or _is_branded(k.get("keyword"), brands):   # drop own + rival brand terms
             continue
         pool.append({"keyword": k.get("keyword"), "vol": vol, "cpc": cpc, "pos": pos,
                      "value": round(vol * cpc), "ranked": True,
-                     "traffic": round(vol * _ctr(pos or 999)), "stage": None})
+                     "traffic": round(vol * _ctr(pos or 999)), "stage": None,
+                     "competitor": None, "discovered": False,
+                     "est_value": round(vol * _ctr(pos or 999) * cpc)})
     seen = {r["keyword"] for r in pool}
     for k in (gap or []):
-        kw = k.get("keyword")
-        if not kw or kw in seen or _is_branded(kw, brands):
+        row = _gap_pool_row(k, _is_branded, brands, seen)
+        if row is None:
             continue
-        vol = k.get("volume") or k.get("search_volume") or 0
-        cpc = k.get("cpc") or 0
-        if vol < 20:
-            continue
-        pool.append({"keyword": kw, "vol": vol, "cpc": cpc, "pos": None,
-                     "value": k.get("money_value") or round(vol * cpc), "ranked": False,
-                     "traffic": k.get("est_capture_traffic") or round(vol * _ctr(5)),
-                     "stage": None})
+        seen.add(row["keyword"])
+        pool.append(row)
     # ---- map every keyword to a funnel stage (adaptive: intent lexicon + CPC terciles) ----
     _assign_stages(pool)
+    # ---- discovered search-demand keywords: classified against the BASE terciles (so they only ADD to
+    # the commercial base, never reshuffle the existing keywords), then merged into the pool ----
+    if discovered:
+        base_ref = list(pool)
+        disc_rows = []
+        for k in discovered:
+            row = _gap_pool_row(k, _is_branded, brands, seen)
+            if row is None:
+                continue
+            seen.add(row["keyword"])
+            row["discovered"] = True
+            disc_rows.append(row)
+        if disc_rows:
+            _assign_stages(disc_rows, ref=base_ref)
+            pool.extend(disc_rows)
     # ---- cluster by dominant product token ----
     freq = Counter()
     for r in pool:
@@ -1277,6 +1782,8 @@ def build_keyword_universe(ranked: list, gap: list, *, brands=None) -> dict:
                 "gap": sum(1 for r in rows if not r["ranked"]),
                 "traffic": sum(r["traffic"] for r in rows if not r["ranked"])}
     funnel = {s: _stage_agg(s) for s in ("TOFU", "MOFU", "BOFU")}
+    for _r in pool:
+        _r.pop("_st", None)                    # drop the internal clustering token list before exposing
     return {
         "totals": {"keywords": len(pool), "volume": sum(r["vol"] for r in pool),
                    "value": sum(r["value"] for r in pool),
@@ -1285,6 +1792,8 @@ def build_keyword_universe(ranked: list, gap: list, *, brands=None) -> dict:
                    "addressable_traffic": sum(r["traffic"] for r in pool if not r["ranked"])},
         "funnel": funnel,
         "clusters": clusters_final[:10],
+        # the FULL per-keyword pool (every money/gap/info search, post-scrub) for the transparent audit table
+        "keywords": pool,
     }
 
 
@@ -1308,18 +1817,33 @@ def _cluster_label(rows, key):
 # health scoring, diagnosis, share-of-voice, SVG gauges (audit-improve panel)
 # ============================================================================
 def _health_scores(est_org_value, seo_tot, ads_m, sov, geo, n_comp) -> dict:
-    """A 0–100 digital-health scorecard (higher = healthier). Illustrative composite from the signals
-    we hold — its job is to show at a glance where the prospect is weak (i.e. where the opportunity is)."""
+    """A 0–100 digital-health scorecard (higher = healthier). ILLUSTRATIVE composite from the signals
+    we hold — its job is to show at a glance where the prospect is weak (i.e. where the opportunity is),
+    NOT a precisely measured grade. `flags` marks the dimensions that are floor-clamped or a sentinel
+    (e.g. "not advertising" = 18) so the prospect-facing renderer can show a qualitative band or an
+    honest phrase instead of dressing a placeholder up as an exact score."""
     t = seo_tot or {}
     kw = t.get("keywords") or 0
     win = t.get("winning") or 0
     quick = t.get("quick_wins") or 0
-    seo = max(8, min(92, round(win * 2.4 + min(45, kw / 6) + min(14, quick))))
-    ads = 86 if (ads_m or {}).get("running") else 18
+    seo_raw = round(win * 2.4 + min(45, kw / 6) + min(14, quick))
+    seo = max(8, min(92, seo_raw))
+    running = bool((ads_m or {}).get("running"))
+    ads = 86 if running else 18
+    comp_raw = round((sov or 0) * 2.2) if sov is not None else None
     comp = round(min(95, max(6, (sov or 0) * 2.2))) if sov is not None else 45
     tech = geo.get("score") if geo and geo.get("score") is not None else 45
     overall = round(0.40 * seo + 0.15 * ads + 0.25 * comp + 0.20 * tech)
-    return {"overall": overall, "seo": seo, "ads": ads, "competitive": comp, "technical": int(tech)}
+    # flags: which dimensions are a clamp/sentinel/default rather than a real graded measurement
+    flags = {
+        "seo": "floor" if seo_raw < 8 else None,
+        "ads": None if running else "not_advertising",
+        "competitive": ("floor" if (comp_raw is not None and comp_raw < 6) else
+                        ("unmeasured" if sov is None else None)),
+        "technical": "unmeasured" if not (geo and geo.get("score") is not None) else None,
+    }
+    return {"overall": overall, "seo": seo, "ads": ads, "competitive": comp, "technical": int(tech),
+            "illustrative": True, "flags": flags}
 
 
 def _diagnosis(name, running_ads, ads_m, quickwin_value, gap_capturable, sov, geo, comps):

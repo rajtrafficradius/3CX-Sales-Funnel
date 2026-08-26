@@ -13,6 +13,7 @@ The result is CACHED on lisa4_sites (qa_passed / qa_notes / qa_at) so it runs on
 """
 import re as _re
 import urllib.request
+import urllib.error
 
 _BASE = "https://www.trmatrix.com.au"
 # Scaffolding markers only. Deliberately NOT "placeholder" (a valid <input placeholder="…"> attribute) nor
@@ -49,7 +50,9 @@ def _content(html: str, company: str, phone: str | None) -> list[dict]:
     toks = [t for t in _re.split(r"[^a-z0-9]+", (company or "").lower()) if len(t) >= 3
             and t not in ("pty", "ltd", "the", "and", "group", "trustee", "for", "trust")]
     name_hit = any(t in low for t in toks) if toks else True
-    checks.append({"name": "business-name-present", "pass": name_hit, "note": "the business name appears"})
+    # ADVISORY: brand may be stylised/shortened on the page (e.g. "Admin Made Easy" for
+    # "Administration Made Easy Pty Ltd"); the deep LLM review is the real wrong-business gate.
+    checks.append({"name": "business-name-present", "pass": name_hit, "advisory": True, "note": "the business name appears"})
     has_tel = ("tel:" in low) or bool(_re.search(r"\b0[2-478][\s\d]{7,}\b", html or ""))
     checks.append({"name": "contactable", "pass": has_tel, "note": "phone / tap-to-call present"})
     checks.append({"name": "has-nav", "pass": ("<nav" in low or "nav" in low[:6000]), "note": "navigation present"})
@@ -71,14 +74,25 @@ def _brand_safe(html: str) -> list[dict]:
 
 
 def _reachable(token: str) -> list[dict]:
+    # ADVISORY: a network-side probe must never gate whether we send a client their link.
+    # Cloudflare in front of the site 403s a bare server-side fetch (no browser UA) even though
+    # the page is live — so we send a real browser UA, and treat a 403 (WAF challenge) as reachable.
     if not token:
-        return [{"name": "reachable", "pass": False, "note": "no public link yet"}]
+        return [{"name": "reachable", "pass": False, "advisory": True, "note": "no public link yet"}]
     try:
-        req = urllib.request.Request(f"{_BASE}/api/lisa4/site/public/{token}", method="GET")
+        req = urllib.request.Request(
+            f"{_BASE}/api/lisa4/site/public/{token}", method="GET",
+            headers={"User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                    "Chrome/124.0 Safari/537.36")})
         code = urllib.request.urlopen(req, timeout=15).status
-        return [{"name": "reachable", "pass": code == 200, "note": f"public URL {code}"}]
+        return [{"name": "reachable", "pass": code in (200, 403), "advisory": True, "note": f"public URL {code}"}]
+    except urllib.error.HTTPError as e:
+        # 403/503 = WAF is serving the page but challenging the bot → the page IS deployed.
+        ok = e.code in (403, 503)
+        return [{"name": "reachable", "pass": ok, "advisory": True, "note": f"public URL {e.code}"}]
     except Exception as e:
-        return [{"name": "reachable", "pass": False, "note": str(e)[:60]}]
+        return [{"name": "reachable", "pass": False, "advisory": True, "note": str(e)[:60]}]
 
 
 def _llm_review(pool, settings, html: str, company: str) -> dict | None:
@@ -139,8 +153,12 @@ def qa_check(pool, settings, dest9: str, *, force: bool = False, deep: bool = Tr
         phone = None
         checks = (_structural(html) + _content(html, company, phone) + _placeholder(html)
                   + _brand_safe(html) + _reachable(token))
-        issues = [c["name"] + ": " + c["note"] for c in checks if not c["pass"]]
-        det_pass = all(c["pass"] for c in checks)
+        # Advisory checks (network-side reachability, brand-token heuristic) are reported but never
+        # block QA — a Cloudflare bot-challenge or a stylised brand name must not stop us sending a
+        # client their link. The real gates are the structural checks + the deep LLM content review.
+        issues = [c["name"] + ": " + c["note"] for c in checks if not c["pass"] and not c.get("advisory")]
+        advisories = [c["name"] + ": " + c["note"] for c in checks if not c["pass"] and c.get("advisory")]
+        det_pass = all(c["pass"] for c in checks if not c.get("advisory"))
         llm = _llm_review(pool, settings, html, company) if (deep and det_pass) else None
         if llm and llm.get("ok") is False:
             issues += ["review: " + s for s in (llm.get("issues") or [])[:4]]
@@ -149,6 +167,7 @@ def qa_check(pool, settings, dest9: str, *, force: bool = False, deep: bool = Tr
             cur.execute("UPDATE lisa4_sites SET qa_passed=%s, qa_notes=%s, qa_at=now() WHERE id=%s",
                         (passed, ("; ".join(issues))[:1000] if issues else "all checks passed", r["id"]))
             conn.commit()
-        return {"passed": passed, "checks": checks, "issues": issues, "share_token": token, "url": url}
+        return {"passed": passed, "checks": checks, "issues": issues, "advisories": advisories,
+                "share_token": token, "url": url}
     except Exception as exc:
         return {"passed": False, "checks": [], "issues": ["qa error: " + str(exc)[:80]]}

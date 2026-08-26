@@ -598,3 +598,18 @@ CREATE TABLE IF NOT EXISTS emma_control (
   inbox_scanned_at timestamptz,
   updated_at       timestamptz DEFAULT now()
 );
+
+-- QA subsystem (Phase 0) — one row per gate action / divergence from Retell's analytics
+-- (a booking un-booked by G1, a banned phrase scrubbed / URL shortened by G11/G12, etc.).
+-- Also self-created by funnel_agent.qa.audit.ensure_qa_audit so it works before init-db runs.
+CREATE TABLE IF NOT EXISTS qa_audit (
+  id         bigserial PRIMARY KEY,
+  gate       text,
+  agent      text,
+  call_id    text,
+  kind       text,
+  detail     jsonb,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_qa_audit_gate ON qa_audit (gate, created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_audit_call ON qa_audit (call_id);

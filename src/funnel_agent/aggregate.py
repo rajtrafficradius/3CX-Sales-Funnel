@@ -203,7 +203,17 @@ def _inscope_bde_names(pool: ConnectionPool) -> list[str]:
             "SELECT DISTINCT COALESCE(bde_name, extension) AS name "
             "FROM bde_agents WHERE in_scope AND active"
         )
-        return sorted(str(r["name"]) for r in cur.fetchall() if r["name"])
+        names = {str(r["name"]) for r in cur.fetchall() if r["name"]}
+        # AI callers (Lisa / Lisa 4 / Lisa 5) are real funnel lines. A legacy DB hide-trigger can force their
+        # bde_agents flag off; include any Lisa line that has actually dialled in the last 45 days so it can
+        # never be dropped from the (admin) leaderboard. The TV wall + non-admins filter them out downstream.
+        try:
+            cur.execute("SELECT DISTINCT bde_name AS name FROM calls "
+                        "WHERE bde_name ILIKE 'Lisa%%' AND started_at > now() - interval '45 days'")
+            names.update(str(r["name"]) for r in cur.fetchall() if r["name"])
+        except Exception:
+            pass
+        return sorted(names)
 
 
 def aggregate_day(pool: ConnectionPool, settings: Settings, day: date) -> dict:

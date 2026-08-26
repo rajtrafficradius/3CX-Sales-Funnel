@@ -149,6 +149,161 @@ def create_task(pool, *, title, description="", category="", priority="normal", 
 _EDITABLE = {"title", "description", "status", "priority", "category", "link", "notes"}
 
 
+def upsert_system_task(pool, title: str, *, status: str, description: str, priority: str = "normal",
+                       category: str = "Daily readiness", source: str = "autopilot") -> None:
+    """Idempotent upsert of an AUTOPILOT-maintained task, keyed by its (stable) title — so a recurring check
+    updates its ONE row in place instead of piling up duplicates. The board is realtime, so the status
+    change shows within seconds. Never raises."""
+    ensure_tasks_table(pool)
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id FROM tasks WHERE title=%s ORDER BY id LIMIT 1", (title[:300],))
+            row = cur.fetchone()
+            if row:
+                # pool uses dict_row, so fetchone() is {'id': N} — row[0] KeyError'd here and the
+                # except-pass swallowed it, silently killing the readiness autopilot. Read by key.
+                rid = row["id"] if isinstance(row, dict) else row[0]
+                cur.execute("UPDATE tasks SET status=%s, description=%s, priority=%s, category=%s, source=%s, "
+                            "updated_by='autopilot', updated_at=now(), "
+                            "done_at=CASE WHEN %s='done' THEN COALESCE(done_at, now()) ELSE NULL END WHERE id=%s",
+                            (status, description[:4000], priority, category, source, status, rid))
+            else:
+                cur.execute("INSERT INTO tasks (title, description, status, priority, category, source, updated_by, "
+                            "done_at) VALUES (%s,%s,%s,%s,%s,%s,'autopilot',"
+                            "CASE WHEN %s='done' THEN now() ELSE NULL END)",
+                            (title[:300], description[:4000], status, priority, category, source, status))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def run_daily_readiness(pool, settings) -> dict:
+    """AUTOPILOT daily health — is each Lisa stocked with enough fresh data for tomorrow's calls? Writes/updates
+    LIVE tasks on the board (Vysakh: "check both lisa is ready for tomorrow with enough data … update in
+    realtime"). 'Fresh' = pool prospects not yet dialed. Guarded — never raises."""
+    from . import lisa as _l
+    out = {}
+    try:
+        def fresh(table):
+            r = _l._fetch(pool, f"SELECT count(*) n FROM {table} p WHERE NOT EXISTS "
+                          f"(SELECT 1 FROM lisa_calls lc WHERE lc.dest9=p.dest9)")
+            return int(r[0]["n"]) if r else 0
+
+        def autodial(table):
+            try:
+                r = _l._fetch(pool, f"SELECT autodial FROM {table} WHERE id=1")
+                return bool(r[0]["autodial"]) if r else False
+            except Exception:
+                return False
+
+        for key, name, table, ctrl, daily in (
+            ("lisa4", "Lisa 4 (websites)", "lisa4_pool", "lisa4_control", 600),
+            ("lisa5", "Lisa 5 (growth)", "lisa5_pool", "lisa5_control", 600)):
+            f = fresh(table); on = autodial(ctrl); days = f / max(1, daily)
+            if not on:
+                status, pri = "blocked", "high"
+                note = f"⚠ Dialer is OFF. {f:,} fresh prospects in the pool — turn autodial on to call tomorrow."
+            elif f < daily:
+                status, pri = "blocked", "high"
+                note = (f"⚠ LOW — only {f:,} fresh prospects (~{days:.1f} day of calls). {name} will run dry "
+                        f"tomorrow — refill the pool now.")
+            elif f < 2 * daily:
+                status, pri = "in_progress", "normal"
+                note = f"Ready for tomorrow — {f:,} fresh (~{days:.1f} days), but top the pool up soon. Dialer on."
+            else:
+                status, pri = "done", "normal"
+                note = f"Ready — {f:,} fresh prospects (~{days:.1f} days of calls) and the dialer is on."
+            upsert_system_task(pool, f"{name} — ready for tomorrow's calls", status=status, priority=pri,
+                               description=note)
+            out[key] = {"fresh": f, "on": on, "status": status}
+        return out
+    except Exception as exc:
+        return {"error": str(exc)[:120]}
+
+
+def run_post_booking_readiness(pool, settings) -> dict:
+    """AUTOPILOT post-booking tracker (Vysakh, repeated): for EVERY booked meeting, watch the closer's
+    confirmation activity — Alfred's Aircall calls (did they answer / real conversation?) + the Fireflies
+    transcript outcome — to KNOW which reveals are actually CONFIRMED vs not-reached / not-interested /
+    callback, AND check the reveal asset (a built Lisa-4 website OR a Lisa-5 growth audit) is READY. Surfaces
+    ONE live task on the owner /tasks board listing the exact gaps so nothing slips (a not-interested reveal
+    still on the calendar, a booking with no asset, one the closer hasn't reached, or no firm time). Light
+    (a few counts) + guarded; read-only except the board task; never raises, never touches the dialer."""
+    from . import lisa as _l
+    out = {"total": 0, "confirmed": 0, "unreached": 0, "not_interested": 0,
+           "callback": 0, "asset_missing": 0, "no_time": 0}
+    try:
+        rows = _l._fetch(pool, """
+          WITH booked AS (
+            SELECT DISTINCT dest9 FROM lisa_calls
+            WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
+              AND started_at > now() - interval '10 days'),
+          alf AS (
+            SELECT right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9) AS d9,
+                   max(talk_seconds) AS max_talk, bool_or(answered) AS answered, count(*) AS attempts
+            FROM calls WHERE provider='aircall' AND started_at > now() - interval '12 days'
+            GROUP BY 1)
+          SELECT b.dest9,
+                 COALESCE(NULLIF(bc.contact_name,''), NULLIF(lp.company,''), lc.company, b.dest9) AS who,
+                 a.max_talk, a.answered, a.attempts, ff.outcome AS ff_outcome,
+                 bc.next_action_at, bc.audit_token, st.status AS site_status
+          FROM booked b
+          LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
+          LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
+          LEFT JOIN alf a ON a.d9=b.dest9
+          LEFT JOIN LATERAL (SELECT company_name AS company FROM lisa_calls WHERE dest9=b.dest9
+                             AND company_name IS NOT NULL ORDER BY started_at DESC LIMIT 1) lc ON true
+          LEFT JOIN LATERAL (SELECT outcome FROM fireflies_meetings WHERE dest9=b.dest9
+                             ORDER BY meeting_date DESC LIMIT 1) ff ON true
+          LEFT JOIN LATERAL (SELECT status FROM lisa4_sites s WHERE s.dest9=b.dest9
+                             ORDER BY (status='built') DESC, id DESC LIMIT 1) st ON true
+          WHERE COALESCE(bc.stage,'') NOT IN ('lost','won','no_show')
+        """)
+        crit, warn, minor = [], [], []   # severity tiers so the board leads with what matters
+        for r in rows:
+            out["total"] += 1
+            mt = r.get("max_talk") or 0
+            attempts = r.get("attempts") or 0
+            reached = bool(r.get("answered")) and mt >= 40
+            ffo = (r.get("ff_outcome") or "").strip().lower()
+            asset_ok = bool(r.get("audit_token")) or (r.get("site_status") == "built")
+            who = str(r.get("who"))[:40]
+            if not asset_ok:
+                out["asset_missing"] += 1
+                crit.append(f"NO ASSET (reveal not built): {who}")
+            if ffo in ("not_interested", "already_has_vendor"):
+                out["not_interested"] += 1
+                crit.append(f"NOT-INTERESTED on confirm call — remove/rebook: {who}")
+            elif ffo == "callback" or (not reached and attempts > 0):
+                out["callback"] += 1
+                warn.append(f"awaiting confirm ({'callback requested' if ffo == 'callback' else 'rang, no answer'}): {who}")
+            elif not reached and attempts == 0:
+                out["unreached"] += 1
+                warn.append(f"closer has NOT called yet: {who}")
+            else:
+                out["confirmed"] += 1
+            if not r.get("next_action_at"):
+                out["no_time"] += 1
+                minor.append(f"no firm reveal TIME set: {who}")
+        head = (f"{out['confirmed']} confirmed · {out['not_interested']} not-interested · "
+                f"{out['callback']} awaiting-confirm · {out['unreached']} not-yet-called · "
+                f"{out['asset_missing']} missing-asset · {out['no_time']} no-time "
+                f"(of {out['total']} active bookings)")
+        # critical first, then awaiting-confirm, then no-time; de-dupe preserving that order
+        seen = set(); uniq = [g for g in (crit + warn + minor) if not (g in seen or seen.add(g))]
+        pri = "high" if (out["asset_missing"] or out["not_interested"]) else "normal"
+        status = ("blocked" if out["asset_missing"]
+                  else "in_progress" if (out["callback"] or out["unreached"] or out["not_interested"] or out["no_time"])
+                  else "done")
+        desc = head + (("\n\nATTENTION:\n- " + "\n- ".join(uniq[:50])) if uniq
+                       else "\n\nAll booked reveals are confirmed and their assets are ready.")
+        upsert_system_task(pool, "Post-booking confirmations & reveal assets",
+                           status=status, priority=pri, description=desc)
+        return out
+    except Exception as exc:
+        return {"error": str(exc)[:120]}
+
+
 def update_task(pool, task_id: int, fields: dict, who: str) -> None:
     ensure_tasks_table(pool)
     sets = {k: v for k, v in (fields or {}).items() if k in _EDITABLE}

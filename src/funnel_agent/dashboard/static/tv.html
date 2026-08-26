@@ -173,7 +173,7 @@ async function loadAll(){
   if(!DATE){ $('#funnel').innerHTML='<div class="empty">Waiting for data…</div>'; return; }
   const [f,l]=await Promise.all([
     jget('/api/funnel?date='+DATE+'&bde=ALL'),
-    jget('/api/leaderboard?date='+DATE)
+    jget('/api/leaderboard?date='+DATE+'&tv=1')   /* tv=1 → the wall hides the internal AI callers (Lisa 4/5) */
   ]);
   renderFunnel(f);
   // Rank by the metric that matters on a sales floor: bookings, then pitches, then volume.

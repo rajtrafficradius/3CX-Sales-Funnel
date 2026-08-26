@@ -320,7 +320,7 @@ async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-
 
 function toDate(s){if(!s)return null;let str=String(s);if(!/[zZ]|[+-]\d\d:?\d\d$/.test(str))str+='Z';const d=new Date(str.replace(' ','T'));return isNaN(d)?null:d;}
 // live build % — elapsed since building started vs a typical ~11min Opus build, capped so it never shows 100% until truly built
-function buildPct(r){var ba=toDate(r.site_building_at);if(!ba)return 10;var el=(Date.now()-ba.getTime())/1000;return Math.min(95,Math.max(5,Math.round(el/660*100)));}
+function buildMins(r){var ba=toDate(r.site_building_at);if(!ba)return 0;return Math.max(0,Math.round((Date.now()-ba.getTime())/60000));}
 function ymdNum(d){const p=new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d);const o={};p.forEach(x=>o[x.type]=x.value);return Date.UTC(+o.year,+o.month-1,+o.day);}
 function frel(s){const d=toDate(s);if(!d)return '';
   const diff=Math.round((ymdNum(d)-ymdNum(new Date()))/86400000);
@@ -529,11 +529,15 @@ function renderRecord(r){
         <div class="row"><span class="k">Website build</span><span class="v">${(function(){var s=r.site_status;
           if(s==='built'&&r.share_token)return '<span class="tag good">● Live · 100%</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.share_token)+'" target="_blank" rel="noopener">Open ↗</a>';
           if(s==='built')return '<span class="tag good">● Built · 100%</span>';
-          if(s==='building'){var p=buildPct(r);return '<span class="tag build">● Building… '+p+'%</span><div class="pbar"><span style="width:'+p+'%"></span></div>';}
+          if(s==='building'){var m=buildMins(r);var w=Math.min(92,Math.max(6,Math.round(m/15*100)));var lbl=m>=25?('● Building… '+m+' min — taking longer than usual'):(m>0?('● Building… ~'+m+' min'):'● Building… starting');return '<span class="tag build">'+lbl+'</span><div class="pbar"><span style="width:'+w+'%"></span></div>';}
           if(s==='queued')return '<span class="tag build">● Queued · 0%</span><div class="pbar"><span style="width:4%"></span></div>';
           if(s==='error')return '<span class="tag bad">● Build failed</span> <button class="btn ghost" type="button" id="rbBtn" style="width:auto;padding:5px 11px;font-size:12px">Retry build</button>';
           return '<span class="dim">Not started</span>';})()}</span></div>
         <div class="row"><span class="k">Growth audit</span><span class="v">${r.audit_token?('<span class="tag good">● Ready</span> <a class="asset" href="/api/lisa4/site/public/'+esc(r.audit_token)+'" target="_blank" rel="noopener">Open ↗</a>'):'<span class="dim">Not generated yet</span>'}</span></div>
+        <div class="row"><span class="k">Generate on demand <span class="dim">(either asset)</span></span><span class="v" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
+          <button class="btn ghost" type="button" id="buildSiteBtn" style="width:auto;padding:7px 13px;font-size:12px;white-space:nowrap">${r.site_status==='built'?'Rebuild website':'Generate website'}</button>
+          <button class="btn ghost" type="button" id="genAuditBtn" style="width:auto;padding:7px 13px;font-size:12px;white-space:nowrap">${r.audit_token?'Regenerate audit':'Generate growth audit'}</button>
+        </span></div>
       </div></div>
     </div>
     <div class="panel">
@@ -552,6 +556,10 @@ function renderRecord(r){
       </div></div>
     </div>
     <div class="panel">
+      <div class="panel-h">Prospect engagement <span class="rt" id="engRt">did they open it?</span></div>
+      <div class="panel-b" id="engBody"><span class="dim">Loading…</span></div>
+    </div>
+    <div class="panel">
       <div class="panel-h">Contact</div>
       <div class="panel-b"><div class="kv">
         <div class="row"><span class="k">Name</span><span class="v">${r.contact_name?esc(r.contact_name):'<span class="dim">—</span>'}${ev.who_answered?` <span class="tag">${esc(String(ev.who_answered).replace(/_/g,' '))}</span>`:''}</span></div>
@@ -560,6 +568,16 @@ function renderRecord(r){
         ${q.prospect_mobile?`<div class="row"><span class="k">Mobile</span><span class="v mono">${esc(q.prospect_mobile)}</span></div>`:''}
         <div class="row"><span class="k">Booked call</span><span class="v">${r.call_id?`<a href="/call/${encodeURIComponent(r.call_id)}">Open booked call ↗</a>`:'<span class="dim">—</span>'}</span></div>
       </div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h">Edit prospect details</div>
+      <div class="panel-b">
+        <div class="field"><label for="edCompany">Business / company</label><input id="edCompany" type="text" value="${esc(r.company||'')}" placeholder="Company name" /></div>
+        <div class="field"><label for="edName">Contact name</label><input id="edName" type="text" value="${esc(r.contact_name||'')}" placeholder="Who we spoke to" /></div>
+        <div class="field"><label for="edEmail">Email</label><input id="edEmail" type="email" value="${esc(r.contact_email||'')}" placeholder="name@example.com.au" /></div>
+        <div class="field"><label for="edWebsite">Website</label><input id="edWebsite" type="text" value="${esc(r.domain||'')}" placeholder="example.com.au" /></div>
+        <button class="btn ghost" type="button" id="edSaveBtn">Save details</button>
+      </div>
     </div>
   </aside>`;
 
@@ -660,12 +678,65 @@ function wire(){
       if(r&&r.token){toast('Comparison generated');await loadRecord();}
       else{toast(r&&r.reason?r.reason:'Could not generate',true);cmpBtn.disabled=false;cmpBtn.textContent='Generate';}}
     catch(e){toast('Failed: '+e.message,true);cmpBtn.disabled=false;cmpBtn.textContent='Generate';}};
+  // edit prospect identity — send only the CHANGED fields to the existing crm/update endpoint
+  const edSaveBtn=document.getElementById('edSaveBtn');
+  if(edSaveBtn)edSaveBtn.onclick=async()=>{
+    const cur={company:(document.getElementById('edCompany').value||'').trim(),
+               prospect_name:(document.getElementById('edName').value||'').trim(),
+               email:(document.getElementById('edEmail').value||'').trim(),
+               website:(document.getElementById('edWebsite').value||'').trim()};
+    const orig={company:(REC.company||''),prospect_name:(REC.contact_name||''),email:(REC.contact_email||''),website:(REC.domain||'')};
+    const fields={};
+    Object.keys(cur).forEach(k=>{if(cur[k]!==orig[k])fields[k]=cur[k];});
+    if(!Object.keys(fields).length){toast('No changes');return;}
+    edSaveBtn.disabled=true;
+    try{await post('/api/lisa/crm/update',{dest9:D9,fields});toast('Details saved');await loadRecord();}
+    catch(e){toast('Save failed: '+e.message,true);edSaveBtn.disabled=false;}
+  };
+  // manual overrides: queue a website build / generate a growth audit on demand (either booking type)
+  const buildSiteBtn=document.getElementById('buildSiteBtn');
+  if(buildSiteBtn)buildSiteBtn.onclick=async()=>{const _t=buildSiteBtn.textContent;buildSiteBtn.disabled=true;buildSiteBtn.textContent='Queuing…';
+    try{const r=await post('/api/lisa/crm/build-site',{dest9:D9});
+      toast(r&&r.queued?'Website build queued':'A build is already queued or live');await loadRecord();}
+    catch(e){toast('Failed: '+e.message,true);buildSiteBtn.disabled=false;buildSiteBtn.textContent=_t;}};
+  const genAuditBtn=document.getElementById('genAuditBtn');
+  if(genAuditBtn)genAuditBtn.onclick=async()=>{const _t=genAuditBtn.textContent;genAuditBtn.disabled=true;genAuditBtn.textContent='Generating…';
+    try{const r=await post('/api/lisa/crm/generate-audit',{dest9:D9});
+      if(r&&r.token){toast('Audit generated');await loadRecord();}
+      else{toast(r&&r.reason?r.reason:'No SEO data for this domain yet',true);genAuditBtn.disabled=false;genAuditBtn.textContent=_t;}}
+    catch(e){toast('Failed: '+e.message,true);genAuditBtn.disabled=false;genAuditBtn.textContent=_t;}};
 }
+
+function fmtSecs(s){s=+s||0;if(s<60)return s+'s';var m=Math.floor(s/60),r=s%60;return m+'m'+(r?' '+r+'s':'');}
+function renderEngagement(d){
+  var el=document.getElementById('engBody'); if(!el)return;
+  var a=(d&&d.assets)||[];
+  var rt=document.getElementById('engRt'); if(rt)rt.textContent=(d&&d.engaged)?'✓ engaged':'not opened yet';
+  if(!a.length){el.innerHTML='<span class="dim">Nothing opened yet. As soon as the prospect opens an asset, taps an SMS link or opens an email, it shows here.</span>';return;}
+  var rows=a.map(function(x){
+    var v;
+    if(!x.opened){v='<span class="dim">Not opened yet</span>';}
+    else{
+      var bits=[];
+      if(x.kind==='sms'){bits.push('<span class="tag good">● Link clicked'+(x.clicks>1?' '+x.clicks+'×':'')+'</span>');}
+      else if(x.kind==='email'){bits.push('<span class="tag good">● Email opened'+(x.opens>1?' '+x.opens+'×':'')+'</span>');}
+      else{bits.push('<span class="tag good">● Opened'+(x.opens>1?' '+x.opens+'×':'')+'</span>');
+        if(x.max_scroll)bits.push('scrolled '+x.max_scroll+'%');
+        if(x.total_secs)bits.push(fmtSecs(x.total_secs));
+        if(x.clicks)bits.push('clicked from SMS');}
+      v=bits.join(' · ');
+    }
+    return '<div class="row"><span class="k">'+esc(x.label)+'</span><span class="v">'+v+'</span></div>';
+  }).join('');
+  el.innerHTML='<div class="kv">'+rows+'</div>';
+}
+async function loadEngagement(){try{var d=await api('/api/lisa/crm/engagement/'+encodeURIComponent(D9));renderEngagement(d);}catch(e){var el=document.getElementById('engBody');if(el)el.innerHTML='<span class="dim">—</span>';}}
 
 var _devPoll=null;
 async function loadRecord(){
   if(!D9){renderError(new Error('missing dest9'));return;}
   try{const rec=await api('/api/lisa/crm/record/'+encodeURIComponent(D9));if(!rec||!rec.dest9){renderError(new Error('Not found'));return;}renderRecord(rec);
+    loadEngagement();
     // real-time development status: while the site is queued/building, refresh every 15s until it's live
     if(_devPoll){clearTimeout(_devPoll);_devPoll=null;}
     if(rec.site_status==='building'||rec.site_status==='queued'){_devPoll=setTimeout(loadRecord,15000);}
@@ -693,6 +764,8 @@ window.loadRecord=loadRecord;
     ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
     ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
     ['/tasks','/tasks','Tasks','<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l1.5 1.5L13 11"/><path d="M9 17h5"/>',3],
+    ['/cost','/cost','Cost','<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',3],
+    ['/status','/status','Engine Status','<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',1],
     ['/meetings','/meetings','Emma Collins','<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15.5l2 2 4-4"/>',2],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
@@ -707,7 +780,7 @@ window.loadRecord=loadRecord;
   fetch('/api/me').then(function(r){return r.json()}).then(function(m){
     if(!m) return;
     if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
-    if(m.crm_access){document.querySelectorAll('.tr-rail [data-nav="/lisa-crm"]').forEach(function(el){el.style.display='';});}if(m.tasks_access){document.querySelectorAll('.tr-rail .tr-tasks').forEach(function(el){el.style.display='';});}
+    if(m.crm_access){document.querySelectorAll('.tr-rail [data-nav="/lisa-crm"]').forEach(function(el){el.style.display='';});}if(m.lisa_access){document.querySelectorAll('.tr-rail [data-nav="/lisa"]').forEach(function(el){el.style.display='';});}if(m.tasks_access){document.querySelectorAll('.tr-rail .tr-tasks').forEach(function(el){el.style.display='';});}
     if(m.scheduler_user){document.querySelectorAll('.tr-rail .tr-sched').forEach(function(el){el.style.display='';});}
     var nm=(m.name||m.email||'').trim(); if(!nm) return;
     var w=document.getElementById('trWho'); if(w) w.textContent=nm;

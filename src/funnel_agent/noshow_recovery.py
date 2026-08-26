@@ -41,6 +41,21 @@ def enabled(pool) -> bool:
     return str(_cfg(pool, "noshow_recovery_enabled", "0")).lower() in ("1", "true", "on", "yes")
 
 
+def send_window_open() -> bool:
+    """True only during AU business hours — we NEVER text a prospect overnight (Vysakh's rule: schedule
+    sends for daytime, never blast at night). Mon–Sat, 09:00–19:00 Australia/Sydney. If the tz lookup ever
+    fails, default OPEN so a real-time reply is never wrongly blocked (batch callers gate themselves)."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Australia/Sydney"))
+        if now.weekday() == 6:                      # Sunday — quiet
+            return False
+        return 9 <= now.hour < 19
+    except Exception:
+        return True
+
+
 BRAND_INTRO_TOKEN = "de-group-reveal-aUGgB40aZsd9yQ"
 _BASE = "https://www.trmatrix.com.au"
 
@@ -140,19 +155,35 @@ def send_recovery(pool, settings, dest9: str, by: str = "Lisa") -> bool:
                          "ORDER BY started_at DESC LIMIT 1", (d9,))
         nm = _l._first_name((info[0].get("prospect_name") if info else "") or "")
         from . import shortlink as _sl
-        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{token}")
-        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}")
+        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{token}", dest9=d9)
+        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}", dest9=d9)
         body = _message(nm, company, reveal, brand)
+        # SMS is PRIMARY; email is a SECONDARY reinforcement when we hold an address (Vysakh's rule).
         frm = _l._e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
-        if not (_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, "+61" + d9, body, frm)):
+        sms_ok = bool(_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, "+61" + d9, body, frm))
+        if sms_ok:
+            _l._log_sms(pool, "outbound", frm, "+61" + d9, body, d9)
+        email_ok = False
+        try:
+            from . import emailer as _em
+            addr = _em.prospect_email(pool, d9)
+            if addr:
+                cr = _l._fetch(pool, "SELECT comparison_token FROM booked_crm WHERE dest9=%s", (d9,))
+                cmp_tok = (cr[0].get("comparison_token") if cr else None)
+                cmp_url = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{cmp_tok}", dest9=d9) if cmp_tok else None
+                subj, html = _em.reveal_email(nm, company, reveal, brand, compare_url=cmp_url, recovery=True)
+                email_ok = _em.send_email(settings, addr, subj, html, dest9=d9)
+        except Exception:
+            pass
+        if not (sms_ok or email_ok):
             return False
-        _l._log_sms(pool, "outbound", frm, "+61" + d9, body, d9)
+        chan = "sms+email" if (sms_ok and email_ok) else ("sms" if sms_ok else "email")
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO booked_crm (dest9,recovery_sent_at,recovery_channel,recovery_status,updated_at) "
-                        "VALUES (%s,now(),'sms','sent',now()) ON CONFLICT (dest9) DO UPDATE SET "
-                        "recovery_sent_at=now(), recovery_channel='sms', recovery_status='sent', updated_at=now()", (d9,))
+                        "VALUES (%s,now(),%s,'sent',now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "recovery_sent_at=now(), recovery_channel=%s, recovery_status='sent', updated_at=now()", (d9, chan, chan))
             cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
-                        (d9, "No-show recovery: sent website + brand intro via SMS", by))
+                        (d9, f"No-show recovery: sent website + brand intro via {chan}", by))
             conn.commit()
         return True
     except Exception:
@@ -197,23 +228,36 @@ def send_site_on_ask(pool, settings, dest9: str, by: str = "Lisa") -> bool:
         info = _l._fetch(pool, "SELECT prospect_name FROM lisa_calls WHERE dest9=%s ORDER BY started_at DESC LIMIT 1", (d9,))
         nm = _l._first_name((info[0].get("prospect_name") if info else "") or "")
         from . import shortlink as _sl
-        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{token}")
-        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}")
+        reveal = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{token}", dest9=d9)
+        brand = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{BRAND_INTRO_TOKEN}", dest9=d9)
         cr = _l._fetch(pool, "SELECT comparison_token FROM booked_crm WHERE dest9=%s", (d9,))
         cmp_tok = (cr[0].get("comparison_token") if cr else None)
         cmp_line = (f" and a quick before/after vs your current site: "
-                    f"{_sl.short_url(pool, f'{_BASE}/api/lisa4/site/public/{cmp_tok}')}" if cmp_tok else "")
+                    f"{_sl.short_url(pool, f'{_BASE}/api/lisa4/site/public/{cmp_tok}', dest9=d9)}" if cmp_tok else "")
         nmp = (" " + nm.lower()) if nm else ""
         body = (f"hey{nmp}, absolutely — here's the new site we built for {_clean_co(company)}: {reveal}. and a "
                 f"quick intro to us: {brand}{cmp_line}. have a look and let me know what you think — happy to "
                 f"jump on a quick call and walk you through it whenever suits.")
         frm = _l._e164_au((list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0])
-        if not (_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, "+61" + d9, body, frm)):
+        sms_ok = bool(_l._twilio_ready(settings) and frm and _l._send_sms_twilio(settings, "+61" + d9, body, frm))
+        if sms_ok:
+            _l._log_sms(pool, "outbound", frm, "+61" + d9, body, d9)
+        email_ok = False                              # SMS primary; email reinforces when we have an address
+        try:
+            from . import emailer as _em
+            addr = _em.prospect_email(pool, d9)
+            if addr:
+                cmp_url = _sl.short_url(pool, f"{_BASE}/api/lisa4/site/public/{cmp_tok}", dest9=d9) if cmp_tok else None
+                subj, html = _em.reveal_email(nm, company, reveal, brand, compare_url=cmp_url)
+                email_ok = _em.send_email(settings, addr, subj, html, dest9=d9)
+        except Exception:
+            pass
+        if not (sms_ok or email_ok):
             return False
-        _l._log_sms(pool, "outbound", frm, "+61" + d9, body, d9)
+        chan = "SMS + email" if (sms_ok and email_ok) else ("SMS" if sms_ok else "email")
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO crm_activity (dest9,kind,body,author) VALUES (%s,'system',%s,%s)",
-                        (d9, "Sent website + brand intro on request (link-on-ask, QA-passed)", by))
+                        (d9, f"Sent website + brand intro on request (link-on-ask, QA-passed) via {chan}", by))
             conn.commit()
         return True
     except Exception:
@@ -225,6 +269,8 @@ def run_noshow_recovery(pool, settings, limit: int = 3) -> dict:
     try:
         if not enabled(pool):
             return {"skipped": "disabled"}
+        if not send_window_open():                  # never text a prospect overnight — waits for AU daytime
+            return {"skipped": "outside AU business hours"}
         sent = 0
         for r in _targets(pool, limit):
             if send_recovery(pool, settings, r["dest9"]):

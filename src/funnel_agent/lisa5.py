@@ -24,6 +24,7 @@ from psycopg_pool import ConnectionPool
 
 from .config import Settings
 from .logging import get_logger
+from .qa import dynvars as _qa_dyn   # G8/G9/G10 pure in-memory dynamic-variable safety
 
 log = get_logger(__name__)
 
@@ -167,7 +168,7 @@ def build_brief_lisa5(pool: ConnectionPool, dest9: str) -> dict:
         "website_bucket": d.get("bucket") or "",
         "website_issue": _speakable_issue(d.get("issue")),   # never an internal state marker on the call
         "prospect_email": dm.get("dm_email") or d.get("email") or "",  # she CONFIRMS it, never asks cold
-        "prospect_name": "" if pn.lower() in ("the", "owner", "unknown") else pn,
+        "prospect_name": _qa_dyn.clean_prospect_name(pn),   # G10: clean spoken first name, or "" for junk
         "prospect_role": (dm.get("dm_title") or ex.get("role") or "").strip(),  # e.g. "Managing Director"
         "company_context": ctx,                              # e.g. "retail · 8 staff · since 1999"
     }
@@ -201,6 +202,13 @@ def start_lisa5_call(pool: ConnectionPool, settings: Settings, *, to_number: str
         dyn[k] = "" if v is None else str(v)
     # final belt: an extra_vars/event override can re-introduce an internal state marker — never speakable
     dyn["website_issue"] = _speakable_issue(dyn.get("website_issue"))
+    # QA G8/G9 (PURE in-memory — dict/regex only, ZERO I/O): fill any known blank/missing variable so
+    # Retell can never voice a raw "{{placeholder}}", scrub any residual {{...}} inside a value, then
+    # enforce the no-website invariant (a site-less prospect never carries a website URL/domain). This
+    # only shapes the variables dict handed to Retell — it never changes how the call is placed/paced.
+    dyn = _L1._fill_dynamic_var_defaults(dyn)
+    dyn = _qa_dyn.scrub_residual_placeholders(dyn)
+    dyn = _qa_dyn.enforce_no_website_invariant(dyn)
     body = {
         "from_number": frm, "to_number": to_number,
         "override_agent_id": getattr(settings, "lisa5_agent_id", "") or None,
@@ -466,8 +474,6 @@ def handle_lisa5_postcall(pool: ConnectionPool, settings: Settings, payload: dic
         return {"ok": False, "error": "no call_id"}
     if (payload.get("event") or "") != "call_analyzed":
         return {"ok": True, "event": payload.get("event")}
-    analysis = call.get("call_analysis") or {}
-    cad = analysis.get("custom_analysis_data") or {}
     meta = call.get("metadata") or {}
     inbound = (call.get("direction") or "").lower() == "inbound"
     # inbound = a prospect returning Lisa's missed call/SMS: THEY are from_number, our line is to_number
@@ -480,8 +486,32 @@ def handle_lisa5_postcall(pool: ConnectionPool, settings: Settings, payload: dic
                         (cid, d9, call.get("to_number"), call.get("from_number"),
                          (call.get("retell_llm_dynamic_variables") or {}).get("company_name")))
             conn.commit()
+    # SOLE SOURCE OF TRUTH = OUR transcript classifier (never Retell's custom_analysis_data). It runs
+    # post-call (off the dial loop) and is idempotent per call_id; {} when there is no transcript so the
+    # never-connected telephony-only handling below still fires.
+    dyn5 = call.get("retell_llm_dynamic_variables") or {}
+    cad = _L1._lisa_postcall_cad(pool, settings, call, cid)
     outcome = (cad.get("call_outcome") or "").strip().lower()
     booked = bool(cad.get("meeting_agreed"))
+    # QA G1 (webhook handler — off the dial loop): belt-and-suspenders on top of OUR classifier — honour a
+    # "booked" only for a genuine two-party conversation (disconnect reason + duration) with a concrete agreed
+    # time in the transcript. A gate-fail un-books so the lisa_calls row, the Lisa-5 calendar event, the
+    # booking SMS and the funnel mirror all agree. Verdict derives ONLY from the transcript + telephony facts.
+    if booked:
+        from .qa import gates as _qg, audit as _qa
+        _v = _qg.booking_verdict(
+            transcript=call.get("transcript"), disconnect_reason=call.get("disconnection_reason"),
+            duration_ms=call.get("duration_ms") or call.get("call_length_ms"),
+            claimed_time=cad.get("agreed_day_time"))
+        if not _v.ok:
+            booked = False
+            try:
+                _qa.log_event(pool, gate="G1", kind="unbooked", call_id=cid, agent="Lisa 5",
+                              detail={"reason": _v.reason, "classifier_meeting_agreed": True,
+                                      "disconnect": call.get("disconnection_reason"),
+                                      "duration_ms": call.get("duration_ms")})
+            except Exception:
+                pass
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("UPDATE lisa_calls SET status='analyzed', call_outcome=%s, meeting_agreed=%s, "
                     "  agreed_day_time=%s, call_summary=%s, transcript=%s, recording_url=%s, "
@@ -498,12 +528,17 @@ def handle_lisa5_postcall(pool: ConnectionPool, settings: Settings, payload: dic
     try:
         _L1._write_funnel_call(pool, cid, call.get("retell_llm_dynamic_variables") or {}, cad,
                                ({**call, "to_number": call.get("from_number")} if inbound else call),
-                               bde_ext="LISA5", bde_name="Lisa 5")
+                               bde_ext="LISA5", bde_name="Lisa 5", booked_override=booked)
     except Exception as exc:
         log.warning("lisa5_funnel_write_failed", error=str(exc)[:140])
     # BOOKED → put the meeting on the Lisa5 calendar (what the floor pipeline + a human closer see). Time
     # parsed from the prospect's spoken words. Generic 'meeting' type (Lisa-5 has no website-reveal flow).
     if booked and d9:
+        # A confirmed booking must ALSO land in the booked CRM (not only the funnel + calendar). Contact/time
+        # all come from OUR classifier / the dialed brief, never Retell. Idempotent + fill-blank.
+        _L1._crm_mark_booked(pool, d9, contact_name=(dyn5.get("prospect_name") or cad.get("contact_name")),
+                             contact_email=cad.get("confirmed_email"), agreed_day_time=cad.get("agreed_day_time"),
+                             next_action_at=_L1._parse_when(cad.get("agreed_day_time")), agent="Lisa 5")
         try:
             when = _L1._parse_when(cad.get("agreed_day_time"))
             if when:
@@ -531,7 +566,7 @@ def handle_lisa5_postcall(pool: ConnectionPool, settings: Settings, payload: dic
                 when_txt = (cad.get("agreed_day_time") or "the time we agreed").strip()
                 body = (f"Hey, it's Lisa - all locked in for {when_txt}. I'll send you the details before "
                         "we chat. Cheers!")
-                if frm and _L1._send_sms_twilio(settings, pn, body, frm):
+                if frm and _L1._send_sms_twilio(settings, pn, body, frm, pool):
                     _L1._log_sms(pool, "outbound", frm, pn, body, d9)
         except Exception as exc:
             log.warning("lisa5_booking_sms_failed", error=str(exc)[:120])
@@ -620,7 +655,7 @@ def schedule_lisa5_followup(pool: ConnectionPool, settings: Settings, *, dest9: 
                     frm = (l5_numbers or [""])[0]
                     body = ("Hey, it's Lisa — tried to give you a buzz. Could you call me back on this "
                             "number when you get a sec? Ta!")
-                    if frm and _L1._send_sms_twilio(settings, dest_number, body, frm):
+                    if frm and _L1._send_sms_twilio(settings, dest_number, body, frm, pool):
                         _L1._log_sms(pool, "outbound", frm, dest_number, body, dest9)
                         with pool.connection() as conn, conn.cursor() as cur:
                             cur.execute("UPDATE lisa5_pool SET sms_sent=true WHERE dest9=%s", (dest9,))

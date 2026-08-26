@@ -1,0 +1,283 @@
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>System Blueprint · AI Sales Floor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<style>
+ :root{--bg:#0b0f16;--panel:#10151e;--panel2:#161c27;--line:#222b39;--line-soft:#1a212c;--txt:#e8edf5;--muted:#8b96a6;--faint:#5b6675;
+   --ok:#34d399;--okb:#0e2a22;--warn:#fbbf24;--warnb:#2a2410;--down:#f87171;--downb:#2a1414;--idle:#5b8cff;--idleb:#111a2e;--unknown:#8b96a6;--unknownb:#1a1f28;}
+ *{box-sizing:border-box}
+ html,body{background:var(--bg)}
+ body{margin:0;color:var(--txt);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;-webkit-font-smoothing:antialiased}
+ .wrap{max-width:1600px;margin:0 auto;padding:20px 20px 40px}
+ header{display:flex;align-items:center;gap:14px}
+ header h1{font-size:20px;font-weight:850;letter-spacing:-.02em;margin:0}
+ header .eyebrow{font-size:10.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+ a.lnk{color:var(--muted);text-decoration:none;font-size:12.5px;border:1px solid var(--line);border-radius:8px;padding:6px 12px}
+ a.lnk:hover{color:var(--txt);border-color:var(--muted)}
+ a.lnk.mla{margin-left:auto}
+ .bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin:14px 0 12px}
+ .odot{width:12px;height:12px;border-radius:50%}
+ .obig{font-size:15px;font-weight:850}
+ .pill{font-size:11.5px;font-weight:800;border-radius:999px;padding:4px 11px;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line)}
+ .pill i{width:7px;height:7px;border-radius:50%;display:inline-block}
+ .updated{margin-left:auto;color:var(--faint);font-size:11.5px}
+ .legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:11.5px;margin:0 2px 8px}
+ .legend b{color:var(--txt)}
+ .legend .lg{display:inline-flex;align-items:center;gap:6px}
+ .legend .lg i{width:9px;height:9px;border-radius:3px;display:inline-block}
+ /* problems strip */
+ #problems{display:flex;gap:8px;flex-wrap:wrap;margin:2px 2px 12px;min-height:2px}
+ .pchip{font-size:11.5px;font-weight:750;border-radius:8px;padding:4px 10px;cursor:pointer;border:1px solid var(--line);background:var(--panel);display:inline-flex;align-items:center;gap:7px}
+ .pchip i{width:7px;height:7px;border-radius:50%}
+ .pchip:hover{border-color:var(--muted)}
+ .pchip .st{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;opacity:.85}
+ /* graph */
+ .scroll{overflow:auto;border:1px solid var(--line);border-radius:14px;background:
+   radial-gradient(circle at 1px 1px, rgba(255,255,255,.035) 1px, transparent 0) 0 0/26px 26px, var(--panel);}
+ .stage{position:relative}
+ .wires{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}
+ .edge{fill:none;stroke:#33405a;stroke-width:1.3;opacity:.55}
+ .earrow{fill:#33405a;opacity:.55}
+ .lane{position:absolute;top:0;border-radius:12px;background:rgba(255,255,255,.014);border:1px solid rgba(255,255,255,.03)}
+ .lanehd{position:absolute;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);white-space:nowrap}
+ .node{position:absolute;background:var(--panel2);border:1px solid var(--line);border-left-width:4px;border-radius:10px;
+   padding:8px 11px;cursor:pointer;transition:opacity .12s,box-shadow .12s,transform .08s;overflow:hidden}
+ .node:hover{transform:translateY(-1px)}
+ .node .nrow{display:flex;align-items:center;gap:7px}
+ .node .ndot{width:8px;height:8px;border-radius:50%;flex:none}
+ .node .nname{font-weight:750;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .node .ndet{color:var(--muted);font-size:11px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .node .nlast{color:var(--faint);font-size:10px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .s-ok{border-color:var(--line);border-left-color:var(--ok)} .s-ok .ndot{background:var(--ok)}
+ .s-warn{border-left-color:var(--warn)} .s-warn .ndot{background:var(--warn)}
+ .s-down{border-color:var(--down);border-left-color:var(--down)} .s-down .ndot{background:var(--down)}
+ .s-idle{border-left-color:var(--idle)} .s-idle .ndot{background:var(--idle)}
+ .s-unknown{border-left-color:var(--unknown)} .s-unknown .ndot{background:var(--unknown)}
+ .c-ok{background:var(--ok)} .c-warn{background:var(--warn)} .c-down{background:var(--down)} .c-idle{background:var(--idle)} .c-unknown{background:var(--unknown)}
+ @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,0)}50%{box-shadow:0 0 0 5px rgba(248,113,113,.30)}}
+ .s-down{animation:pulse 1.6s ease-in-out infinite}
+ @keyframes warnp{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,0)}50%{box-shadow:0 0 0 4px rgba(251,191,36,.18)}}
+ .s-warn{animation:warnp 2.4s ease-in-out infinite}
+ @keyframes flash{0%,100%{box-shadow:0 0 0 0 rgba(91,140,255,0)}30%{box-shadow:0 0 0 6px rgba(91,140,255,.55)}}
+ .node.flash{animation:flash .7s ease-in-out 2}
+ /* focus highlighting */
+ .stage.focus .node{opacity:.28}
+ .stage.focus .node.sel,.stage.focus .node.nbr{opacity:1}
+ .stage.focus .edge{opacity:.06}
+ .stage.focus .edge.lit{opacity:.95;stroke-width:2.2}
+ .stage.focus .earrow{opacity:.05}
+ .node.sel{box-shadow:0 0 0 1px var(--muted),0 10px 26px -14px #000}
+ /* detail dock */
+ #dock{position:fixed;left:16px;bottom:16px;width:330px;max-width:calc(100vw - 32px);background:var(--panel);border:1px solid var(--line);
+   border-radius:12px;padding:12px 14px;box-shadow:0 18px 50px -20px rgba(0,0,0,.8);z-index:50}
+ #dock .dh{display:flex;align-items:center;gap:8px}
+ #dock .db{font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-radius:6px;padding:2px 7px}
+ #dock .dn{font-weight:800;font-size:13.5px}
+ #dock .dl{font-size:10px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;margin-left:auto}
+ #dock .dd{color:var(--muted);font-size:12px;margin-top:6px}
+ #dock .dm{color:var(--faint);font-size:11px;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap}
+ .b-ok{background:var(--okb);color:var(--ok)} .b-warn{background:var(--warnb);color:var(--warn)} .b-down{background:var(--downb);color:var(--down)}
+ .b-idle{background:var(--idleb);color:var(--idle)} .b-unknown{background:var(--unknownb);color:var(--unknown)}
+ .empty{color:var(--muted);padding:50px;text-align:center}
+</style>
+<div class="wrap">
+  <header>
+    <div><div class="eyebrow">AI Sales Floor</div><h1>System Blueprint</h1></div>
+    <a class="lnk mla" href="/status">◧ Tile view</a>
+    <a class="lnk" href="/">← Dashboard</a>
+  </header>
+  <div class="bar">
+    <span class="odot c-ok" id="odot"></span>
+    <span class="obig" id="obig">Reading live signals…</span>
+    <span id="counts"></span>
+    <span class="updated" id="updated"></span>
+  </div>
+  <div class="legend">
+    <span class="lg"><i class="c-ok"></i>Healthy</span>
+    <span class="lg"><i class="c-warn"></i>Degraded</span>
+    <span class="lg"><i class="c-down"></i>Down</span>
+    <span class="lg"><i class="c-idle"></i>Idle / off-hours</span>
+    <span class="lg"><i class="c-unknown"></i>Unknown (signal unreadable)</span>
+    <span style="margin-left:auto">Hover a node to trace its data flow · click to pin</span>
+  </div>
+  <div id="problems"></div>
+  <div class="scroll" id="scroll"><div class="stage" id="stage"><div class="empty">Building the map…</div></div></div>
+</div>
+<div id="dock" style="display:none">
+  <div class="dh"><span class="db b-ok" id="dkb">OK</span><span class="dn" id="dkn">—</span><span class="dl" id="dkl"></span></div>
+  <div class="dd" id="dkd"></div>
+  <div class="dm" id="dkm"></div>
+</div>
+<script>
+var STLBL={ok:'OK',warn:'WARN',down:'DOWN',idle:'IDLE',unknown:'UNKNOWN'};
+var SEV={down:0,warn:1,unknown:2,idle:3,ok:4};
+// layout constants
+var COLW=204,COLGAP=60,NODEH=62,NODEGAP=14,PADX=26,PADTOP=44,PADBOT=26;
+var SIG=null, POS={}, CARD={}, NODEEDGES={}, PINNED=null;
+
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]});}
+function fmtTime(iso){try{return new Date(iso).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}catch(e){return '';}}
+
+function sig(d){
+  return (d.layers||[]).map(function(l){return l.id;}).join('|')+'::'+
+         (d.nodes||[]).map(function(n){return n.id+':'+n.layer;}).join(',')+'::'+
+         (d.edges||[]).map(function(e){return e.from+'>'+e.to;}).join(',');
+}
+
+function edgePath(a,b){
+  var x1=a.x+COLW, y1=a.y+NODEH/2, x2=b.x, y2=b.y+NODEH/2;
+  if(b.x<=a.x){ // back-edge or same column: bow out below
+    var dx=Math.max(60,(a.x-b.x)/2+40);
+    return 'M'+x1+' '+y1+' C '+(x1+dx)+' '+y1+', '+(x2-dx)+' '+y2+', '+x2+' '+y2;
+  }
+  var dx=Math.max(38,(x2-x1)/2);
+  return 'M'+x1+' '+y1+' C '+(x1+dx)+' '+y1+', '+(x2-dx)+' '+y2+', '+x2+' '+y2;
+}
+
+function build(d){
+  var stage=document.getElementById('stage');
+  // group nodes by layer, preserving backend (stable) order
+  var order={}, byLayer={};
+  (d.layers||[]).forEach(function(l,i){order[l.id]=i; byLayer[l.id]=[];});
+  (d.nodes||[]).forEach(function(n){ if(!(n.layer in byLayer)){order[n.layer]=Object.keys(order).length; byLayer[n.layer]=[];} byLayer[n.layer].push(n); });
+  var layerIds=(d.layers||[]).map(function(l){return l.id;});
+  Object.keys(byLayer).forEach(function(k){ if(layerIds.indexOf(k)<0) layerIds.push(k); });
+
+  POS={}; var maxRows=0;
+  layerIds.forEach(function(lid,ci){
+    var x=PADX+ci*(COLW+COLGAP);
+    byLayer[lid].forEach(function(n,ri){
+      POS[n.id]={x:x,y:PADTOP+ri*(NODEH+NODEGAP)};
+    });
+    maxRows=Math.max(maxRows,byLayer[lid].length);
+  });
+  var W=PADX+layerIds.length*(COLW+COLGAP)-COLGAP+PADX;
+  var H=PADTOP+maxRows*(NODEH+NODEGAP)-NODEGAP+PADBOT;
+
+  var html='<svg class="wires" width="'+W+'" height="'+H+'">'+
+    '<defs><marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3.2" orient="auto">'+
+    '<path class="earrow" d="M0 0 L6 3.2 L0 6 Z"/></marker></defs>';
+  // lane bands + headers
+  layerIds.forEach(function(lid,ci){
+    var x=PADX+ci*(COLW+COLGAP);
+    var lbl=((d.layers||[]).filter(function(l){return l.id===lid;})[0]||{}).label||lid;
+    html+='<div class="lane" style="left:'+(x-10)+'px;width:'+(COLW+20)+'px;height:'+(H-6)+'px;top:4px"></div>';
+    html+='<div class="lanehd" style="left:'+x+'px;top:16px">'+esc(lbl)+'</div>';
+  });
+  stage.style.width=W+'px'; stage.style.height=H+'px'; stage.innerHTML=html;
+
+  // edges
+  var svg=stage.querySelector('svg.wires');
+  NODEEDGES={};
+  (d.edges||[]).forEach(function(e,idx){
+    var a=POS[e.from], b=POS[e.to]; if(!a||!b) return;
+    var p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('class','edge'); p.setAttribute('d',edgePath(a,b)); p.setAttribute('marker-end','url(#ar)');
+    p.setAttribute('data-i',idx); svg.appendChild(p);
+    (NODEEDGES[e.from]=NODEEDGES[e.from]||[]).push(p);
+    (NODEEDGES[e.to]=NODEEDGES[e.to]||[]).push(p);
+  });
+
+  // node cards
+  CARD={};
+  (d.nodes||[]).forEach(function(n){
+    var pp=POS[n.id]; if(!pp) return;
+    var el=document.createElement('div');
+    el.className='node s-'+n.state; el.style.left=pp.x+'px'; el.style.top=pp.y+'px';
+    el.style.width=COLW+'px'; el.style.height=NODEH+'px'; el.setAttribute('data-id',n.id);
+    el.innerHTML='<div class="nrow"><span class="ndot"></span><span class="nname">'+esc(n.label)+'</span></div>'+
+                 '<div class="ndet"></div><div class="nlast"></div>';
+    el.addEventListener('mouseenter',function(){focusNode(n.id);});
+    el.addEventListener('mouseleave',function(){if(!PINNED)clearFocus();});
+    el.addEventListener('click',function(ev){ev.stopPropagation();PINNED=(PINNED===n.id)?null:n.id;if(PINNED)focusNode(n.id);else clearFocus();});
+    stage.appendChild(el); CARD[n.id]=el;
+  });
+  document.getElementById('scroll').addEventListener('click',function(){PINNED=null;clearFocus();});
+}
+
+function paint(d){
+  var byId={}; (d.nodes||[]).forEach(function(n){byId[n.id]=n;});
+  Object.keys(CARD).forEach(function(id){
+    var n=byId[id]; var el=CARD[id]; if(!n) return;
+    el.className='node s-'+n.state+(el.classList.contains('sel')?' sel':'');
+    el.querySelector('.ndet').textContent=n.detail||'';
+    el.querySelector('.nlast').textContent=n.last?('last: '+n.last):'';
+    el.title=n.label+' — '+(n.detail||'');
+    el._n=n;
+  });
+}
+
+function focusNode(id){
+  var stage=document.getElementById('stage'); stage.classList.add('focus');
+  Object.keys(CARD).forEach(function(k){CARD[k].classList.remove('sel','nbr');});
+  Object.keys(NODEEDGES).forEach(function(k){(NODEEDGES[k]||[]).forEach(function(p){p.classList.remove('lit');});});
+  if(CARD[id])CARD[id].classList.add('sel');
+  (NODEEDGES[id]||[]).forEach(function(p){
+    p.classList.add('lit');
+    var i=+p.getAttribute('data-i'); var e=(LAST.edges||[])[i]; if(!e)return;
+    var other=(e.from===id)?e.to:e.from; if(CARD[other])CARD[other].classList.add('nbr');
+  });
+  var n=CARD[id]&&CARD[id]._n; if(n)showDock(n);
+}
+function clearFocus(){
+  document.getElementById('stage').classList.remove('focus');
+  Object.keys(CARD).forEach(function(k){CARD[k].classList.remove('sel','nbr');});
+  Object.keys(NODEEDGES).forEach(function(k){(NODEEDGES[k]||[]).forEach(function(p){p.classList.remove('lit');});});
+  document.getElementById('dock').style.display='none';
+}
+function showDock(n){
+  var dk=document.getElementById('dock'); dk.style.display='block';
+  document.getElementById('dkb').className='db b-'+n.state; document.getElementById('dkb').textContent=STLBL[n.state]||n.state;
+  document.getElementById('dkn').textContent=n.label;
+  var lay=(LAST.layers||[]).filter(function(l){return l.id===n.layer;})[0];
+  document.getElementById('dkl').textContent=(lay?lay.label:n.layer);
+  document.getElementById('dkd').textContent=n.detail||'';
+  var m=''; if(n.last)m+='<span>last: '+esc(n.last)+'</span>'; if(n.metric!=null&&n.metric!=='')m+='<span>metric: '+esc(n.metric)+'</span>';
+  document.getElementById('dkm').innerHTML=m;
+}
+
+function problems(d){
+  var box=document.getElementById('problems'); var bad=(d.nodes||[]).filter(function(n){return n.state==='down'||n.state==='warn'||n.state==='unknown';});
+  bad.sort(function(a,b){return (SEV[a.state]-SEV[b.state])||a.label.localeCompare(b.label);});
+  if(!bad.length){box.innerHTML='<span class="pchip" style="cursor:default"><i class="c-ok"></i>No failing elements — every node reporting healthy or idle</span>';return;}
+  box.innerHTML=bad.map(function(n){
+    return '<span class="pchip" data-id="'+esc(n.id)+'"><i class="c-'+n.state+'"></i><span class="st">'+STLBL[n.state]+'</span>'+esc(n.label)+'</span>';
+  }).join('');
+  box.querySelectorAll('.pchip[data-id]').forEach(function(ch){
+    ch.onclick=function(){var id=ch.getAttribute('data-id'); var el=CARD[id]; if(!el)return;
+      el.scrollIntoView({behavior:'smooth',block:'center',inline:'center'});
+      PINNED=id; focusNode(id); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');};
+  });
+}
+
+function summary(d){
+  var od=document.getElementById('odot'), ob=document.getElementById('obig');
+  od.className='odot c-'+d.overall;
+  ob.textContent=d.overall==='ok'?'All systems operational':(d.overall==='down'?'Attention needed — an element is down':'Some elements need a look');
+  var c=d.counts||{}, ordr=['down','warn','unknown','idle','ok'], ch='';
+  ordr.forEach(function(s){ if(c[s]) ch+='<span class="pill"><i class="c-'+s+'"></i>'+c[s]+' '+STLBL[s]+'</span> '; });
+  document.getElementById('counts').innerHTML=ch;
+  document.getElementById('updated').textContent='updated '+fmtTime(d.generated_at)+' · '+(d.nodes||[]).length+' nodes / '+(d.edges||[]).length+' links';
+}
+
+var LAST={};
+function render(d){
+  LAST=d;
+  var s=sig(d);
+  if(s!==SIG){ SIG=s; build(d); }
+  paint(d); summary(d); problems(d);
+  if(PINNED&&CARD[PINNED])focusNode(PINNED);
+}
+function load(){
+  fetch('/api/blueprint',{headers:{'cache-control':'no-cache'}}).then(function(r){
+    if(!r.ok) throw new Error(r.status); return r.json();
+  }).then(render).catch(function(e){
+    document.getElementById('obig').textContent='Blueprint API error ('+e.message+')';
+    document.getElementById('odot').className='odot c-unknown';
+    if(!Object.keys(CARD).length) document.getElementById('stage').innerHTML='<div class="empty">Could not read the blueprint. Retrying…</div>';
+  });
+}
+load();
+setInterval(load,15000);           // realtime: refresh every 15s
+document.addEventListener('visibilitychange',function(){if(!document.hidden)load();});
+</script>

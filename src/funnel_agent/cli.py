@@ -755,21 +755,145 @@ def lisa4_dial(
             log.warning("lisa5_dial_ensure_failed", error=str(exc)[:160])
         log.info("lisa4_dial_loop_start", interval=interval)
         i = 0
-        while True:
+        import threading as _thr
+        _prep = {"on": False, "at": 0.0}   # 'at' = when the current pass started (for the hang watchdog)
+        _cap = {"on": False}   # guard: never stack BDE-capture threads (a slow classify pass mustn't re-spawn)
+        _reap = {"on": False}  # guard: never stack Retell stuck-ongoing pollers (a slow poll mustn't overlap)
+        _rtx = {"on": False}   # guard: never stack Retell transcript backfillers (a slow fetch batch mustn't overlap)
+
+        def _bg_prep():
+            # ALL the heavy prep runs OFF the dial loop so it never throttles calls (Vysakh: 'calls not
+            # running' — the inline reserve-scan + doc autopilot were blocking the loop for minutes/pass).
+            if _prep["on"]:
+                return
+            _prep["on"] = True
+            _prep["at"] = _t.time()
             try:
+                for name, fn in (("lisa4_head", lambda: _l4.run_lisa4_head(ana, settings)),
+                                 ("lisa5_head", lambda: _l5.run_lisa5_head(ana, settings))):
+                    try:
+                        fn()
+                    except Exception as exc:
+                        log.warning(name + "_failed", error=str(exc)[:160])
+                try:
+                    from . import crm as _crm
+                    _crm.run_booking_docs_autopilot(ana, settings)
+                except Exception as exc:
+                    log.warning("booking_docs_autopilot_failed", error=str(exc)[:160])
+                try:
+                    from . import tasks as _tsk
+                    _tsk.run_daily_readiness(ana, settings)
+                except Exception as exc:
+                    log.warning("daily_readiness_failed", error=str(exc)[:160])
+                try:
+                    from . import gmaps as _gm
+                    _gm.run_gmaps_autosweep(ana, settings)
+                except Exception as exc:
+                    log.warning("gmaps_autosweep_loop_failed", error=str(exc)[:160])
+            finally:
+                _prep["on"] = False
+
+        while True:
+            # SELF-HEAL (deploy/webhook resilience): a call whose end-webhook was dropped — e.g. Retell's
+            # call_analyzed arriving DURING a container restart — sticks in 'ongoing' forever and jams the
+            # 1-call-at-a-time inflight gate, silently strangling dialing. A real Lisa call never lasts >15
+            # min, so reap any 'ongoing' older than that. This is what makes the dialer recover on its own
+            # from a deploy or any hiccup (Vysakh: the dialer must not be affected by deploys).
+            if i % 12 == 0:
+                try:
+                    with ana.connection() as _conn, _conn.cursor() as _cur:
+                        _cur.execute("UPDATE lisa_calls SET status='analyzed' WHERE status='ongoing' "
+                                     "AND created_at < now() - interval '15 minutes'")
+                        _conn.commit()
+                except Exception as exc:
+                    log.warning("lisa_ongoing_reaper_failed", error=str(exc)[:120])
+                # Readiness tasks are LIGHT (2 counts + 2 upserts) — run them HERE, decoupled from the
+                # hang-prone heavy _bg_prep (whose live website-scan can stick _prep['on']=True and freeze
+                # the /tasks board). This keeps 'is Lisa ready for tomorrow' accurate + realtime.
+                try:
+                    from . import tasks as _tsk
+                    _tsk.run_daily_readiness(ana, settings)
+                    # POST-BOOKING tracker: know which booked reveals the closer actually confirmed
+                    # (Aircall + Fireflies) and that every reveal asset is ready — surfaced on the board.
+                    _tsk.run_post_booking_readiness(ana, settings)
+                except Exception as exc:
+                    log.warning("daily_readiness_loop_failed", error=str(exc)[:120])
+                # REALTIME BDE-call capture: map Alfred's Aircall confirmation-call ACTIONS onto the booked
+                # CRM — his TYPED note/tags/contact first (immediate, no STT wait), then the STT transcript as
+                # fallback/enrichment, plus Fireflies reveal transcripts. Fills blanks + appends the note
+                # verbatim + advances the stage. run_bde_call_capture SELF-THROTTLES via crm_config so its
+                # OpenAI classification cost fires at most ~every 5 min. Run it OFF the dial loop in a daemon
+                # thread so the classification can NEVER block dialing (the dialer is sacred); the _cap flag
+                # stops a slow pass from re-spawning.
+                if not _cap["on"]:
+                    def _bg_capture():
+                        _cap["on"] = True
+                        try:
+                            from . import bde_capture as _bcap
+                            _bcap.run_bde_call_capture(ana, settings, limit=6)
+                        except Exception as exc:
+                            log.warning("bde_capture_failed", error=str(exc)[:160])
+                        # SELF-HEAL: re-classify any Lisa call that got a degraded (LLM-down) classification
+                        # so bookings missed during an OpenAI/credits outage auto-recover once the LLM is back.
+                        try:
+                            from .lisa import reclassify_degraded_lisa_calls as _recl
+                            _recl(ana, settings, limit=8)
+                        except Exception as exc:
+                            log.warning("lisa_reclassify_loop_failed", error=str(exc)[:160])
+                        finally:
+                            _cap["on"] = False
+                    _thr.Thread(target=_bg_capture, daemon=True).start()
+                # RETELL TRANSCRIPT BACKFILL (webhook-outage resilience): when Retell's post-call webhook
+                # was dropped, the Lisa call has NO transcript and can never be classified — and the OpenAI
+                # STT backfill is useless during an OpenAI-credit outage. Pull the transcript Retell already
+                # made (raw text ONLY) so the classifier has something to read. Periodic (not time-critical),
+                # OFF the dial loop in a daemon thread so the network fetch can NEVER block dialing (the
+                # dialer is sacred); the _rtx flag stops a slow batch from re-spawning.
+                if not _rtx["on"]:
+                    def _bg_rtx():
+                        _rtx["on"] = True
+                        try:
+                            from . import lisa as _lisa
+                            _lisa.backfill_retell_transcripts(ana, settings, limit=10)
+                        except Exception as exc:
+                            log.warning("backfill_retell_transcripts_failed", error=str(exc)[:120])
+                        finally:
+                            _rtx["on"] = False
+                    _thr.Thread(target=_bg_rtx, daemon=True).start()
+            # FAST STUCK-ONGOING REAPER (webhook-outage resilience): the 15-min SQL reaper above is the
+            # slow backstop; this polls Retell for the TRUE status of each stuck 'ongoing' call and clears
+            # only the ones Retell CONFIRMS ended — freeing the 1-call-at-a-time inflight gate in ~1 min
+            # instead of the full 8-min window when end-webhooks were dropped (e.g. a restart mid-morning).
+            # EVERY cycle (fast recovery is the whole point), OFF the dial loop in a daemon thread so the
+            # network poll can NEVER block dialing (the dialer is sacred); the _reap flag stops overlap.
+            if not _reap["on"]:
+                def _bg_reap():
+                    _reap["on"] = True
+                    try:
+                        from . import lisa as _lisa
+                        _lisa.reap_stuck_ongoing(ana, settings)
+                    except Exception as exc:
+                        log.warning("stuck_reaper_failed", error=str(exc)[:120])
+                    finally:
+                        _reap["on"] = False
+                _thr.Thread(target=_bg_reap, daemon=True).start()
+            # WATCHDOG: a heavy prep step (live website scan / doc autopilot / gmaps sweep) can HANG and
+            # leave _prep['on']=True forever, freezing ALL builds/audits/brand-intro (Vysakh: 'no assets
+            # built in autopilot'). If a pass has been running > 15 min (longer than any legit pass), treat
+            # it as hung and re-spawn so the autopilot self-heals instead of silently staying stuck.
+            _prep_stuck = _prep["on"] and (_t.time() - _prep.get("at", 0.0) > 900)
+            if getattr(settings, "lisa_enabled", False) and i % 6 == 0 and (not _prep["on"] or _prep_stuck):
+                if _prep_stuck:
+                    log.warning("bg_prep_watchdog_reset", stuck_for=int(_t.time() - _prep.get("at", 0.0)))
+                    _prep["on"] = False
+                _thr.Thread(target=_bg_prep, daemon=True).start()   # heavy prep in the background
+            try:                                                     # DIALING stays in the loop (fast, unblocked)
                 if getattr(settings, "lisa_enabled", False):
-                    if i % 6 == 0:                       # ~every 6 ticks, do the reserve/schedule/build prep
-                        _l4.run_lisa4_head(ana, settings)
                     _l4.run_lisa4_autodial(ana, settings)
             except Exception as exc:
                 log.warning("lisa4_dial_loop_failed", error=str(exc)[:160])
-            # Lisa 5 — cloned isolated dialer, run next to Lisa 4 (own pool/agent/numbers/toggle; GATED,
-            # no call fires unless the Lisa-5 autodial toggle is on). Kept in its own try so a Lisa-5
-            # error never stalls Lisa-4's loop.
             try:
                 if getattr(settings, "lisa_enabled", False):
-                    if i % 6 == 0:                       # ~every 6 ticks, schedule Lisa-5's pool
-                        _l5.run_lisa5_head(ana, settings)
                     _l5.run_lisa5_autodial(ana, settings)
             except Exception as exc:
                 log.warning("lisa5_dial_loop_failed", error=str(exc)[:160])

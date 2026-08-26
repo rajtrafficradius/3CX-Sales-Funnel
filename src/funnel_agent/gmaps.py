@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.parse
 import urllib.request
 
 from psycopg_pool import ConnectionPool
@@ -272,3 +273,231 @@ def flush_checkpoint(pool: ConnectionPool, path: str | None = None) -> dict:
             conn.commit()
     log.info("gmaps_checkpoint_flushed", **stats)
     return stats
+
+
+# --------------------------------------------------------------------------- AUTOPILOT sweep ---
+# Trades have a far higher NO-WEBSITE rate than professional services, so the auto-sweep targets them to keep
+# Lisa-4's "you have no website" pitch stocked. Region-rotated so each run finds fresh businesses.
+_TRADE_CATS = [
+    "plumber", "electrician", "handyman", "landscaper", "gardener", "painter", "carpenter", "roofer", "tiler",
+    "fencing contractor", "concreter", "bricklayer", "plasterer", "pest control", "removalist", "locksmith",
+    "mobile mechanic", "car detailing", "dog grooming", "cleaning service", "lawn mowing", "tree removal service",
+    "gutter cleaning", "paving contractor", "decking", "welding", "pool cleaning", "air conditioning installer",
+    "blinds and curtains", "auto electrician", "windscreen repair", "mobile locksmith",
+]
+_TRADE_AREAS = [
+    # a large AU pool (outer-metro + regional across every state) — the auto-sweep rotates through it by day
+    "Craigieburn VIC", "Pakenham VIC", "Cranbourne VIC", "Melton VIC", "Werribee VIC", "Sunbury VIC",
+    "Frankston VIC", "Geelong VIC", "Ballarat VIC", "Bendigo VIC", "Shepparton VIC", "Wodonga VIC",
+    "Traralgon VIC", "Mildura VIC", "Wangaratta VIC", "Sale VIC", "Horsham VIC", "Warrnambool VIC",
+    "Penrith NSW", "Blacktown NSW", "Campbelltown NSW", "Liverpool NSW", "Newcastle NSW", "Wollongong NSW",
+    "Wagga Wagga NSW", "Albury NSW", "Tamworth NSW", "Dubbo NSW", "Orange NSW", "Bathurst NSW",
+    "Coffs Harbour NSW", "Port Macquarie NSW", "Lismore NSW", "Nowra NSW", "Griffith NSW", "Maitland NSW",
+    "Ipswich QLD", "Logan QLD", "Caboolture QLD", "Toowoomba QLD", "Cairns QLD", "Townsville QLD",
+    "Mackay QLD", "Rockhampton QLD", "Bundaberg QLD", "Hervey Bay QLD", "Gladstone QLD", "Maryborough QLD",
+    "Elizabeth SA", "Mount Gambier SA", "Whyalla SA", "Murray Bridge SA", "Gawler SA", "Port Augusta SA",
+    "Rockingham WA", "Mandurah WA", "Bunbury WA", "Geraldton WA", "Albany WA", "Kalgoorlie WA",
+    "Launceston TAS", "Devonport TAS", "Burnie TAS",
+]
+
+
+def _autosweep_stock(pool) -> int:
+    from . import lisa as _l
+    r = _l._fetch(pool,
+        "SELECT count(*) n FROM companies co WHERE co.source='gmaps' AND co.phone_is_mobile "
+        "AND (co.domain IS NULL OR co.domain='') "
+        "AND left(right(regexp_replace(co.phone,'[^0-9]','','g'),9),1)='4' "
+        "AND NOT EXISTS (SELECT 1 FROM lisa4_pool p WHERE p.dest9=right(regexp_replace(co.phone,'[^0-9]','','g'),9)) "
+        "AND NOT EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=right(regexp_replace(co.phone,'[^0-9]','','g'),9))")
+    return int(r[0]["n"]) if r else 0
+
+
+def _autosweep_worker(pool, settings, areas, max_searches):
+    try:
+        res = sweep_gmaps(pool, settings, categories=_TRADE_CATS, areas=areas,
+                          max_searches=max_searches, pages_per_query=2, sleep_s=0.12)
+        log.info("gmaps_autosweep_done", stock=_autosweep_stock(pool), **{k: res.get(k) for k in ("kept", "mobile", "searches")})
+    except Exception as exc:
+        log.warning("gmaps_autosweep_worker_failed", error=str(exc)[:160])
+
+
+def run_gmaps_autosweep(pool, settings, *, stock_floor: int = 500, min_gap_hours: float = 4.0,
+                        max_searches: int = 90) -> dict:
+    """AUTOPILOT — keep Lisa-4's NO-WEBSITE stock topped up so 'ready for calls' never runs dry (Vysakh: top
+    priority, must be autopilot). Demand-driven: only sweeps when available no-website stock < stock_floor, at
+    most once per min_gap_hours, region-rotated by day. Runs in a BACKGROUND THREAD so the dialer never blocks.
+    Guarded; no-op without GOOGLE_PLACES_API_KEY."""
+    from datetime import datetime, timezone
+    try:
+        if not (getattr(settings, "google_places_api_key", "") or ""):
+            return {"skipped": "no places key"}
+        from . import lisa as _l
+        r = _l._fetch(pool, "SELECT v FROM crm_config WHERE k='gmaps_autosweep_at'")
+        if r and (r[0].get("v") or "").strip():
+            try:
+                last = datetime.fromisoformat(r[0]["v"])
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - last).total_seconds() < min_gap_hours * 3600:
+                    return {"skipped": "throttled"}
+            except Exception:
+                pass
+        stock = _autosweep_stock(pool)
+        if stock >= stock_floor:
+            return {"skipped": "stock ok", "stock": stock}
+        # stamp NOW so a concurrent tick can't double-fire, then sweep in the background
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO crm_config (k,v) VALUES ('gmaps_autosweep_at',%s) "
+                        "ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v", (datetime.now(timezone.utc).isoformat(),))
+            conn.commit()
+        yday = datetime.now(timezone.utc).timetuple().tm_yday          # rotate the region window each day
+        span = 22
+        start = (yday * span) % max(1, len(_TRADE_AREAS))
+        areas = (_TRADE_AREAS + _TRADE_AREAS)[start:start + span]
+        import threading
+        threading.Thread(target=_autosweep_worker, args=(pool, settings, areas, max_searches), daemon=True).start()
+        log.info("gmaps_autosweep_started", stock=stock, areas=len(areas))
+        return {"started": True, "stock": stock, "areas": len(areas)}
+    except Exception as exc:
+        log.warning("gmaps_autosweep_failed", error=str(exc)[:160])
+        return {"error": "guarded"}
+
+
+# --------------------------------------------------------------------------- PLACE PHOTOS ---
+# A NO-WEBSITE prospect (e.g. a nail salon with only a Google listing) gets a rebuilt site with no real
+# imagery. Their Google Business Profile is the one place their OWN photos live — shopfront, interior, work,
+# team. Pull them so the rebuild shows the real business instead of stock. Every hop is guarded: no key /
+# no match / any API error -> [] (never raises), so a photo miss never blocks a build.
+
+_PHOTO_MAX_PX = 1200          # size cap on each fetched image (keeps the data URI a sane size)
+
+
+def _places_key(settings: Settings) -> str:
+    """Same Places API key resolution the sweep uses."""
+    return getattr(settings, "google_places_api_key", "") or ""
+
+
+def _place_id_from_phone(settings: Settings, phone: str | None) -> str:
+    """Find Place From Phone Number -> best-match place_id ('' on any miss). For micro firms the listed
+    number is exact, so this beats a name search when a phone is available."""
+    key = _places_key(settings)
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+    if not (key and digits):
+        return ""
+    # normalise to E.164 AU (listed 04xx / 03xx / 02xx etc.)
+    if digits.startswith("61"):
+        e164 = "+" + digits
+    elif digits.startswith("0"):
+        e164 = "+61" + digits[1:]
+    else:
+        e164 = "+61" + digits
+    try:
+        url = ("https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input="
+               + urllib.parse.quote(e164) + "&inputtype=phonenumber&fields=place_id&key="
+               + urllib.parse.quote(key))
+        with urllib.request.urlopen(url, timeout=20) as resp:
+            data = json.loads(resp.read().decode())
+        cands = data.get("candidates") or []
+        return (cands[0].get("place_id") or "") if cands else ""
+    except Exception as exc:
+        log.warning("gmaps_phone_lookup_failed", error=str(exc)[:120])
+        return ""
+
+
+def _photo_names_for_place_id(settings: Settings, place_id: str) -> list[str]:
+    """Place Details (New) -> photo resource names ('places/PID/photos/REF') for a place_id."""
+    key = _places_key(settings)
+    if not (key and place_id):
+        return []
+    try:
+        req = urllib.request.Request(
+            "https://places.googleapis.com/v1/places/" + urllib.parse.quote(place_id),
+            method="GET",
+            headers={"X-Goog-Api-Key": key, "X-Goog-FieldMask": "id,displayName,photos"})
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            data = json.loads(resp.read().decode())
+        return [p.get("name") for p in (data.get("photos") or []) if p.get("name")]
+    except Exception as exc:
+        log.warning("gmaps_details_failed", error=str(exc)[:120])
+        return []
+
+
+def _photo_names_from_search(settings: Settings, name: str, address: str | None,
+                             suburb: str | None) -> list[str]:
+    """Places Text Search (New): name + address/suburb -> the best match's photo resource names.
+    Text Search returns results in relevance order, so the first place is the best match."""
+    key = _places_key(settings)
+    q = " ".join(str(x).strip() for x in (name, address or suburb) if x and str(x).strip())
+    if not (key and q):
+        return []
+    try:
+        body = {"textQuery": q, "regionCode": "AU", "pageSize": 5}
+        req = urllib.request.Request(
+            "https://places.googleapis.com/v1/places:searchText",
+            data=json.dumps(body).encode(), method="POST",
+            headers={"Content-Type": "application/json", "X-Goog-Api-Key": key,
+                     "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.photos"})
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            data = json.loads(resp.read().decode())
+        places = data.get("places") or []
+        if not places:
+            return []
+        best = places[0]
+        return [p.get("name") for p in (best.get("photos") or []) if p.get("name")]
+    except Exception as exc:
+        log.warning("gmaps_photo_search_failed", error=str(exc)[:120])
+        return []
+
+
+def _fetch_photo_data_uri(settings: Settings, photo_name: str) -> str:
+    """Places Photo (New) media endpoint -> a data: URI ('' on any error). Follows the 302 to the actual
+    image bytes and reads the returned Content-Type; size-capped via maxWidthPx."""
+    key = _places_key(settings)
+    if not (key and photo_name):
+        return ""
+    try:
+        url = ("https://places.googleapis.com/v1/" + photo_name
+               + "/media?maxWidthPx=" + str(_PHOTO_MAX_PX) + "&maxHeightPx=" + str(_PHOTO_MAX_PX))
+        req = urllib.request.Request(url, method="GET", headers={"X-Goog-Api-Key": key})
+        with urllib.request.urlopen(req, timeout=30) as resp:       # follows redirect to image bytes
+            ctype = (resp.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip().lower()
+            raw = resp.read()
+        if not raw or not ctype.startswith("image/"):
+            return ""
+        import base64
+        return "data:" + ctype + ";base64," + base64.b64encode(raw).decode("ascii")
+    except Exception as exc:
+        log.warning("gmaps_photo_media_failed", error=str(exc)[:120])
+        return ""
+
+
+def place_photos(settings: Settings, name: str, address: str | None = None, phone: str | None = None,
+                 suburb: str | None = None, limit: int = 12) -> list[str]:
+    """Real Google-listing photos for a business, as data: URIs (up to `limit`).
+
+    For NO-WEBSITE prospects the Google Business Profile is the only place their genuine photos live, so a
+    rebuilt site can show the actual shopfront/interior/work instead of stock. Resolves the place by PHONE
+    (Find Place From Phone) when one is given — most precise for micro firms — else by NAME + address/suburb
+    (Text Search), takes the best match, pulls its photo references (Place Details `photos`), and fetches up
+    to `limit` of them through the Places Photo endpoint (size-capped), converting each to a data URI.
+
+    Fully guarded: no key / no match / any error -> []. Never raises."""
+    try:
+        if not _places_key(settings) or not (name or "").strip():
+            return []
+        photo_names: list[str] = []
+        pid = _place_id_from_phone(settings, phone) if phone else ""
+        if pid:
+            photo_names = _photo_names_for_place_id(settings, pid)
+        if not photo_names:                                   # no phone / no phone match -> name search
+            photo_names = _photo_names_from_search(settings, name, address, suburb)
+        n = max(0, int(limit or 0))
+        out: list[str] = []
+        for pn in photo_names[:n]:
+            uri = _fetch_photo_data_uri(settings, pn)
+            if uri:
+                out.append(uri)
+        return out
+    except Exception as exc:
+        log.warning("gmaps_place_photos_failed", error=str(exc)[:120])
+        return []

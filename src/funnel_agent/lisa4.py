@@ -18,8 +18,9 @@ from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool
 
 from .config import Settings
-from .enrichment.website import fetch_website_intel, website_audit
+from .enrichment.website import fetch_website_intel, website_audit, extract_logo, scrape_site_media, logo_tone
 from .logging import get_logger
+from .qa import dynvars as _qa_dyn   # G8/G9/G10 pure in-memory dynamic-variable safety
 
 log = get_logger(__name__)
 
@@ -151,18 +152,31 @@ def _title_biz(s: str) -> str:
 
 
 def _clean_company(company: str | None) -> str:
-    """A speakable trading name from a registered company name: strip trailing legal suffixes so a real
-    business survives ('GW LOGISTICS PTY LTD' -> 'GW Logistics'). Returns '' only for a pure person/
-    partnership name (a legal person read aloud is a robocall tell)."""
+    """A speakable trading name from a registered company name: PREFER the trading name over the legal
+    wrapper and strip legal-entity noise, so a real business survives ('GW LOGISTICS PTY LTD' ->
+    'GW Logistics', 'ACME HOLDINGS PTY LTD T/A ACME PLUMBING' -> 'Acme Plumbing') while a raw legal
+    entity is never spoken. Returns '' only for a pure person / partnership / trust name (a legal person
+    or 'The trustee for … Trust' read aloud is an instant robocall tell — better nameless)."""
     c = (company or "").strip()
     if not c:
         return ""
-    c = _re.sub(r"^THE TRUSTEE FOR\s+", "", c, flags=_re.I).strip()
+    # PREFER THE TRADING NAME: "<legal entity> T/A <trading name>" -> keep the trading name (right side),
+    # which is what customers actually know and what Lisa should say.
+    ta = _re.split(r"\s+(?:T/?A|TRADING\s+AS)\s+", c, maxsplit=1, flags=_re.I)
+    if len(ta) == 2 and len(ta[1].strip()) >= 2:
+        c = ta[1].strip()
+    # DROP THE TRUST WRAPPER: "<operating entity> ATF/AS TRUSTEE FOR <… trust>" -> keep the operating
+    # entity (left side); a bare "The trustee for … Trust" (no operating entity) falls through to ''.
+    c = _re.split(r"\s+(?:ATF|A\.?T\.?F\.?|AS\s+TRUSTEE\s+FOR)\s+", c, maxsplit=1, flags=_re.I)[0].strip()
+    c = _re.sub(r"^THE\s+TRUSTEE\s+FOR\s+", "", c, flags=_re.I).strip()
     c = _re.sub(r"^T/?A\s+", "", c, flags=_re.I).strip()
+    # strip bracketed noise Lisa should never voice: "(INT)", "(AUST)", "(VIC)", "[The]", …
+    c = _re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", c).strip()
     prev = None
-    while prev != c:                                   # strip stacked suffixes ('... PTY LTD')
+    while prev != c:                                   # strip stacked suffixes ('... PTY. LTD.')
         prev = c
         c = _LEGAL_SUFFIX_RE.sub("", c).strip().rstrip(",").strip()
+    c = _re.sub(r"\s{2,}", " ", c).strip(" ,.-")
     if len(c) < 2 or _looks_personal(c):
         return ""
     return _title_biz(c)
@@ -228,6 +242,59 @@ def _speakable_issue(issue: str | None) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# POOL HYGIENE (Fix #2) — keep the dialer fed with GOOD prospects.
+#   HARD-suppress  = never queue/dial (structurally dead data). Kept DELIBERATELY NARROW so the
+#                    queue can never be starved: only clearly-bad records are dropped.
+#   SOFT-deprioritize = still fully dialable, just ordered LAST behind stronger prospects — so the
+#                    queue drains best-first and can NEVER run dry.
+# --------------------------------------------------------------------------- #
+# issue markers a prior call already wrote proving the number is dead / unreachable / opted-out.
+_L4_DEAD_ISSUES = {"dead number", "wrong number", "wrong number - unreachable",
+                   "opt-out", "opt-out (sms)"}
+_NONLATIN_RE = _re.compile(r"[^\x00-\x7f]")
+
+
+def _lisa4_hard_suppress(row: dict) -> bool:
+    """True = NEVER queue this prospect. Only clearly-dead data: a non-mobile number (can't reach an
+    owner), or a number a prior call already proved wrong/dead or that opted out. Everything else stays
+    dialable (soft-deprioritized, never removed) so the queue can't be starved."""
+    d9 = (row.get("dest9") or "")
+    if not d9 or d9[:1] != "4":                      # no AU mobile (belt; the SQL also gates left(dest9)='4')
+        return True
+    if (row.get("bucket") or "").strip().lower() == "ok" and \
+       (row.get("issue") or "").strip().lower() in _L4_DEAD_ISSUES:
+        return True
+    return False
+
+
+def _lisa4_soft_rank(row: dict) -> int:
+    """Ordering nudge ONLY (never removes a prospect). Lower = dial first. Strong prospects (a real,
+    speakable website issue + a speakable owner/trading name) sort first; weak-but-dialable ones sort
+    LAST. Signals (all conservative, all additive):
+      +4  has a live site but NO concrete issue yet → can't do the proven "we looked at YOUR site,
+          noticed X" hook until background enrichment finds one (Fix #1 deprioritize, never drop).
+      +3  a "coming soon" / "under construction" site → they're ALREADY getting a new site (low convert).
+      +2  no speakable owner/trading name to open with (personal/legal-only name; correlates with
+          no-reachable-owner + ESL partnerships) → harder RPC, still dialable.
+      +1  likely-ESL: a name dominated by non-Latin script (soft signal only)."""
+    domain = (row.get("domain") or "").strip()
+    issue = _speakable_issue(row.get("issue"))
+    name = _pick_name(row.get("company"), row.get("title"), row.get("domain"))
+    text = f"{row.get('company') or ''} {row.get('title') or ''} {issue or ''}"
+    rank = 0
+    if domain and not issue:
+        rank += 4
+    if _re.search(r"coming\s+soon|under\s+construction|being\s+built|site\s+coming", text, _re.I):
+        rank += 3
+    if not name:
+        rank += 2
+    letters = [c for c in text if c.isalpha()]
+    if letters and sum(1 for c in letters if _NONLATIN_RE.match(c)) / len(letters) > 0.3:
+        rank += 1
+    return rank
+
+
+# --------------------------------------------------------------------------- #
 # Owner's STANDING EXCLUSION RULE — businesses Lisa-4 must NEVER pitch a website to.
 # Classes:
 #   agency           — they sell what we sell (digital/marketing/media/creative/ad agencies,
@@ -241,7 +308,7 @@ def _speakable_issue(issue: str | None) -> str:
 # pre-filter _L4X_SQL, same terms with \b→\y, so LIMIT'd feeder batches don't clog on rows
 # Python would drop anyway).
 # --------------------------------------------------------------------------- #
-from .gmaps import _CHAIN_BLOCK  # noqa: E402  (gmaps has no module-level import of lisa4 — no cycle)
+from .gmaps import _CHAIN_BLOCK, place_photos  # noqa: E402  (gmaps has no module-level import of lisa4 — no cycle)
 
 _L4X_AGENCY_TERMS = [
     r"\bmarketing\b", r"\bmedia\b", r"\bcreative\b",
@@ -358,6 +425,12 @@ def reserve_lisa4_pool(pool: ConnectionPool, settings: Settings, scan_batch: int
         _t = _fetch(pool, "SELECT v FROM crm_config WHERE k='lisa4_pool_size'")
         if _t and str(_t[0].get("v") or "").strip().isdigit():
             target = int(_t[0]["v"])
+    except Exception:
+        pass
+    try:   # how many domained gmaps prospects to website-scan per pass (crm_config, no redeploy). Higher =
+        _sb = _fetch(pool, "SELECT v FROM crm_config WHERE k='lisa4_scan_batch'")  # faster refill from stock.
+        if _sb and str(_sb[0].get("v") or "").strip().isdigit():
+            scan_batch = max(20, min(400, int(_sb[0]["v"])))
     except Exception:
         pass
     # D&B (raghav) backfill gate. Default OFF (LISA4_USE_DNB_BACKFILL=false): Lisa-4 fills from gmaps stock
@@ -533,6 +606,62 @@ def reserve_lisa4_pool(pool: ConnectionPool, settings: Settings, scan_batch: int
     return stats
 
 
+def enrich_lisa4_pool_issues(pool: ConnectionPool, settings: Settings, limit: int = 15) -> dict:
+    """OFF THE DIAL PATH (runs inside run_lisa4_head's background prep — never the dial loop): for
+    HAS-SITE pool rows that are mis-bucketed as no_website OR still carry no real, speakable website
+    issue, live-scan the site with the EXISTING website enrichment and update lisa4_pool.bucket/issue,
+    so Lisa opens with a TRUE "we looked at YOUR site, noticed X" hook instead of the generic (and often
+    false) no-site script. Never touches a genuinely domain-less row, never fabricates an issue.
+    Batch-limited + concurrent like reserve_lisa4_pool; never raises. Fix #1 — the biggest lever."""
+    ensure_lisa4_tables(pool)
+    try:
+        rows = _fetch(pool,
+            "SELECT dest9, domain, bucket, issue FROM lisa4_pool "
+            "WHERE NULLIF(domain,'') IS NOT NULL "                     # HAS a live site
+            "  AND left(dest9,1) = '4' "                               # dialable mobile (skip dead stock)
+            "  AND NOT EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lisa4_pool.dest9) "  # not yet worked
+            # mis-bucketed as site-less, OR bucket/issue missing, OR `issue` is only an internal marker
+            "  AND (COALESCE(bucket,'') IN ('', 'no_website') "
+            "       OR NULLIF(issue,'') IS NULL "
+            "       OR lower(issue) = ANY(%s)) "
+            "ORDER BY COALESCE(priority,0) DESC, reserved_at LIMIT %s",
+            (list(_INTERNAL_ISSUES), limit))
+    except Exception as exc:
+        log.warning("enrich_lisa4_pool_issues_query_failed", error=str(exc)[:140])
+        return {"enriched": 0}
+    if not rows:
+        return {"enriched": 0}
+
+    def _scan(r: dict):
+        try:
+            intel = fetch_website_intel(r["domain"], timeout=8.0, verify=False)
+            return r, intel, website_audit(intel)
+        except Exception:
+            return r, {}, {}
+
+    updates = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for r, intel, aud in ex.map(_scan, rows):
+            if not aud:
+                continue
+            if aud.get("is_target") and aud.get("bucket") == "critical_issue":
+                updates.append((r["dest9"], "critical_issue", aud.get("issue")))
+            elif aud.get("bucket") == "ok":
+                # site WORKS → pitch improvement (never breakage): a soft opinion, never a false fact.
+                updates.append((r["dest9"], "upgrade", _soft_issue(intel)))
+            # a has-site scan can't return 'no_website'; anything else (unreachable this pass) → leave the
+            # row untouched (never fabricate an issue) — candidate-selection just deprioritizes it.
+    n = 0
+    if updates:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.executemany("UPDATE lisa4_pool SET bucket=%s, issue=%s WHERE dest9=%s",
+                            [(b, i, d9) for (d9, b, i) in updates])
+            n = cur.rowcount
+            conn.commit()
+    log.info("enrich_lisa4_pool_issues", scanned=len(rows), enriched=n)
+    return {"enriched": n, "scanned": len(rows)}
+
+
 def build_brief_lisa4(pool: ConnectionPool, dest9: str) -> dict:
     """Dynamic variables for the Lisa 4 agent — the story she tells (company + which bucket + the real issue).
     Uses the real trading name (site title / domain), never a legal/partnership name, on the call."""
@@ -545,21 +674,46 @@ def build_brief_lisa4(pool: ConnectionPool, dest9: str) -> dict:
         dr = _fetch(pool, "SELECT dm_first, dm_name, dm_email, trading_name FROM lisa_dm WHERE domain=%s "
                     "AND source IS DISTINCT FROM 'too_big'", (d.get("domain"),))
         dm = dict(dr[0]) if dr else {}
+    domain = (d.get("domain") or "").strip()
+    has_site = bool(domain)
+    bucket = (d.get("bucket") or "").strip().lower()
+    issue = _speakable_issue(d.get("issue"))          # never an internal state marker on the call
+    # ROUTING FIX (Fix #1 — the biggest conversion lever): a prospect with a REAL live site must get the
+    # proven "we looked at YOUR site, noticed X, built you a new one" hook and must NEVER hear the (often
+    # factually FALSE) "couldn't find your website" no-site framing. So whenever we hold a domain we force
+    # a has-site bucket: 'critical_issue' when a concrete, speakable fault is known, else 'upgrade' (pitch
+    # improvement, never breakage) carrying a TRUE-by-design opinion line — never a fabricated factual
+    # fault. Only a genuinely domain-less prospect keeps 'no_website'. (Candidate-selection deprioritizes
+    # has-site rows that still lack a real issue; the background enrich_lisa4_pool_issues pass fills real
+    # issues in ahead of the dialer, so a has-site prospect never dials with a generic/empty brief.)
+    if has_site:
+        if not issue:
+            bucket = "upgrade"
+            issue = _soft_issue({})
+        elif bucket in ("", "no_website", "ok"):
+            bucket = "critical_issue"
+        if bucket == "no_website":                    # belt: a has-site prospect can never be site-less
+            bucket = "upgrade"
+    else:
+        bucket = bucket or "no_website"
     pn = (dm.get("dm_first") or "").strip()
     # Free RPC fallback: no Apollo DM, but a no-website sole trader's registered name IS the owner who
     # answers the listed mobile -> open with their first name ('is that Robyn?'). Only for no_website.
-    if not pn and (d.get("bucket") or "no_website") == "no_website":
+    if not pn and bucket == "no_website":
         pn = _owner_first_from_company(d.get("company"))
     return {
-        "company_name": (_clean_title(dm.get("trading_name")) or
-                         _pick_name(d.get("company"), d.get("title"), d.get("domain"))),
+        # PREFER THE TRADING NAME + sanitize (Fix #3): Apollo's resolved trading name (legal noise stripped),
+        # else the pool's cleaned trading name — never a raw legal entity ('… PTY LTD', 'The trustee for … Trust').
+        "company_name": (_clean_company(dm.get("trading_name")) or _clean_title(dm.get("trading_name"))
+                         or _pick_name(d.get("company"), d.get("title"), d.get("domain"))),
         # bare domain for the email-confirm move ("I'll flick it to info@<domain> — still the best one?")
-        "company_domain": (d.get("domain") or "").strip().lower().removeprefix("www."),
-        "website_bucket": d.get("bucket") or "no_website",
-        "website_issue": _speakable_issue(d.get("issue")),   # never an internal state marker on the call
+        "company_domain": domain.lower().removeprefix("www."),
+        "prospect_website": domain,                   # the prospect's REAL live URL, carried into the brief (Fix #1)
+        "website_bucket": bucket,
+        "website_issue": issue,                       # never an internal marker; never empty for a has-site prospect
         "prospect_email": dm.get("dm_email") or d.get("email") or "",  # Lisa CONFIRMS it, never asks cold
-        # an article/role leaked in as a "name" ('The') would have her open with "is The there?" — never that
-        "prospect_name": "" if pn.lower() in ("the", "owner", "unknown") else pn,
+        # G10: a clean spoken FIRST name, or "" — never an article/role ('The'), a legal entity or junk
+        "prospect_name": _qa_dyn.clean_prospect_name(pn),
     }
 
 
@@ -571,42 +725,192 @@ _DESIGNER_SYSTEM = (
     "ULTRA-PREMIUM, modern website as a SINGLE self-contained HTML file (all CSS in <style>, vanilla JS in "
     "<script>, NO external anything — visuals from layered CSS gradients, gradient-mesh backgrounds, subtle "
     "SVG noise/patterns, and hand-drawn inline SVG icons that look custom, never clip-art).\n"
-    "\nDESIGN LANGUAGE (non-negotiable, 2025-premium):\n"
-    "- Full-bleed cinematic HERO: layered gradient mesh + faint animated grain, oversized display headline "
-    "using clamp(2.8rem,7vw,6.5rem) with tight letter-spacing and a gradient text accent on ONE word, a "
-    "sharp subhead, dual CTAs (primary = filled with glow hover, secondary = ghost). NOT centered-boxy — "
-    "asymmetric, editorial.\n"
-    "- Sticky glass nav (backdrop-filter blur, hairline border) that compacts on scroll; mobile gets a "
-    "working slide-in menu + a floating bottom action bar with tap-to-call.\n"
-    "- Section rhythm ~120px; alternate light/dark sections for contrast breaks; asymmetric grids (never "
-    "three identical boxes in a row everywhere); glass cards with depth (layered shadows + hairline "
-    "borders + hover lift/tilt).\n"
+    "\nDISTINCT IDENTITY PER BUILD (most important rule): you build many sites and they must NOT look like "
+    "the same template recoloured. The brief assigns you ONE named LAYOUT ARCHETYPE plus a VARIETY SEED and "
+    "a SIGNATURE OPENER — you MUST commit fully to that archetype's hero treatment, navigation style, "
+    "section order/arrangement, card/component style, motion signature and TYPE PERSONALITY. Two businesses "
+    "given different archetypes must look like two different studios built them. NEVER fall back to a "
+    "generic default of {sticky glass nav + centred full-bleed hero + a row of three glass cards + the same "
+    "section order}; that specific skeleton is only ONE possible treatment and must not be your reflex. Let "
+    "the archetype drive the skeleton; let the trade + business drive the palette and copy.\n"
+    "\nQUALITY BAR (non-negotiable, 2025-premium — these are the TOOLS every archetype must hit, not a fixed "
+    "look):\n"
+    "- A striking, oversized display HERO headline (fluid clamp, tight tracking, a single accent word) with "
+    "a sharp subhead and dual CTAs (primary = filled with glow/hover state, secondary = ghost) — but the "
+    "hero LAYOUT (split, full-bleed photographic, masthead, type-forward, dark-luxe, organic, gridded) is "
+    "dictated by the assigned archetype, never a default centred box.\n"
+    "- A polished, working navigation (compacts/adapts on scroll; mobile gets a real slide-in menu + a "
+    "floating bottom action bar with tap-to-call) — its STYLE (glass, slim-underline, centred serif, "
+    "pill, structured grid) follows the archetype.\n"
+    "- Generous section rhythm; deliberate contrast breaks; ASYMMETRIC / non-repetitive grids (never the "
+    "same three identical boxes in a row down the page); cards with real depth and hover life — card style "
+    "per archetype.\n"
     "- Scroll-triggered staggered reveals (IntersectionObserver, translateY+opacity, respects "
     "prefers-reduced-motion); animated stat counters (years, jobs done, rating) when scrolled into view; "
-    "smooth micro-interactions on every interactive element.\n"
+    "smooth micro-interactions on every interactive element — the motion SIGNATURE varies by archetype.\n"
     "- A distinctive palette born from the trade (e.g. timber/charcoal/brass for fencing; never bootstrap "
-    "blue, never default grays), defined as CSS custom properties; one accent gradient used sparingly.\n"
-    "- Typography: system stack used like a pro — extreme weight contrast (300 vs 800), uppercase kickers "
-    "with wide tracking above headings, fluid type scale via clamp().\n"
-    "\nBANNED (instant failure): centered-everything layouts, equal three-card rows repeated, thin grey "
-    "text on white, generic hero with small heading, 2010-era boxy sections, lorem ipsum, filler copy like "
-    "'we offer quality services', visible section borders everywhere, default-looking buttons.\n"
-    "\nCONTENT (write like you know this trade cold, Australian tone + spelling):\n"
-    "hero · trust strip (rating/years/insured/licensed) · services (REAL trade-specific services, "
-    "materials, job types — each with a custom SVG icon and 2-3 lines of expert copy) · signature "
-    "'why us' with animated stats · process timeline (3-4 steps) · gallery placeholders built from CSS "
-    "art (gradient/pattern tiles labeled with job types, marked as examples) · 2-3 realistic testimonials "
-    "(marked example) · service-area · FAQ (5 REAL questions this trade gets, accordion) · conversion "
-    "section: phone huge + tap-to-call + minimal quote form · footer with ABN placeholder + LocalBusiness "
-    "JSON-LD schema.\n"
+    "blue, never default grays), defined as CSS custom properties; one accent used sparingly.\n"
+    "- Typography with real personality and extreme weight contrast, uppercase kickers with wide tracking, "
+    "fluid type scale via clamp() — the TYPE PERSONALITY (geometric grotesk / condensed display / "
+    "high-contrast serif / single bold grotesk / elegant serif / humanist rounded / Swiss grotesk) is set "
+    "by the archetype.\n"
+    "\nBANNED (instant failure): reusing the same skeleton or section order you'd use for any other business; "
+    "defaulting to the generic glass-nav + centred-hero + three-glass-card template regardless of archetype; "
+    "centered-everything layouts; equal three-card rows repeated; thin grey text on white; generic hero with "
+    "a small heading; 2010-era boxy sections; lorem ipsum; filler copy like 'we offer quality services'; "
+    "visible section borders everywhere; default-looking buttons.\n"
+    "\nREQUIRED CONTENT INGREDIENTS (write like you know this trade cold, Australian tone + spelling) — the "
+    "site MUST contain ALL of these, but you ARRANGE and TREAT them per the assigned archetype + signature "
+    "opener; do NOT use one fixed order every time:\n"
+    "hero · trust signals (rating/years/insured/licensed) · services (REAL trade-specific services, "
+    "materials, job types — each with a custom SVG icon and 2-3 lines of expert copy) · a signature "
+    "'why us' with animated stats · a process (3-4 steps) · a real photo gallery/portfolio (use the "
+    "provided {{IMG_n}} photos; only where NO real photo exists, fall back to tasteful CSS-art tiles marked "
+    "as examples) · 2-3 realistic testimonials (marked example) · service-area · FAQ (5 REAL questions this "
+    "trade gets, accordion) · a conversion section (phone huge + tap-to-call + minimal quote form) · footer "
+    "with ABN placeholder + LocalBusiness JSON-LD schema. Order, grouping and emphasis of these follow the "
+    "archetype and the SIGNATURE OPENER named in the brief.\n"
     "\nMULTI-PAGE (critical — the owner will CLICK EVERY NAV LINK): build a hash-router SPA inside the "
     "single file with REAL pages — Home, Services, About, Gallery, Contact — each a fully designed page "
     "(own hero band, own content), switched instantly via nav (show/hide + scroll-top + active nav state, "
     "hashchange-driven so back/forward work). On the Services page every service card CLICKS THROUGH to "
     "its own detail page (deep copy: what's included, materials, indicative process, mini-FAQ, CTA). "
     "Nothing may dead-end: every nav link, card, button and footer link must go somewhere real.\n"
+    "\nLOGO: If the brief provides a real logo via the {{REAL_LOGO}} placeholder, put that EXACT token "
+    "on its own where the logo goes in BOTH the header/nav AND the footer — it is swapped for the "
+    "finished, contrast-safe logo element, so do NOT wrap it in your own <img>/<svg>/url() and do NOT "
+    "draw, recreate, or approximate a logo. The real logo may be a WHITE/reversed or transparent mark "
+    "(built for a dark header); it arrives with its own contrast backing, so keep the area around it "
+    "clear — never place it on a same-tone or busy background, and never hide or zero-height it "
+    "(~40-56px tall, clearly visible). If NO logo is provided, render the business NAME as a styled, "
+    "branded wordmark as the header logo — never leave the logo area blank or invisible.\n"
+    "\nREAL PHOTOS (use ALL of them): When the brief lists {{IMG_n}} placeholder tokens, those are the "
+    "business's ACTUAL photos. You MUST place EVERY {{IMG_n}} token the brief provides — all of them — each "
+    "used exactly ONCE, inside an <img> (or as a CSS background-image url(...)), spread across the hero, "
+    "the galleries/portfolio and section/page backgrounds (including the About and Gallery pages). Do NOT "
+    "skip, drop or omit any provided photo, and do NOT invent extra {{IMG_n}} tokens beyond the ones listed. "
+    "Never invent stock imagery or CSS-art tiles where a real {{IMG_n}} photo is available.\n"
     "Output ONLY raw HTML — no markdown, no code fences, no commentary."
 )
+
+# --------------------------------------------------------------------------- #
+# LAYOUT ARCHETYPES — give every generated site a DISTINCT visual identity.
+# build_website derives a stable VARIETY SEED per business (from dest9 + name — never
+# random / date-based) and picks ONE archetype + ONE signature opener deterministically,
+# so two different businesses do not share the same skeleton, yet the same business always
+# rebuilds to the same identity. Each spec dictates hero treatment, nav style, section
+# arrangement, card style, type personality, palette leaning and motion signature.
+# --------------------------------------------------------------------------- #
+_LAYOUT_ARCHETYPES: tuple[tuple[str, str], ...] = (
+    ("Asymmetric Split",
+     "Hero = a hard vertical SPLIT (about 55/45): an oversized LEFT-aligned display headline + kicker + "
+     "dual CTAs on one side, and a full-height real photo panel ({{IMG_1}}) bleeding to the screen edge on "
+     "the other — never a centred box. NAV: slim, logo/wordmark left + inline text links right with a thin "
+     "moving underline indicator (NOT a glass blob). SECTIONS march in an OFFSET rhythm — content blocks "
+     "alternate left/right, each paired with a photo or a stat column; deliberately asymmetric, never "
+     "symmetric rows. CARDS: flat with a single hairline and a bold coloured top-accent bar that slides on "
+     "hover. TYPE: a strong geometric grotesk, dramatic 300-vs-800 weight jumps, wide-tracked kickers. "
+     "PALETTE: a confident two-tone trade colour plus a crisp off-white. MOTION: blocks slide in from the "
+     "side they sit on."),
+    ("Full-Bleed Photographic",
+     "Hero = a FULL-VIEWPORT real photograph ({{IMG_1}}) under a directional dark-to-clear gradient scrim; "
+     "headline + subhead + CTAs anchored lower-left with a scroll cue. NAV: transparent over the hero, "
+     "resolving to a solid/tinted bar on scroll. SECTIONS alternate FULL-BLEED photo BANDS (real {{IMG_n}} "
+     "backgrounds with overlaid copy) against tight text sections — a cinematic, editorial cadence. CARDS: "
+     "image-led tiles where the photo IS the card, caption over a gradient foot. TYPE: a condensed "
+     "uppercase display for headings, clean sans body. PALETTE: photo-driven neutrals plus one vivid "
+     "accent. MOTION: slow parallax / ken-burns drift on the photo bands (reduced-motion safe)."),
+    ("Editorial Magazine",
+     "Treat the whole site like a design magazine. Hero = a MASTHEAD: a large high-contrast SERIF title, a "
+     "kicker rule above it, a standfirst paragraph, and a single lead photo ({{IMG_1}}) in a bordered "
+     "frame. NAV: centred serif wordmark with fine underlined links beneath a hairline rule. SECTIONS use "
+     "a multi-column editorial grid — pull-quotes, a drop-cap on the first paragraph, numbered features, "
+     "thin dividing rules, generous margins. CARDS: bordered 'article' cards with a category kicker + "
+     "read-more. TYPE: a high-contrast serif for display plus a clean grotesk body, italic accents. "
+     "PALETTE: paper/ink plus one editorial spot colour. MOTION: restrained fades and rule draw-ins."),
+    ("Bold Typographic Minimal",
+     "Type IS the design. Hero is text-forward: an ENORMOUS headline (fluid, up to ~9vw) filling the "
+     "viewport with generous negative space, a tiny kicker and one primary CTA — imagery minimal or a "
+     "single small framed photo. NAV: tiny, wide letter-spaced, top-right. SECTIONS are spare and wide "
+     "with huge section NUMERALS (01 / 02 / 03), lots of whitespace, one idea per screen; real photos "
+     "appear as occasional full-width breaks. CARDS: borderless, separated by whitespace and oversized "
+     "numerals only. TYPE: ONE powerful grotesk at extreme sizes, near-monochrome. PALETTE: monochrome "
+     "(near-black on off-white, or inverse) plus a single restrained accent. MOTION: crisp mask/clip "
+     "reveals on the big type."),
+    ("Dark Luxe",
+     "A dark, premium, moody build. Base = deep charcoal / near-black with a jewel or metallic accent "
+     "(brass, gold, emerald or copper as fits the trade), spotlight radial gradients and fine luminous "
+     "hairlines. Hero: cinematic, a glowing accent behind an elegant headline, with a real photo "
+     "({{IMG_1}}) in a softly-lit frame or as a dim full-bleed backing. NAV: dark glass with a thin "
+     "luminous underline. SECTIONS stay dark end-to-end with subtle tonal shifts (never a bright white "
+     "flip). CARDS: dark glass with inner glow and a gold hairline; hover lifts and brightens the edge. "
+     "TYPE: an elegant serif or high-end display for headings plus a refined sans body, letter-spaced "
+     "small-caps labels. MOTION: soft glows, gentle float, a shimmer on accents."),
+    ("Warm Organic",
+     "Friendly, human, tactile. PALETTE: warm earthy tones (clay, terracotta, sand, sage, cream) — NO "
+     "cold blues or greys. Hero: a big ROUNDED photo card ({{IMG_1}}) beside a warm headline, soft organic "
+     "blob/wave SVG shapes behind, rounded pill CTAs. NAV: a pill-shaped floating bar with rounded links. "
+     "SECTIONS use rounded containers, soft layered shadows, and blob/wave separators instead of straight "
+     "lines; imagery sits in rounded frames. CARDS: fully rounded, soft-shadowed, with a gentle hover "
+     "bounce. TYPE: a humanist / rounded sans, warm and approachable, medium weights. MOTION: gentle "
+     "spring/bounce eases and slowly floating blobs."),
+    ("Structured Swiss Grid",
+     "Precise, confident, corporate-craft. A visible modular GRID governs everything — a strong baseline, "
+     "boxed modules, aligned columns, crisp 1px rules. Hero: a grid layout — headline + CTA in one large "
+     "cell beside a 2x2 grid of value-prop / credential cells plus a real photo cell ({{IMG_1}}). NAV: a "
+     "structured top bar, logo left, evenly-gridded links, a clear divider. SECTIONS are modular boxes on "
+     "a strict grid, credentials-forward (stats, certifications, guarantees in bordered cells). CARDS: "
+     "sharp-cornered bordered modules that fill subtly on hover, aligned to the grid. TYPE: a neutral "
+     "Swiss grotesk, tight and disciplined. PALETTE: a disciplined two-colour system plus neutrals. "
+     "MOTION: precise, snappy, grid cells revealing in sequence."),
+    ("Neo-Brutalist Bold",
+     "Punchy, confident, modern-brutalist (still premium, never messy). HARD edges everywhere — thick 2-3px "
+     "borders, hard OFFSET drop-shadows (no blur), blocky panels that overlap slightly, a visible "
+     "structural grid, sticker/tag-style badges. Hero: a big blocky headline in a bordered slab with an "
+     "overlapping real photo card ({{IMG_1}}) casting a hard shadow, a chunky filled CTA. NAV: a bordered "
+     "bar with boxed, high-contrast links (the active one filled). SECTIONS are bold bordered blocks with "
+     "generous size contrast; nothing timid. CARDS: sharp-cornered, thick-bordered, hard-shadowed; hover "
+     "shifts the shadow. TYPE: a heavy grotesk paired with a monospace accent for labels/numbers. PALETTE: "
+     "a strong duotone plus ONE electric accent. MOTION: snappy, tactile 'press' shifts on hover/reveal."),
+    ("Vibrant Gradient Aurora",
+     "Bright, energetic, premium-tech. Luminous multi-stop AURORA / mesh gradients as the signature backdrop, "
+     "tasteful frosted-glass panels used with intent (this is the archetype's identity, not a lazy default), "
+     "gradient TEXT accents, soft glowing orbs and floating elements, rounded-but-crisp shapes. Hero: an "
+     "energetic layout with a glowing gradient orb/aurora behind an oversized headline (a gradient accent "
+     "word) and a real photo ({{IMG_1}}) in a floating glass frame with a soft glow. NAV: a frosted pill "
+     "that brightens on scroll. SECTIONS ride the aurora with generous colour and airy spacing; alternate "
+     "bright and deep-tinted bands. CARDS: glossy glass cards with gradient borders and a lift+glow on "
+     "hover. TYPE: a clean modern geometric sans with gradient-filled display accents. PALETTE: vivid, "
+     "cool-to-warm gradient spectrum tuned to the trade. MOTION: drifting aurora, floating glow, smooth "
+     "gradient shifts (reduced-motion safe)."),
+)
+
+# Signature OPENER — a second, independent axis so even two builds that land on the same
+# archetype still differ in flow: it sets what leads immediately after the hero.
+_SIGNATURE_OPENERS: tuple[str, ...] = (
+    "Immediately after the hero, lead with a bold STATS / credentials band (years, jobs done, rating, "
+    "guarantees) before anything else.",
+    "Immediately after the hero, lead with the signature SERVICES showcase (the trade's real services, "
+    "richly treated) before anything else.",
+    "Immediately after the hero, lead with a large GALLERY / portfolio band of the real photos before "
+    "anything else.",
+    "Immediately after the hero, lead with the brand STORY / about narrative (who they are, why they're "
+    "trusted locally) before anything else.",
+    "Immediately after the hero, lead with a TESTIMONIAL / social-proof spotlight before anything else.",
+)
+
+
+def _pick_archetype(seed_key: str) -> tuple[int, str, str, int, str]:
+    """Deterministically map a stable seed string (e.g. dest9 + business name) to ONE layout archetype and
+    ONE signature opener. Uses a stable hash (sha256, NOT Python's per-process hash() and NOT random/date)
+    so a given business always rebuilds to the SAME identity, while different businesses diverge. Returns
+    (archetype_idx, archetype_name, archetype_spec, opener_idx, opener_text)."""
+    import hashlib as _hashlib
+    h = int(_hashlib.sha256((seed_key or "seed").encode("utf-8")).hexdigest(), 16)
+    a_idx = h % len(_LAYOUT_ARCHETYPES)
+    o_idx = (h // len(_LAYOUT_ARCHETYPES)) % len(_SIGNATURE_OPENERS)
+    a_name, a_spec = _LAYOUT_ARCHETYPES[a_idx]
+    return a_idx, a_name, a_spec, o_idx, _SIGNATURE_OPENERS[o_idx]
 
 
 def _designer_model(pool: ConnectionPool, settings: Settings) -> str:
@@ -694,26 +998,75 @@ def _strip_md_fences(s: str) -> str:
     return t.strip()
 
 
-def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
+def _svg_sized(svg: str, height_px: int = 40) -> str:
+    """Cap an inline-SVG logo to a sane header height so it can't render at its default 300x150.
+    Injects/merges a `style` on the root <svg>; returns the input unchanged on any mismatch. Never raises."""
+    try:
+        m = _re.match(r"(<svg\b)([^>]*?)(/?>)", svg, _re.I | _re.S)
+        if not m:
+            return svg
+        head, attrs, close = m.group(1), m.group(2), m.group(3)
+        css = f"height:{height_px}px;width:auto;max-width:220px;display:block"
+        sm = _re.search(r'style\s*=\s*"([^"]*)"', attrs, _re.I)
+        if sm:
+            attrs = attrs[:sm.start(1)] + (sm.group(1).rstrip("; ") + ";" + css) + attrs[sm.end(1):]
+        else:
+            attrs = attrs + f' style="{css}"'
+        return head + attrs + close + svg[m.end():]
+    except Exception:
+        return svg
+
+
+def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_run: bool = False) -> dict:
     """AI designer: generate the prospect's website with Claude, store the HTML in lisa4_sites (status
     'built'). Called when a reveal is booked. For critical-issue prospects we feed the scraped content of
-    their existing site so the rebuild is faithful. Returns {status, id, bytes} or {error}."""
-    ensure_lisa4_tables(pool)
+    their existing site so the rebuild is faithful. Returns {status, id, bytes} or {error}.
+
+    dry_run=True runs the FULL real build (reads, scrape, archetype pick, Claude, post-process) but makes
+    NO writes to lisa4_sites — for safely testing the designer against a live/prod DB without mutating it.
+    In dry_run the return also carries {html, archetype, images_used, images_provided}."""
+    if not dry_run:
+        ensure_lisa4_tables(pool)
     r = _fetch(pool, "SELECT company, domain, bucket, issue FROM lisa4_pool WHERE dest9=%s", (dest9,))
-    if not r:
-        # Not a Lisa-4 website prospect (e.g. a Lisa-5 audit booking, or stale data). Retire any queued row
-        # so it can't sit at the head of the queue forever consuming a build slot every pass.
-        try:
-            with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute("UPDATE lisa4_sites SET status='error', error='prospect not in lisa4_pool' "
-                            "WHERE dest9=%s AND status IN ('queued','building')", (dest9,))
-                conn.commit()
-        except Exception:
-            pass
-        return {"error": "prospect not in lisa4_pool"}
-    p = dict(r[0])
+    if r:
+        p = dict(r[0])
+    else:
+        # A booked prospect is REMOVED from lisa4_pool once worked — so its reveal build must NOT fail
+        # just because the pool row is gone (this errored real bookings: Foremore, Buraq). Fall back to
+        # the booking call's company/domain — that's all the designer needs (industry/location still come
+        # from `companies` by phone below). Guarded by an EXISTING lisa4_sites row so this only rescues a
+        # genuine Lisa-4 build that was already queued — never a Lisa-5 audit booking (which has no site row).
+        has_site = _fetch(pool, "SELECT 1 FROM lisa4_sites WHERE dest9=%s LIMIT 1", (dest9,))
+        cr = _fetch(pool, "SELECT company_name, domain FROM lisa_calls WHERE dest9=%s "
+                    "AND NULLIF(company_name,'') IS NOT NULL "
+                    "ORDER BY (meeting_agreed IS TRUE) DESC, started_at DESC NULLS LAST LIMIT 1", (dest9,))
+        if has_site and cr and cr[0].get("company_name"):
+            p = {"company": cr[0].get("company_name"), "domain": cr[0].get("domain"), "bucket": None, "issue": None}
+            log.info("lisa4_build_pool_fallback", dest9=dest9, company=p["company"])
+        else:
+            # genuinely nothing to build from (or a non-Lisa-4 booking) → retire any queued row so it can't
+            # sit at the head of the queue forever consuming a build slot every pass.
+            if not dry_run:
+                try:
+                    with pool.connection() as conn, conn.cursor() as cur:
+                        cur.execute("UPDATE lisa4_sites SET status='error', error='prospect not in lisa4_pool' "
+                                    "WHERE dest9=%s AND status IN ('queued','building')", (dest9,))
+                        conn.commit()
+                except Exception:
+                    pass
+            return {"error": "prospect not in lisa4_pool"}
+    # A 'no_website' prospect must NEVER be built from a scraped domain. Any domain on such a row is a
+    # spurious enrichment / name-match leak (e.g. a namesake site like "Steve Campbell Remedial Massage"
+    # matched onto "Specialist Massage Centre") — scraping it blends ANOTHER business's brand, services and
+    # claims into the reveal. The prospect already told us on the call they have no site, so build fresh from
+    # THEIR OWN verified facts (Google Business category + GBP photos), never a scrape of a mis-attributed URL.
+    if (p.get("bucket") or "").strip().lower() == "no_website" and p.get("domain"):
+        log.info("lisa4_no_website_domain_ignored", dest9=dest9, domain=str(p.get("domain"))[:120])
+        p["domain"] = None
+        p["issue"] = p.get("issue") or "no website"
     disp = _pick_name(p.get("company"), p.get("title"), p.get("domain")) or p.get("company") or ""
     context = f"Business name: {disp or p.get('company')}\nAustralian business."
+    known_industry = ""   # verified Google-Business category (trade) — the anti-guess fallback
     # research brief from everything we know (D&B row / Google-Maps row / phone)
     co = _fetch(pool, "SELECT company_name, industry, sub_industry, suburb, state, gmaps_rating, gmaps_reviews "
                 "FROM companies WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),9)=%s "
@@ -721,7 +1074,9 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
     if co:
         c0 = dict(co[0])
         if c0.get("industry"):
-            context += f"\nIndustry / category: {c0['industry']}" + (f" / {c0['sub_industry']}" if c0.get("sub_industry") else "")
+            known_industry = str(c0["industry"]) + (f" / {c0['sub_industry']}" if c0.get("sub_industry") else "")
+            context += (f"\nGoogle Business category (a ROUGH hint only, sometimes wrong/secondary — their "
+                        f"live-site content below, when present, is the AUTHORITATIVE trade): {known_industry}")
         if c0.get("suburb") or c0.get("state"):
             context += f"\nLocation: {c0.get('suburb') or ''} {c0.get('state') or ''} — write the service-area section around this."
         if c0.get("gmaps_rating"):
@@ -729,6 +1084,11 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
     ph = _fetch(pool, "SELECT dest_number FROM lisa4_pool WHERE dest9=%s", (dest9,))
     if ph:
         context += f"\nBusiness phone (use everywhere, tap-to-call): {ph[0]['dest_number']}"
+    real_logo = None
+    media = None
+    have_real_trade = False           # did we capture the prospect's ACTUAL trade (scraped copy or category)?
+    real_images: list[str] = []       # prospect's ACTUAL photos (data URIs) → {{IMG_n}} tokens
+    real_image_descs: list[str] = []  # one-line description per image, index-aligned with real_images
     if p.get("domain"):
         context += f"\nCurrent domain: {p['domain']} (issue we're fixing: {p.get('issue')})."
         try:
@@ -742,8 +1102,136 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
                     context += f"\nSocial links: {socials}"
         except Exception:
             pass
-    user = (context + "\n\nBuild this business a brand-new website. Infer their industry + services from the "
-            "name. Make it genuinely impressive so they want to publish it.")
+        # REAL CONTENT + PHOTOS: scrape the prospect's live site so the rebuild retains THEIR real
+        # services/copy and actual photos (content-parity rule). Fully guarded — never raises.
+        try:
+            media = scrape_site_media(p["domain"], timeout=15.0)
+        except Exception:
+            media = None
+        # Decide if the scrape actually TELLS us their trade: substantial body copy OR a set of real
+        # headings (headings like "Our Services / Landscaping" reveal the trade even when body text is thin).
+        _scraped_content = (str(media.get("content")) if (media and media.get("content")) else "").strip()
+        _scraped_headings = [h for h in (media.get("headings") or []) if h] if media else []
+        _content_usable = bool(media and media.get("found") and (len(_scraped_content) >= 300 or len(_scraped_headings) >= 3))
+        if media and media.get("found"):
+            if _content_usable:
+                _real_block = _scraped_content
+                if _scraped_headings:
+                    _real_block += ("\nSection headings from their real site (these name their ACTUAL "
+                                    "services/trade — build around them): " + " · ".join(_scraped_headings[:40]))
+                context += ("\n\nREAL CONTENT FROM THEIR CURRENT SITE (AUTHORITATIVE — this is their ACTUAL "
+                            "trade; if the Google category hint above differs, follow THIS). Retain these "
+                            "real services/claims and rewrite them BETTER; never invent services they do not "
+                            "offer, and never change their industry:\n" + _real_block)
+                have_real_trade = True
+            for _uri in (media.get("images") or []):
+                real_images.append(_uri)
+                real_image_descs.append("real content photo from their current website")
+        # ANTI-GUESS FALLBACK: the scrape can miss a site (JS-rendered, thin first fetch, WAF). When it does,
+        # NEVER let the designer invent an industry from the business name (that shipped a LANDSCAPER as a
+        # "building designer"). Lean on the VERIFIED Google Business category instead.
+        if not have_real_trade and known_industry:
+            context += ("\n\nWe could not fully re-scrape their live site, so use their VERIFIED Google "
+                        f"Business category as their ACTUAL trade: {known_industry}. Build the ENTIRE site "
+                        "around this real trade's genuine services — do NOT guess a different industry from "
+                        "the business name.")
+            have_real_trade = True
+        # REAL LOGO: pull the prospect's ACTUAL brand mark so the rebuild uses THEIR logo, never an
+        # AI-invented one. Guarded — extract_logo never raises; None => unchanged (no placeholder).
+        try:
+            real_logo = extract_logo(p["domain"], timeout=10.0)
+        except Exception:
+            real_logo = None
+        if not (real_logo and real_logo.get("data_uri")) and media and isinstance(media.get("logo"), dict):
+            real_logo = media["logo"]   # reuse the logo scrape_site_media already resolved
+        if real_logo and real_logo.get("data_uri"):
+            # Classify the mark for VISIBILITY: a header logo pulled from the old site is very often a
+            # white/reversed or transparent mark that vanishes on a light rebuilt header. Store the tone
+            # so the post-process can wrap it in a guaranteed-contrast backing (and hint the designer).
+            try:
+                _lt = logo_tone(real_logo["data_uri"])
+            except Exception:
+                _lt = {"transparent": True, "tone": "unknown"}
+            real_logo["tone"] = _lt.get("tone") or "unknown"
+            real_logo["transparent"] = bool(_lt.get("transparent"))
+            _logo_hint = ""
+            if real_logo["transparent"]:
+                _logo_hint = (" This logo is a TRANSPARENT / reversed mark (it may be a white or light "
+                              "logo built for a dark header) — it arrives already wrapped in its own "
+                              "contrast-safe backing so it stays clearly visible on ANY header colour; "
+                              "just place the token and keep a plain, clear area around it.")
+            context += ("\nREAL LOGO PROVIDED: the business's actual logo is available. Put the EXACT "
+                        "placeholder token {{REAL_LOGO}} on its own where the logo goes in BOTH the "
+                        "header/nav AND the footer — it is replaced with the finished logo element, so do "
+                        "NOT wrap it in your own <img>/<svg>/url(). Keep the header logo clearly VISIBLE at "
+                        "40-56px tall — never hidden, zero-height, or on a same-tone background. Do NOT "
+                        "draw, recreate, invent, or approximate a logo." + _logo_hint)
+            log.info("lisa4_logo_found", dest9=dest9, source=real_logo.get("source"),
+                     tone=real_logo["tone"], transparent=real_logo["transparent"],
+                     url=str(real_logo.get("url"))[:120])
+    elif (p.get("bucket") or "") == "no_website":
+        # NO-WEBSITE prospect: the Google Business Profile is the only place their genuine photos live,
+        # so pull the real GBP photos for the hero/gallery instead of stock. Fully guarded — never raises.
+        try:
+            _sub = (dict(co[0]).get("suburb") if co else None)
+            _phone = (ph[0]["dest_number"] if ph else None)
+            _photos = place_photos(settings, disp or p.get("company") or "", suburb=_sub, phone=_phone)
+        except Exception:
+            _photos = []
+        for _uri in (_photos or []):
+            real_images.append(_uri)
+            real_image_descs.append("real Google Business Profile photo of this business")
+    # A verified Google category is their real trade too (has-site OR no-site) — enough to forbid guessing.
+    if known_industry:
+        have_real_trade = True
+    # REAL PHOTOS → {{IMG_n}} tokens: cap the count so the embedded data URIs keep total HTML reasonable.
+    # Raised 10 -> 18 so we actually USE the real photos we now scrape (they were being wasted/dropped).
+    _MAX_REAL_IMAGES = 18
+    if real_images:
+        real_images = real_images[:_MAX_REAL_IMAGES]
+        real_image_descs = real_image_descs[:_MAX_REAL_IMAGES]
+        _img_lines = "\n".join(f"- {{{{IMG_{i + 1}}}}} — {d}"
+                               for i, d in enumerate(real_image_descs))
+        context += ("\n\nREAL PHOTOS PROVIDED (use the prospect's ACTUAL images — never stock/SVG/CSS-art "
+                    f"where a real photo exists). There are {len(real_images)} of them. You MUST place EVERY "
+                    "one of these EXACT placeholder tokens — ALL of them — each used exactly ONCE, inside an "
+                    "<img> (or as a CSS background-image via inline url(...)), spread across the hero, the "
+                    "galleries/portfolio and section/page backgrounds (Home, About and Gallery pages):\n"
+                    + _img_lines +
+                    "\nDo NOT skip or drop any token, and do NOT invent extra {{IMG_n}} tokens beyond this "
+                    "list. Every token is swapped for the real photo.")
+    # INDUSTRY ACCURACY: only a genuinely no-website + no-category prospect may infer the trade from the
+    # name. Whenever we know the real trade (scraped copy OR verified category) OR the prospect even HAS a
+    # live domain, forbid name-guessing — a wrong industry (e.g. a landscaper built as a "building designer")
+    # is a client-facing failure.
+    if have_real_trade:
+        _trade_line = ("Build this business a brand-new website using ONLY the real services / industry "
+                       "described above as their trade. Do NOT invent, guess, or infer a different industry "
+                       "from the business name — their actual trade is stated above and must be honoured "
+                       "exactly.")
+    elif p.get("domain"):
+        _trade_line = ("Build this business a brand-new website. Their site exists but we could not read "
+                       "their trade — keep the industry framing CONSERVATIVE and grounded only in the "
+                       "business name + location; do NOT confidently assert a specific specialised industry "
+                       "you cannot verify (never mislabel their trade).")
+    else:
+        _trade_line = ("Build this business a brand-new website. Infer their industry + services carefully "
+                       "from the business name and location.")
+    # VARIETY: give THIS business a distinct visual identity from a STABLE seed (dest9 + name), so two
+    # different businesses never share the same skeleton, yet a rebuild of the SAME business is consistent.
+    _seed_key = f"{dest9}|{(disp or p.get('company') or '').strip().lower()}"
+    _a_idx, _a_name, _a_spec, _o_idx, _o_text = _pick_archetype(_seed_key)
+    _archetype_block = (
+        f"\n\nASSIGNED LAYOUT ARCHETYPE (variety seed {_seed_key!r} → archetype #{_a_idx + 1} of "
+        f"{len(_LAYOUT_ARCHETYPES)}): \"{_a_name}\". Commit FULLY to this identity — hero treatment, "
+        "navigation style, section arrangement, card/component style, motion signature and TYPE "
+        f"PERSONALITY must all follow it. Do NOT default to a generic glass-nav + centred-hero + "
+        f"three-glass-card template.\n{_a_spec}\nSIGNATURE OPENER: {_o_text}\nAnother business with a "
+        "different archetype must look like a different studio built it.")
+    log.info("lisa4_archetype", dest9=dest9, company=(disp or p.get("company")),
+             archetype=_a_name, archetype_idx=_a_idx, opener_idx=_o_idx)
+    user = (context + _archetype_block + "\n\n" + _trade_line +
+            " Make it genuinely impressive so they want to publish it.")
     dmodel = _designer_model(pool, settings)
     akey = _anthropic_key(pool, settings)
     # mark building — REUSE the prospect's existing active row. The partial unique index
@@ -751,21 +1239,24 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
     # collides with the 'queued' row the booking flow already created — and that INSERT sits OUTSIDE the try
     # below, so the violation aborts the WHOLE build pass every cycle (head-of-line deadlock). Transition the
     # existing queued/building row in place; only if none exists (rebuild over an old 'built') insert fresh.
-    with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM lisa4_sites WHERE dest9=%s AND status IN ('queued','building') "
-                    "ORDER BY id DESC LIMIT 1", (dest9,))
-        ex = cur.fetchone()
-        if ex:
-            site_id = ex["id"]
-            cur.execute("UPDATE lisa4_sites SET status='building', model=%s, error=NULL, building_at=now(), "
-                        "build_attempts=COALESCE(build_attempts,0)+1 WHERE id=%s", (dmodel, site_id))
-        else:
-            cur.execute("UPDATE lisa4_sites SET status='superseded' WHERE dest9=%s AND status='built'", (dest9,))
-            cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status, model, build_attempts, building_at) "
-                        "VALUES (%s,%s,%s,%s,%s,'building',%s,1,now()) RETURNING id",
-                        (dest9, p.get("domain"), p.get("company"), p.get("bucket"), p.get("issue"), dmodel))
-            site_id = cur.fetchone()["id"]
-        conn.commit()
+    if dry_run:
+        site_id = 0   # no row is touched in dry_run
+    else:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id FROM lisa4_sites WHERE dest9=%s AND status IN ('queued','building') "
+                        "ORDER BY id DESC LIMIT 1", (dest9,))
+            ex = cur.fetchone()
+            if ex:
+                site_id = ex["id"]
+                cur.execute("UPDATE lisa4_sites SET status='building', model=%s, error=NULL, building_at=now(), "
+                            "build_attempts=COALESCE(build_attempts,0)+1 WHERE id=%s", (dmodel, site_id))
+            else:
+                cur.execute("UPDATE lisa4_sites SET status='superseded' WHERE dest9=%s AND status='built'", (dest9,))
+                cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, bucket, issue, status, model, build_attempts, building_at) "
+                            "VALUES (%s,%s,%s,%s,%s,'building',%s,1,now()) RETURNING id",
+                            (dest9, p.get("domain"), p.get("company"), p.get("bucket"), p.get("issue"), dmodel))
+                site_id = cur.fetchone()["id"]
+            conn.commit()
     try:
         html = _strip_md_fences(_claude(settings, _DESIGNER_SYSTEM, user, model=dmodel, key=akey))
         # CONTINUATION: a full multi-page site can exceed one completion — resume until the file is
@@ -787,6 +1278,90 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
             raise RuntimeError(f"generated site incomplete after {tries} continuations ({len(html)}b)")
         if "<html" not in html.lower() and "<!doctype" not in html.lower():
             html = "<!doctype html><html><body>" + html + "</body></html>"
+        # POST-PROCESS: swap the {{REAL_LOGO}} placeholder for the prospect's ACTUAL logo (data URI in
+        # an <img>, or inline SVG markup). Safety net: if the model ignored the token, leave the HTML
+        # untouched rather than corrupt it — under-replacing beats breaking markup or faking a logo.
+        # VISIBILITY: a mark pulled from the OLD header is often WHITE/reversed/transparent — dropped on a
+        # light rebuilt header it goes invisible. When the mark is transparent we wrap it in a contrast
+        # chip that TRAVELS with it (a dark chip for a light/unknown mark, a light chip for a dark mark),
+        # so it shows on BOTH a light header AND a dark footer whatever background the model chose. An
+        # opaque mark carries its own rectangle → placed bare. Guarantee holds regardless of the model.
+        if real_logo and real_logo.get("data_uri") and "{{REAL_LOGO}}" in html:
+            _lg = real_logo["data_uri"]
+            _is_svg = _lg.lstrip().lower().startswith("<svg")
+            _transparent = bool(real_logo.get("transparent")) or _is_svg
+            _tone = real_logo.get("tone") or "unknown"
+            _alt = (p.get("company") or "").replace('"', "").replace("<", "").replace(">", "")
+            if _is_svg:
+                _mark = _svg_sized(_lg, 40)
+            else:
+                _mark = (f'<img src="{_lg}" alt="{_alt} logo" loading="eager" decoding="async" '
+                         f'style="max-height:40px;width:auto;display:block;">')
+            if _transparent:
+                if _tone == "dark":   # dark ink → a LIGHT chip keeps it visible (incl. on a dark footer)
+                    _chip = ("display:inline-flex;align-items:center;background:#ffffff;color:#111111;"
+                             "padding:6px 12px;border-radius:10px;border:1px solid rgba(0,0,0,.08);"
+                             "box-shadow:0 1px 4px rgba(0,0,0,.12);line-height:0;")
+                else:                 # light/unknown ink → a DARK chip (fixes white-on-light-header)
+                    _chip = ("display:inline-flex;align-items:center;background:#0f172a;color:#ffffff;"
+                             "padding:6px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.10);"
+                             "line-height:0;")
+                _repl = f'<span class="site-logo" style="{_chip}">{_mark}</span>'
+            else:                     # opaque mark — its own background carries it, place bare
+                _repl = (f'<img src="{_lg}" alt="{_alt} logo" class="site-logo" loading="eager" '
+                         f'decoding="async" style="max-height:44px;width:auto;display:inline-block;">')
+            html = html.replace("{{REAL_LOGO}}", _repl)
+        # SAFETY: never ship a raw {{REAL_LOGO}} token. The model sometimes emits it even when NO real logo
+        # was provided (nothing replaced it above) — swap any survivor for a styled NAME wordmark so the
+        # header/footer show the brand, never literal placeholder text.
+        if "{{REAL_LOGO}}" in html:
+            _wm = (disp or p.get("company") or "").replace('"', "").replace("<", "").replace(">", "").strip() or "Home"
+            _wordmark = (f'<span class="site-logo" style="font-weight:800;font-size:1.15rem;'
+                         f'letter-spacing:.01em;line-height:1;white-space:nowrap;">{_wm}</span>')
+            html = html.replace("{{REAL_LOGO}}", _wordmark)
+        # POST-PROCESS real photos: swap each {{IMG_n}} token for its data URI. A real photo the model did
+        # NOT place is NOT discarded (that silently deleted the prospect's genuine photos) — it is collected
+        # and appended into a real gallery below, so every scraped photo actually ships.
+        _unused_imgs: list[str] = []
+        for _i, _iuri in enumerate(real_images, start=1):
+            if not _iuri:
+                continue
+            _tok = "{{IMG_%d}}" % _i
+            if _tok in html:
+                html = html.replace(_tok, _iuri)
+            else:
+                _unused_imgs.append(_iuri)
+        # Any token the model INVENTED beyond our real set has no photo behind it — strip those cleanly so
+        # no raw {{IMG_n}} placeholder text ever ships.
+        html = _re.sub(r"\{\{IMG_\d+\}\}", "", html)
+        # GUARANTEE no real photo is lost: append any unplaced photos as a genuine <img> gallery. Self-
+        # contained inline styles so it renders regardless of the site's CSS; injected just before </body>.
+        if _unused_imgs:
+            _galt = (p.get("company") or disp or "our work").replace('"', "").replace("<", "").replace(">", "")
+            _tiles = "".join(
+                f'<img src="{_u}" alt="{_galt}" loading="lazy" decoding="async" '
+                'style="width:100%;height:260px;object-fit:cover;border-radius:14px;display:block;'
+                'box-shadow:0 8px 30px rgba(0,0,0,.12);">'
+                for _u in _unused_imgs)
+            _gallery = (
+                '<section aria-label="Gallery" style="padding:72px 6vw;">'
+                '<div style="max-width:1200px;margin:0 auto;">'
+                '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));'
+                'gap:16px;">' + _tiles + '</div></div></section>')
+            _low = html.lower()
+            _pos = _low.rfind("</body>")
+            if _pos == -1:
+                _pos = _low.rfind("</html>")
+            html = (html[:_pos] + _gallery + html[_pos:]) if _pos != -1 else (html + _gallery)
+        _images_used = sum(1 for _u in real_images if _u and (_u in html))
+        if dry_run:
+            # No DB write in dry_run — hand back the finished HTML + the metrics a test needs.
+            log.info("lisa4_site_dryrun_built", dest9=dest9, company=p.get("company"), bytes=len(html),
+                     archetype=_a_name, images_used=_images_used, images_provided=len(real_images))
+            return {"status": "built-dryrun", "id": site_id, "bytes": len(html), "html": html,
+                    "archetype": _a_name, "archetype_idx": _a_idx, "signature_opener_idx": _o_idx,
+                    "images_used": _images_used, "images_provided": len(real_images),
+                    "have_real_trade": have_real_trade, "known_industry": known_industry}
         # SAVE with retry on a fresh connection — generation runs for many minutes and the pooled
         # connection can go stale meanwhile; losing a finished site to a dead socket is unacceptable.
         # Assign a public share_token on build (idempotent) so the finished site has a shareable link the
@@ -807,9 +1382,12 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str) -> dict:
                 _time.sleep(3)
         else:
             raise RuntimeError("site save failed after retries")
-        log.info("lisa4_site_built", dest9=dest9, company=p.get("company"), bytes=len(html))
-        return {"status": "built", "id": site_id, "bytes": len(html)}
+        log.info("lisa4_site_built", dest9=dest9, company=p.get("company"), bytes=len(html),
+                 archetype=_a_name, images_used=_images_used, images_provided=len(real_images))
+        return {"status": "built", "id": site_id, "bytes": len(html), "archetype": _a_name}
     except Exception as exc:
+        if dry_run:
+            raise   # surface the real error to the test; no prod row to retire
         # Retry a transient failure (an Opus stream timeout is common) up to 3 attempts before retiring the
         # row to 'error'. build_attempts was already incremented at mark-building, so this leaves the row in
         # 'queued' (retry) until the 3rd attempt, then 'error' — either way it never stays stuck blocking the
@@ -927,6 +1505,13 @@ def start_lisa4_call(pool: ConnectionPool, settings: Settings, *, to_number: str
         dyn[k] = "" if v is None else str(v)
     # final belt: an extra_vars/event override can re-introduce an internal state marker — never speakable
     dyn["website_issue"] = _speakable_issue(dyn.get("website_issue"))
+    # QA G8/G9 (PURE in-memory — dict/regex only, ZERO I/O): fill any known blank/missing variable so
+    # Retell can never voice a raw "{{placeholder}}", scrub any residual {{...}} inside a value, then
+    # enforce the no-website invariant (a site-less prospect never carries a website URL/domain). This
+    # only shapes the variables dict handed to Retell — it never changes how the call is placed/paced.
+    dyn = _L1._fill_dynamic_var_defaults(dyn)
+    dyn = _qa_dyn.scrub_residual_placeholders(dyn)
+    dyn = _qa_dyn.enforce_no_website_invariant(dyn)
     body = {
         "from_number": frm, "to_number": to_number,
         "override_agent_id": getattr(settings, "lisa4_agent_id", "") or None,
@@ -959,7 +1544,7 @@ def schedule_lisa4_fresh(pool: ConnectionPool, settings: Settings) -> dict:
     wsmin = int(getattr(settings, "lisa_call_window_start_min", 0))
     wend = int(getattr(settings, "lisa_call_window_end", 17))
     rows = _fetch(pool,
-        "SELECT lp.dest9, lp.dest_number, lp.company, lp.domain FROM lisa4_pool lp "
+        "SELECT lp.dest9, lp.dest_number, lp.company, lp.domain, lp.bucket, lp.issue, lp.title FROM lisa4_pool lp "
         "WHERE NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.bde_name=%s AND e.status IN ('pending','done') "
         "   AND right(regexp_replace(COALESCE(e.dest_number,''),'[^0-9]','','g'),9)=lp.dest9) "
         "  AND NOT EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9) "
@@ -985,6 +1570,31 @@ def schedule_lisa4_fresh(pool: ConnectionPool, settings: Settings) -> dict:
         if len(_kept) < len(rows):
             log.info("lisa4_schedule_excluded", n=len(rows) - len(_kept))
         rows = _kept
+    # POOL HYGIENE (Fix #2) — HARD-suppress only clearly-dead data (non-mobile, or a number a prior call
+    # already proved wrong/dead or that opted out), so the queue is never fed a structurally unconvertible
+    # prospect. Deliberately NARROW: this removes very few rows; everything else stays dialable.
+    if rows:
+        _before = len(rows)
+        rows = [r for r in rows if not _lisa4_hard_suppress(r)]
+        if len(rows) < _before:
+            log.info("lisa4_schedule_hard_suppressed", n=_before - len(rows))
+    # HARD-suppress do-not-contact numbers (rude / asked to be removed on ANY prior call — human or AI).
+    if rows:
+        _dnc = {x["d9"] for x in _fetch(pool,
+            "SELECT DISTINCT right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) d9 "
+            "FROM classifications cl JOIN calls c ON c.call_id=cl.call_id "
+            "WHERE cl.do_not_contact IS TRUE "
+            "  AND right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9) = ANY(%s)",
+            ([r["dest9"] for r in rows],))}
+        if _dnc:
+            rows = [r for r in rows if r["dest9"] not in _dnc]
+            log.info("lisa4_schedule_dnc_suppressed", n=len(_dnc))
+    # SOFT-deprioritize (ordering ONLY — never removes a prospect, so the queue can't run dry): dial the
+    # strongest prospects first (real speakable site issue + speakable owner/trading name) and push
+    # weak-but-dialable ones (has-site with no real issue yet, coming-soon, likely-ESL, no speakable
+    # owner) to the back. Python's sort is STABLE, so the SQL priority/bucket/reserved_at order is kept
+    # WITHIN each rank.
+    rows.sort(key=_lisa4_soft_rank)
     existing = {r["d"]: r["n"] for r in _fetch(pool,
         "SELECT (start_at AT TIME ZONE %s)::date d, count(*) n FROM calendar_events "
         "WHERE bde_name=%s AND status='pending' AND type='fresh_call' GROUP BY 1", (tz, _BDE))}
@@ -1036,6 +1646,12 @@ def run_lisa4_head(pool: ConnectionPool, settings: Settings) -> dict:
         out["reserved"] = reserve_lisa4_pool(pool, settings, scan_batch=60).get("reserved", 0)
     except Exception as exc:
         log.warning("lisa4_reserve_failed", error=str(exc)[:140])
+    try:
+        # Fix #1: fill REAL live-site issues for has-site prospects (off the dial loop) so the personal
+        # "we looked at YOUR site" hook is populated ahead of the dialer reaching them.
+        out["issues_enriched"] = enrich_lisa4_pool_issues(pool, settings).get("enriched", 0)
+    except Exception as exc:
+        log.warning("lisa4_issue_enrich_failed", error=str(exc)[:140])
     try:
         out["scheduled"] = schedule_lisa4_fresh(pool, settings).get("scheduled", 0)
     except Exception as exc:
@@ -1294,12 +1910,13 @@ def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 
     freely; queued-after only when the booking's CRM stage is 'confirmed'."""
     ensure_lisa4_tables(pool)
     # self-heal: a container restart (e.g. a deploy) can orphan a row mid-build in 'building'. The drainer
-    # below only picks 'queued', so re-queue any build that has been 'building' with no HTML for >20 min so it
-    # rebuilds instead of being stranded. (A live build finishes in ~10-12 min, so 20 min is safe headroom.)
+    # below only picks 'queued', so re-queue any build stranded in 'building' with no HTML. Threshold is 35 min
+    # (was 20): a COMPLEX site legitimately takes 15-20 min, and a 20-min reaper was killing those RIGHT before
+    # they saved — burning attempts and wedging the build in the attempts-cap limbo (Vysakh's stuck reveals).
     try:
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("UPDATE lisa4_sites SET status='queued' WHERE status='building' AND html IS NULL "
-                        "AND COALESCE(building_at, created_at) < now() - interval '20 minutes'")
+                        "AND COALESCE(building_at, created_at) < now() - interval '35 minutes'")
             conn.commit()
     except Exception:
         pass
@@ -1341,12 +1958,20 @@ def process_lisa4_builds(pool: ConnectionPool, settings: Settings, limit: int = 
                     _qa.qa_check(pool, settings, r["dest9"])
                 except Exception:
                     pass
-                try:   # old-vs-new comparison (needs Chromium in the image; guarded / degrades gracefully)
+                try:   # old-vs-new comparison (needs Chromium in the image; guarded / degrades gracefully).
+                       # force=True so a REBUILD/correction re-screenshots the CURRENT site — without it the
+                       # comparison keeps the STALE shots from the first build (the wrong-trade / failed-load
+                       # bug: e.g. a psychologist reveal still showing a carpenter/loading screenshot).
                     from . import comparison as _cmp
-                    _cmp.ensure_comparison(pool, settings, r["dest9"])
+                    _cmp.ensure_comparison(pool, settings, r["dest9"], force=True)
                 except Exception:
                     pass
-                _crm.send_brand_intro(pool, settings, r["dest9"], by="Lisa")   # Lisa shares the brand intro (post-booking, once)
+                try:   # Lisa shares the brand intro (post-booking, once) — but NEVER overnight (AU daytime only)
+                    from . import noshow_recovery as _nsr
+                    if _nsr.send_window_open():
+                        _crm.send_brand_intro(pool, settings, r["dest9"], by="Lisa")
+                except Exception:
+                    pass
             except Exception as exc:
                 log.warning("lisa4_autopilot_docs_failed", error=str(exc)[:140])
     return {"built": built, "queued_seen": len(rows)}
@@ -1363,8 +1988,6 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
         return {"ok": False, "error": "no call_id"}
     if (payload.get("event") or "") != "call_analyzed":
         return {"ok": True, "event": payload.get("event")}
-    analysis = call.get("call_analysis") or {}
-    cad = analysis.get("custom_analysis_data") or {}
     meta = call.get("metadata") or {}
     inbound = (call.get("direction") or "").lower() == "inbound"
     # inbound = a prospect returning Lisa's missed call/SMS: THEY are from_number, our line is to_number
@@ -1377,6 +2000,11 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
                         (cid, d9, call.get("to_number"), call.get("from_number"),
                          (call.get("retell_llm_dynamic_variables") or {}).get("company_name")))
             conn.commit()
+    # SOLE SOURCE OF TRUTH = OUR transcript classifier (never Retell's custom_analysis_data). It runs
+    # post-call (off the dial loop) and is idempotent per call_id; {} when there is no transcript so the
+    # never-connected telephony-only handling below still fires.
+    dyn4 = call.get("retell_llm_dynamic_variables") or {}
+    cad = _L1._lisa_postcall_cad(pool, settings, call, cid)
     outcome = (cad.get("call_outcome") or "").strip().lower()
     booked = bool(cad.get("meeting_agreed"))
     with pool.connection() as conn, conn.cursor() as cur:
@@ -1400,6 +2028,11 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
         log.warning("lisa4_funnel_write_failed", error=str(exc)[:140])
     # BOOKED REVEAL → queue the AI designer to build the site (idempotent: skip if one already queued/built)
     if booked and d9:
+        # A confirmed booking must ALSO land in the booked CRM (not only the funnel + calendar). Contact/time
+        # all come from OUR classifier / the dialed brief, never Retell. Idempotent + fill-blank.
+        _L1._crm_mark_booked(pool, d9, contact_name=(dyn4.get("prospect_name") or cad.get("contact_name")),
+                             contact_email=cad.get("confirmed_email"), agreed_day_time=cad.get("agreed_day_time"),
+                             next_action_at=_L1._parse_when(cad.get("agreed_day_time")), agent="Lisa 4")
         exists = _fetch(pool, "SELECT 1 FROM lisa4_sites WHERE dest9=%s AND status IN ('queued','building','built') LIMIT 1", (d9,))
         if not exists:
             row = _fetch(pool, "SELECT company, domain, bucket, issue FROM lisa4_pool WHERE dest9=%s", (d9,))
@@ -1436,8 +2069,8 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
                 frm = (list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0]
                 when_txt = (cad.get("agreed_day_time") or "the time we agreed").strip()
                 body = (f"Hey, Lisa from DE Group - locked in for {when_txt} for the website reveal. "
-                        "I'll text you the video link just before we jump on. Cheers!")
-                if frm and _L1._send_sms_twilio(settings, pn, body, frm):
+                        "I'll send the meeting invite through just before we jump on. Cheers!")
+                if frm and _L1._send_sms_twilio(settings, pn, body, frm, pool):
                     _L1._log_sms(pool, "outbound", frm, pn, body, d9)
         except Exception as exc:
             log.warning("lisa4_booking_sms_failed", error=str(exc)[:120])
@@ -1524,7 +2157,7 @@ def schedule_lisa4_followup(pool: ConnectionPool, settings: Settings, *, dest9: 
                     frm = (list(getattr(settings, "lisa4_numbers", []) or []) or [""])[0]
                     body = ("Hey, it's Lisa — tried to give you a buzz. Could you call me back on this "
                             "number when you get a sec? Ta!")
-                    if frm and _L1._send_sms_twilio(settings, dest_number, body, frm):
+                    if frm and _L1._send_sms_twilio(settings, dest_number, body, frm, pool):
                         _L1._log_sms(pool, "outbound", frm, dest_number, body, dest9)
                         with pool.connection() as conn, conn.cursor() as cur:
                             cur.execute("UPDATE lisa4_pool SET sms_sent=true WHERE dest9=%s", (dest9,))
@@ -1603,7 +2236,10 @@ def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: lis
         attr_params = (L4_LINE_RX, L4_LINE_RX, L5_LINE_RX, L5_LINE_RX)
     r = _fetch(pool,
         f"SELECT count(*) FILTER (WHERE {out_cond}) calls, "
-        "  count(*) FILTER (WHERE call_outcome IN ('not_interested','callback_requested') OR meeting_agreed) convos, "
+        # CONVOS: count CONNECTED calls (>=20s) immediately, same as the Lisa-5 card — NOT call_outcome,
+        # which is set by the classifier and LAGS (so Lisa-4 wrongly showed 0 convos mid-day until calls were
+        # classified, while Lisa-5's duration-based count already showed 20). meeting_agreed kept as a belt.
+        "  count(*) FILTER (WHERE COALESCE(duration_ms,0)/1000 >= 20 OR meeting_agreed) convos, "
         "  count(*) FILTER (WHERE meeting_agreed) booked, "
         "  count(*) FILTER (WHERE call_outcome='callback_requested') callbacks, "
         "  COALESCE(sum(cost_cents),0) cost_cents "

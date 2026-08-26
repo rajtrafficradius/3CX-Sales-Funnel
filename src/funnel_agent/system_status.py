@@ -1,0 +1,305 @@
+"""Real-time SYSTEM/ENGINE status — every tile is derived from a REAL signal (last-activity
+timestamps, recent counts, error rates, live API balances), never a hardcoded 'OK'. If a signal
+can't be read, the tile says 'unknown' (amber) rather than a false green — a status page that lies
+is worse than none (Vysakh, 2026-08-20).
+
+Each check returns: {key, name, group, state, detail, last, metric}
+  state: 'ok' | 'warn' | 'down' | 'idle' | 'unknown'
+Fully guarded — a failing check degrades to 'unknown', never raises."""
+from __future__ import annotations
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+
+def _one(pool, sql, args=()):
+    with pool.connection() as conn, conn.cursor() as cur:
+        cur.execute(sql, args)
+        r = cur.fetchone()
+        return r
+
+
+def _g(r, k, default=None):
+    if r is None:
+        return default
+    try:
+        return r[k]
+    except Exception:
+        try:
+            return r.get(k, default)
+        except Exception:
+            return default
+
+
+def _mins_since(ts) -> float | None:
+    if not ts:
+        return None
+    try:
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def _fmt_ago(mins) -> str:
+    if mins is None:
+        return "never"
+    if mins < 1:
+        return "just now"
+    if mins < 90:
+        return f"{int(mins)}m ago"
+    if mins < 60 * 48:
+        return f"{int(mins/60)}h ago"
+    return f"{int(mins/1440)}d ago"
+
+
+def _au_calling_hours() -> bool:
+    """AU calling window Mon–Sat 09:00–19:00 Australia/Sydney (when engines SHOULD be active)."""
+    now = datetime.now(ZoneInfo("Australia/Sydney"))
+    return now.weekday() < 6 and 9 <= now.hour < 19
+
+
+# Lisa outbound lines (authoritative, per Retell) — used to detect real dial activity.
+_L4 = ("468030256", "489266405", "495044526", "468091513")
+_L5 = ("468096730", "468008827")
+
+
+def _tile(key, name, group, state, detail, last=None, metric=None):
+    return {"key": key, "name": name, "group": group, "state": state,
+            "detail": detail, "last": last, "metric": metric}
+
+
+def compute(pool, settings) -> dict:
+    tiles: list[dict] = []
+    hrs = _au_calling_hours()
+
+    def guard(fn):
+        try:
+            return fn()
+        except Exception as exc:
+            return ("unknown", f"check failed: {str(exc)[:80]}", None, None)
+
+    # ---------- OUTBOUND DIALER (Lisa 4 + 5) ----------
+    def _dialer():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE created_at>now()-interval '15 min') n15, "
+                       "count(*) FILTER (WHERE created_at>now()-interval '60 min') n60, "
+                       "max(created_at) last FROM lisa_calls")
+        n15, n60, last = _g(r, "n15", 0), _g(r, "n60", 0), _g(r, "last")
+        mins = _mins_since(last)
+        if hrs:
+            state = "ok" if n15 > 0 else ("warn" if n60 > 0 else "down")
+        else:
+            state = "idle"  # off-hours: not expected to dial
+        det = f"{n15} calls last 15m · {n60}/hr" + ("" if hrs else " · off-hours (paused)")
+        return state, det, _fmt_ago(mins), n60
+    tiles.append(_tile("dialer", "Outbound dialer (Lisa 4+5)", "Calling", *guard(_dialer)))
+
+    # ---------- RETELL WEBHOOKS (call completion) ----------
+    def _webhooks():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE status='analyzed' AND created_at>now()-interval '60 min') ok60, "
+                       "count(*) FILTER (WHERE status='ongoing' AND created_at<now()-interval '15 min') stale FROM lisa_calls")
+        ok60, stale = _g(r, "ok60", 0), _g(r, "stale", 0)
+        # stale 'ongoing' backlog = the classic webhook-jam symptom
+        if stale >= 3:
+            state = "down"
+        elif hrs and ok60 == 0:
+            state = "warn"
+        else:
+            state = "ok"
+        return state, f"{ok60} completed last hr · {stale} stuck 'ongoing'", None, stale
+    tiles.append(_tile("retell_webhook", "Retell webhooks (completion)", "Calling", *guard(_webhooks)))
+
+    # ---------- INBOUND ENGINE ----------
+    def _inbound():
+        # inbound = a call whose from_number is NOT one of our outbound lines (prospect called us)
+        r = _one(pool, "SELECT max(created_at) last, count(*) FILTER (WHERE created_at>now()-interval '24 hours') n24 "
+                       "FROM lisa_calls WHERE right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9")
+        last, n24 = _g(r, "last"), _g(r, "n24", 0)
+        mins = _mins_since(last)
+        # inbound is event-driven; 'ok' if we've seen inbound in the last day, else idle (not necessarily broken)
+        state = "ok" if (mins is not None and mins < 60 * 24) else "idle"
+        return state, f"{n24} inbound last 24h", _fmt_ago(mins), n24
+    tiles.append(_tile("inbound", "Inbound call+SMS engine", "Calling", *guard(_inbound)))
+
+    # ---------- CLASSIFIER (call outcome tagging) ----------
+    def _classifier():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE status='analyzed' AND call_outcome IS NOT NULL "
+                       "AND updated_at>now()-interval '2 hours') tagged, "
+                       "count(*) FILTER (WHERE status='analyzed' AND call_outcome IS NULL "
+                       "AND created_at>now()-interval '2 hours') untagged FROM lisa_calls")
+        tagged, untagged = _g(r, "tagged", 0), _g(r, "untagged", 0)
+        if tagged == 0 and untagged >= 10:
+            state = "down"          # analyzed calls piling up unclassified
+        elif untagged > tagged and untagged >= 5:
+            state = "warn"
+        else:
+            state = "ok" if (tagged or not hrs) else "idle"
+        return state, f"{tagged} tagged / {untagged} pending (2h)", None, untagged
+    tiles.append(_tile("classifier", "Call classifier", "Intelligence", *guard(_classifier)))
+
+    # ---------- WEBSITE BUILDER (Lisa 4 reveals) ----------
+    def _site_builder():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE status='built' AND built_at>now()-interval '24 hours') built, "
+                       "count(*) FILTER (WHERE status='error' AND COALESCE(built_at,created_at)>now()-interval '24 hours') err, "
+                       "count(*) FILTER (WHERE status='building' AND building_at<now()-interval '40 min') stuck, "
+                       "max(built_at) last FROM lisa4_sites WHERE COALESCE(kind,'reveal')='reveal'")
+        built, err, stuck = _g(r, "built", 0), _g(r, "err", 0), _g(r, "stuck", 0)
+        last = _mins_since(_g(r, "last"))
+        if stuck >= 1:
+            state = "warn"          # a build hung past the reaper window
+        elif err > 0 and built == 0:
+            state = "down"
+        elif err > 0:
+            state = "warn"
+        else:
+            state = "ok"
+        return state, f"{built} built / {err} error (24h)" + (f" · {stuck} stuck" if stuck else ""), _fmt_ago(last), err
+    tiles.append(_tile("site_builder", "Website builder", "Builders", *guard(_site_builder)))
+
+    # ---------- AUDIT BUILDER (growth audits) ----------
+    def _audit_builder():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE built_at>now()-interval '48 hours') n, max(built_at) last "
+                       "FROM lisa4_sites WHERE kind='audit'")
+        n, last = _g(r, "n", 0), _mins_since(_g(r, "last"))
+        state = "ok" if (last is not None and last < 60 * 72) else "idle"
+        return state, f"{n} audits built (48h)", _fmt_ago(last), n
+    tiles.append(_tile("audit_builder", "Growth-audit builder", "Builders", *guard(_audit_builder)))
+
+    # ---------- COMPARISON BUILDER ----------
+    def _cmp_builder():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE built_at>now()-interval '48 hours') n, max(built_at) last "
+                       "FROM lisa4_sites WHERE kind='comparison'")
+        n, last = _g(r, "n", 0), _mins_since(_g(r, "last"))
+        state = "ok" if (last is not None and last < 60 * 72) else "idle"
+        return state, f"{n} comparisons (48h)", _fmt_ago(last), n
+    tiles.append(_tile("cmp_builder", "Old-vs-new comparison builder", "Builders", *guard(_cmp_builder)))
+
+    # ---------- NO-SHOW RECOVERY ----------
+    def _noshow():
+        from . import noshow_recovery as _nsr
+        enabled = True
+        try:
+            r = _one(pool, "SELECT v FROM crm_config WHERE k='noshow_recovery_enabled'")
+            if r is not None and str(_g(r, "v", "")).lower() in ("false", "0", "off", "no"):
+                enabled = False
+        except Exception:
+            pass
+        win = _nsr.send_window_open()
+        r = _one(pool, "SELECT count(*) FILTER (WHERE recovery_sent_at>now()-interval '24 hours') n, "
+                       "max(recovery_sent_at) last FROM booked_crm")
+        n, last = _g(r, "n", 0), _mins_since(_g(r, "last"))
+        if not enabled:
+            state = "warn"
+            det = "DISABLED"
+        else:
+            state = "ok"
+            det = f"{n} recoveries sent (24h) · window {'open' if win else 'closed'}"
+        return state, det, _fmt_ago(last), n
+    tiles.append(_tile("noshow", "No-show recovery", "Autopilot", *guard(_noshow)))
+
+    # ---------- BRAND-INTRO AUTOPILOT ----------
+    def _brand():
+        r = _one(pool, "WITH b AS (SELECT DISTINCT dest9 FROM lisa_calls WHERE COALESCE(meeting_agreed,false) "
+                       "AND created_at>now()-interval '7 days') "
+                       "SELECT count(*) total, count(bc.brand_intro_sent_at) sent, "
+                       "max(bc.brand_intro_sent_at) last "
+                       "FROM b LEFT JOIN booked_crm bc ON bc.dest9=b.dest9")
+        total, sent = _g(r, "total", 0), _g(r, "sent", 0)
+        last = _mins_since(_g(r, "last"))
+        pct = int(100 * sent / total) if total else 0
+        state = "ok" if pct >= 80 else ("warn" if pct >= 40 else ("down" if total else "idle"))
+        return state, f"{sent}/{total} bookings covered ({pct}%)", _fmt_ago(last), pct
+    tiles.append(_tile("brand_intro", "Brand-intro autopilot", "Autopilot", *guard(_brand)))
+
+    # ---------- FIRELIES WATCH ----------
+    def _fireflies():
+        r = _one(pool, "SELECT v FROM crm_config WHERE k='fireflies_last_run'")
+        v = _g(r, "v")
+        last = None
+        try:
+            last = _mins_since(datetime.fromisoformat(str(v))) if v else None
+        except Exception:
+            last = None
+        if last is None:
+            state, det = "unknown", "no run recorded"
+        elif last < 30:
+            state, det = "ok", "polling"
+        elif last < 120:
+            state, det = "warn", "slow"
+        else:
+            state, det = "down", "stalled"
+        return state, det, _fmt_ago(last), None
+    tiles.append(_tile("fireflies", "Fireflies meeting-watch", "Intelligence", *guard(_fireflies)))
+
+    # ---------- AIRCALL INGEST ----------
+    def _aircall():
+        try:
+            r = _one(pool, "SELECT max(started_at) last, count(*) FILTER (WHERE started_at>now()-interval '24 hours') n "
+                           "FROM calls WHERE provider='aircall'")
+        except Exception:
+            return "unknown", "calls table unavailable", None, None
+        last, n = _mins_since(_g(r, "last")), _g(r, "n", 0)
+        state = "ok" if (last is not None and last < 60 * 24) else "idle"
+        return state, f"{n} Aircall calls ingested (24h)", _fmt_ago(last), n
+    tiles.append(_tile("aircall", "Aircall ingest", "Calling", *guard(_aircall)))
+
+    # ---------- REFRESH-LOOP HEARTBEAT ----------
+    def _loop():
+        r = _one(pool, "SELECT max(updated_at) last FROM lisa_calls")
+        last = _mins_since(_g(r, "last"))
+        if last is None:
+            state = "unknown"
+        elif last < 20:
+            state = "ok"
+        elif last < 90:
+            state = "warn"
+        else:
+            state = "down" if hrs else "idle"
+        return state, "engine loop writing", _fmt_ago(last), None
+    tiles.append(_tile("loop", "Refresh loop heartbeat", "Core", *guard(_loop)))
+
+    # ---------- TWILIO BALANCE ----------
+    def _twilio():
+        from . import cost as _cost
+        ts = _cost.twilio_status(settings, days=1) or {}
+        bal = ts.get("balance")
+        low = ts.get("low")
+        if bal is None:
+            return "unknown", "balance API unavailable", None, None
+        state = "down" if (low and bal < 20) else ("warn" if low else "ok")
+        return state, f"${bal:.2f} balance" + (" · LOW" if low else ""), None, round(bal, 2)
+    tiles.append(_tile("twilio", "Twilio balance (SMS/voice)", "Billing", *guard(_twilio)))
+
+    # ---------- DATAFORSEO BALANCE ----------
+    def _dfs():
+        if not getattr(settings, "dataforseo_enabled", False):
+            return "idle", "not configured", None, None
+        from .enrichment.dataforseo import DataForSEOClient
+        c = DataForSEOClient(settings)
+        try:
+            b = c.balance() or {}
+        finally:
+            try:
+                c.close()
+            except Exception:
+                pass
+        bal = b.get("balance")
+        if bal is None:
+            return "unknown", "balance API unavailable", None, None
+        state = "down" if bal < 5 else ("warn" if bal < 15 else "ok")
+        return state, f"${bal:.2f} balance", None, round(bal, 2)
+    tiles.append(_tile("dataforseo", "DataForSEO balance (audits)", "Billing", *guard(_dfs)))
+
+    order = {"down": 0, "warn": 1, "unknown": 2, "idle": 3, "ok": 4}
+    summary = {"down": 0, "warn": 1, "unknown": 2, "idle": 3, "ok": 4}
+    counts = {s: 0 for s in summary}
+    for t in tiles:
+        counts[t["state"]] = counts.get(t["state"], 0) + 1
+    overall = "down" if counts.get("down") else ("warn" if counts.get("warn") or counts.get("unknown") else "ok")
+    tiles.sort(key=lambda t: order.get(t["state"], 5))
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "overall": overall,
+        "counts": counts,
+        "engines": tiles,
+    }

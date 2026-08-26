@@ -44,7 +44,8 @@ log = get_logger(__name__)
 # self-refetch) and drop the flaky/pricey backlink calls. We deep-fetch the top competitor and
 # ADD a 2nd one ONLY when the first came back thin (a poor keyword-overlap match) — so rich
 # prospects pay for one call and only the thin ones pay for the extra.
-MAX_DFS_CALLS = 4          # HARD ceiling on DataForSEO calls per audit (was 6)
+MAX_DFS_CALLS = 6          # HARD ceiling on DataForSEO calls per audit (thin sites also pay for
+                           # SERP-seeded competitor discovery + one real-rival deep-fetch)
 TOP_COMPETITORS = 5        # how many REAL SERP competitors we surface (mega-sites filtered out)
 GAP_COMPETITORS = 2        # MAX competitors we deep-fetch (the 2nd only fires if the 1st is thin)
 COMP_KW_LIMIT = 100        # keywords pulled per competitor (was 300 — cost scales with rows)
@@ -241,26 +242,86 @@ def pick_competitors(items: list[dict], target: str, top: int = TOP_COMPETITORS)
     return out[:top]
 
 
-def _topic_vocab(our_keywords: list[dict], min_count: int = 2) -> set[str]:
-    """The prospect's DISTINCTIVE topic vocabulary — niche tokens that recur across the keywords it
-    already ranks for (brake/rotor/caliper for a brake maker; funeral/cremation for a funeral home),
-    EXCLUDING broad commerce words (car/shop/near/melbourne...). A competitor's keyword is only a
-    real GAP if it shares one of these distinctive themes; otherwise it's the (usually much bigger)
-    competitor's unrelated business, not an opportunity for us."""
+def _registrable_label(domain: str) -> str:
+    """The distinctive brand label of a domain — 'metromachining' from 'www.metromachining.com.au'.
+    Used to strip the brand PREFIX from the topic vocab (so 'metro' is dropped but 'machining' — a
+    real industry word that merely lives inside the brand — is kept)."""
+    host = re.sub(r"^www\.", "", _clean_host(domain).lower())
+    label = host.split(".")[0] if host else ""
+    return re.sub(r"[^a-z0-9]", "", label)
+
+
+def _is_brand_prefix(token: str, label: str) -> bool:
+    """A token is a brand fragment when it shares the label's leading stem — the label STARTS WITH it
+    (metromachining -> 'metro', 'metromachining'), OR it shares a >=5-char leading run with the label
+    that is most of the token ('metrocom' ~ 'metromachining', a junk brand variant). Never when it's
+    merely a descriptive suffix ('machining' shares only 'm' with 'metromachining', so it's kept)."""
+    if not token or not label or len(token) < 3:
+        return False
+    if label.startswith(token):
+        return True
+    n = 0
+    for a, b in zip(token, label):
+        if a != b:
+            break
+        n += 1
+    return n >= 5 and n >= len(token) * 0.6
+
+
+# Generic business/legal/category words that appear in D&B industry labels ("Professional Services
+# Sector", "Business Services Sector") and company suffixes (PTY LTD) — non-distinctive, so they must
+# NOT enter the topic vocab (else 'professional transport' / '... pty ltd' match a machine shop).
+_SEED_STOP = {
+    "professional", "sector", "business", "services", "service", "group", "solutions", "solution",
+    "pty", "ltd", "limited", "company", "holdings", "enterprises", "enterprise", "industries",
+    "industry", "trading", "australia", "aust", "australian", "inc", "corp", "corporation",
+    "consulting", "consultants", "management", "national", "international", "global", "general",
+    "other", "misc", "miscellaneous", "the", "and", "for",
+}
+
+
+def _seed_tokens(*texts: str) -> set[str]:
+    """Topic tokens from KNOWN-industry / business-description strings (industry, sub-industry,
+    company profile, business name) — the reliable relevance signal that does NOT depend on how many
+    keywords a (possibly tiny) site already ranks for. Generic category/legal words are stripped so
+    only DISTINCTIVE service words survive (machining, engineering — not professional/services/pty)."""
+    out: set[str] = set()
+    for txt in texts:
+        for t in re.split(r"[^a-z0-9]+", (txt or "").lower()):
+            if (t and len(t) > 2 and t not in _STOP and t not in _GENERIC_TOPIC
+                    and t not in _SEED_STOP and not t.isdigit()):
+                out.add(t)
+    return out
+
+
+def _topic_vocab(our_keywords: list[dict], *, seed: set[str] | None = None,
+                 domain_label: str = "", min_count: int = 2) -> set[str]:
+    """The prospect's DISTINCTIVE topic vocabulary — niche tokens (brake/rotor/caliper for a brake
+    maker; machining/cnc for a machine shop), EXCLUDING broad commerce words and the brand PREFIX.
+    Grounded in BOTH the keywords the site ranks for AND a `seed` of known-industry words, so
+    relevance still works when the site ranks for almost nothing. A competitor keyword is only a real
+    GAP if it shares one of these themes; otherwise it's the (usually bigger) competitor's unrelated
+    business (metro-transport's freight terms), not an opportunity for us."""
     cnt: Counter = Counter()
     for k in our_keywords or []:
         for t in re.split(r"[^a-z0-9]+", (k.get("keyword") or "").lower()):
-            if t and len(t) > 2 and t not in _STOP and t not in _GENERIC_TOPIC and not t.isdigit():
+            if (t and len(t) > 2 and t not in _STOP and t not in _GENERIC_TOPIC
+                    and t not in _SEED_STOP and not t.isdigit()
+                    and not _is_brand_prefix(t, domain_label)):
                 cnt[t] += 1
     vocab = {t for t, c in cnt.items() if c >= min_count}
-    if len(vocab) < 6:                       # thin site: fall back to any recurring/prominent token
-        vocab = {t for t, c in cnt.most_common(30) if c >= 2}
+    if len(vocab) < 6:                       # thin site: accept distinctive single-occurrence tokens too
+        vocab |= {t for t, _c in cnt.most_common(30)}
+    if seed:
+        vocab |= {t for t in seed if not _is_brand_prefix(t, domain_label)}
     return vocab
 
 
 def _on_topic(keyword: str, vocab: set[str]) -> bool:
+    # No vocab => NO topical signal at all. Callers must SUPPRESS the gap in that case (returning
+    # True here would let a competitor's unrelated business flood the report — the metromachining bug).
     if not vocab:
-        return True
+        return False
     toks = [t for t in re.split(r"[^a-z0-9]+", (keyword or "").lower())
             if t and len(t) > 2 and t not in _STOP]
     return any(t in vocab for t in toks)
@@ -269,7 +330,8 @@ def _on_topic(keyword: str, vocab: set[str]) -> bool:
 def compute_keyword_gap(our_keywords: list[dict],
                         competitor_keywords: dict[str, list[dict]],
                         *, limit: int = 10, min_volume: int = MIN_MONEY_VOL,
-                        brands: set[str] | None = None, assumed_position: int = 5) -> list[dict]:
+                        brands: set[str] | None = None, assumed_position: int = 5,
+                        seed: set[str] | None = None, domain: str = "") -> list[dict]:
     """MONEY keywords competitors rank for that OUR domain does not — a short, high-value, ON-TOPIC
     gap list, not a raw dump. Drops branded terms (ours + each competitor's own name), off-topic
     terms (the big competitor's unrelated business), and anything below `min_volume`; then ranks
@@ -283,7 +345,12 @@ def compute_keyword_gap(our_keywords: list[dict],
     for cdom in (competitor_keywords or {}):
         brands |= brand_tokens(cdom)
     ours = {_norm_kw(k.get("keyword")) for k in (our_keywords or [])}
-    vocab = _topic_vocab(our_keywords)   # only gaps that share the prospect's own themes
+    vocab = _topic_vocab(our_keywords, seed=seed, domain_label=_registrable_label(domain))
+    if not vocab:
+        # No topical signal (thin site + no known industry) — SUPPRESS rather than emit a
+        # competitor's unrelated keywords. An honest empty gap beats freight terms for a machine shop.
+        log.info("keyword_gap_suppressed_no_vocab", domain=_clean_host(domain))
+        return []
     agg: dict[str, dict] = {}
     for cdom, kws in (competitor_keywords or {}).items():
         for k in kws or []:
@@ -373,14 +440,17 @@ def compute_outranked(our_keywords: list[dict],
 
 def compute_content_gap(our_keywords: list[dict],
                         competitor_keywords: dict[str, list[dict]],
-                        *, limit: int = 6, brands: set[str] | None = None) -> list[dict]:
+                        *, limit: int = 6, brands: set[str] | None = None,
+                        seed: set[str] | None = None, domain: str = "") -> list[dict]:
     """The competitor PAGES (topics) that win ON-TOPIC keywords we don't rank for — derived, no
     extra API call, by clustering the (filtered) gap keywords onto the competitor URL that ranks
     for them. Same relevance gates as the keyword gap so the pages are useful, not noise."""
     brands = set(brands or set())
     for cdom in (competitor_keywords or {}):
         brands |= brand_tokens(cdom)
-    vocab = _topic_vocab(our_keywords)
+    vocab = _topic_vocab(our_keywords, seed=seed, domain_label=_registrable_label(domain))
+    if not vocab:
+        return []
     ours = {_norm_kw(k.get("keyword")) for k in (our_keywords or [])}
     pages: dict[str, dict] = {}
     for cdom, kws in (competitor_keywords or {}).items():
@@ -653,6 +723,104 @@ def _write_cache(pool, domain: str, audit: dict) -> None:
 # ============================================================================================ #
 # MAIN ENTRY
 # ============================================================================================ #
+def _business_seed(pool, domain: str) -> set[str]:
+    """Known-industry seed tokens for `domain` from our companies DB (industry, sub-industry, profile,
+    business name) — grounds keyword/competitor relevance even when the site ranks for almost nothing
+    (the metromachining case: 3 keywords, so the seed 'machining/engineering' is what carries topicality)."""
+    row = None
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT company_name, industry, sub_industry, company_profile FROM companies "
+                        "WHERE domain=%s ORDER BY (source='gmaps') DESC, id DESC LIMIT 1", (_clean_host(domain),))
+            row = cur.fetchone()
+    except Exception as exc:
+        log.warning("business_seed_lookup_failed", domain=_clean_host(domain), error=str(exc)[:120])
+    if not row:
+        return set()
+    return _seed_tokens(row.get("company_name") or "", row.get("industry") or "",
+                        row.get("sub_industry") or "", (row.get("company_profile") or "")[:600])
+
+
+_STATE_CITY = {
+    "victoria": "melbourne", "vic": "melbourne", "new south wales": "sydney", "nsw": "sydney",
+    "queensland": "brisbane", "qld": "brisbane", "western australia": "perth", "wa": "perth",
+    "south australia": "adelaide", "sa": "adelaide", "tasmania": "hobart", "tas": "hobart",
+    "australian capital territory": "canberra", "act": "canberra", "northern territory": "darwin",
+}
+
+
+def _business_location(pool, domain: str) -> str:
+    """A searchable metro location for SERP-seeding competitor discovery — the state capital (more
+    search volume) if we can map the state, else the suburb."""
+    row = None
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT suburb, state FROM companies WHERE domain=%s "
+                        "ORDER BY (source='gmaps') DESC, id DESC LIMIT 1", (_clean_host(domain),))
+            row = cur.fetchone()
+    except Exception:
+        row = None
+    if not row:
+        return ""
+    st = (row.get("state") or "").strip().lower()
+    return _STATE_CITY.get(st, "") or (row.get("suburb") or "").strip().lower() or st
+
+
+_SERP_JUNK = {
+    "seek.com.au", "au.seek.com", "indeed.com", "au.indeed.com", "gumtree.com.au", "linkedin.com",
+    "facebook.com", "instagram.com", "yelp.com", "yellowpages.com.au", "truelocal.com.au",
+    "mapquest.com", "wikipedia.org", "youtube.com", "reddit.com", "tripadvisor.com.au",
+    "airtasker.com", "hipages.com.au", "oneflare.com.au", "productreview.com.au", "aussieweb.com.au",
+}
+
+
+def _real_serp_competitors(items: list[dict], target: str, top: int = 6) -> list[dict]:
+    """Shape DataForSEO serp_competitors items into our competitor rows. These are on-topic by
+    construction (seeded by the business's own service keywords), so we drop the prospect itself,
+    generic mega-sites, government/education/aggregator/job-board domains (which rank for broad terms
+    but are never a business's real rival), keeping the actual same-vertical companies."""
+    tgt = _clean_host(target)
+    out: list[dict] = []
+    for it in items or []:
+        host = _clean_host(it.get("domain") or "")
+        if not host or host == tgt:
+            continue
+        if (host in _SERP_JUNK or host.endswith(".gov.au") or host.endswith(".gov")
+                or ".edu" in host or host.endswith(".org.au") or host.endswith(".org")):
+            continue
+        org_n = it.get("organic_keywords") or 0
+        if is_mega_domain(host, org_n):
+            continue
+        out.append({
+            "domain": host, "type": "organic",
+            "overlap": it.get("relevant_serp_items") or 0,
+            "est_traffic": round(it.get("etv") or 0),
+            "organic_keywords": org_n, "paid_keywords": 0,
+            "avg_position": round(it.get("avg_position") or 0, 1) or None,
+            "source": "serp",
+        })
+    return out[:top]
+
+
+def _label_is_relevant(host: str, vocab: set[str]) -> bool:
+    """A competitor domain is on-topic when a distinctive topic word appears (by 5-char STEM, so
+    'engineering' matches 'mcsengineers' and 'boring' matches 'onsitelineboring') inside its label,
+    or a label token is in the vocab. A brand-lookalike that only shares the prospect's brand prefix
+    (metro-transport) is NOT a real rival. Stem match keeps it forgiving (engineer/engineers) but
+    still specific enough to reject unrelated names (ldmt, donnaz)."""
+    if not vocab:
+        return False
+    label = _registrable_label(host)
+    if label:
+        for w in vocab:
+            if len(w) >= 5 and w[:5] in label:      # stem: 'engin' in 'mcsengineers', 'borin' in '...lineboring'
+                return True
+            if len(w) == 4 and w in label:
+                return True
+    toks = {t for t in re.split(r"[^a-z0-9]+", (host or "").lower()) if t}
+    return bool(toks & vocab)
+
+
 def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool = False) -> dict:
     """On-demand competitor gap audit for ONE prospect domain (see module docstring for shape).
 
@@ -705,6 +873,13 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
             our_rk = budget.run("ranked_keywords(self)", lambda: client.ranked_keywords(domain, limit=COMP_KW_LIMIT))
             our_keywords = (our_rk or {}).get("keywords") or []
 
+        # Ground relevance in the KNOWN industry (companies DB) so a thin site still has topical signal,
+        # then PREFER on-topic rivals for the (paid) deep-fetch — a brand-lookalike (metro-transport for
+        # metromachining) must not consume the gap budget or headline the competitor list.
+        seed = _business_seed(pool, domain)
+        vocab_pre = _topic_vocab(our_keywords, seed=seed, domain_label=_registrable_label(domain))
+        competitors.sort(key=lambda c: _label_is_relevant(c.get("domain") or "", vocab_pre), reverse=True)
+
         # (3) Deep-fetch the top competitor's keywords; if gap+outranked come back thin (the #1
         #     competitor was a poor keyword-overlap match, e.g. a broad portal), fetch ONE more —
         #     but only then. Rich prospects pay for a single call; thin ones pay for the extra.
@@ -715,16 +890,77 @@ def run_competitor_audit(pool, settings: Settings, domain: str, *, force: bool =
             cd = c["domain"]
             rk = budget.run(f"ranked_keywords({cd})", lambda cd=cd: client.ranked_keywords(cd, limit=COMP_KW_LIMIT))
             competitor_keywords[cd] = (rk or {}).get("keywords") or []
-            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands)
+            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands, seed=seed, domain=domain)
             outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands)
             if len(keyword_gap) + len(outranked) >= MIN_SIGNAL_ROWS:
                 break                              # enough signal — don't pay for more competitors
 
         # sparse fallback: still thin -> relax the volume floor (free; reuses fetched keywords)
         if len(keyword_gap) + len(outranked) < MIN_SIGNAL_ROWS:
-            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands, min_volume=40)
+            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands, min_volume=40, seed=seed, domain=domain)
             outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands, min_volume=40)
-        content_gap = compute_content_gap(our_keywords, competitor_keywords, brands=brands)
+        content_gap = compute_content_gap(our_keywords, competitor_keywords, brands=brands, seed=seed, domain=domain)
+
+        # Show only RELEVANT rivals: keep a competitor that supplied an on-topic gap/outranked keyword
+        # or whose domain is topically named; drop pure brand-lookalikes. For a THIN site with no
+        # confidently-relevant rival, show none rather than a wrong-industry 'competitor'.
+        contributed = {_clean_host(d) for r in keyword_gap for d in (r.get("competitor_domains") or [])}
+        contributed |= {_clean_host(r["competitor"]) for r in outranked if r.get("competitor")}
+        rel = [c for c in competitors
+               if _label_is_relevant(c.get("domain") or "", vocab_pre) or _clean_host(c.get("domain") or "") in contributed]
+        if rel:
+            competitors = rel
+        elif len(our_keywords) < 8:
+            competitors = []   # thin site + no clearly-relevant SERP competitor -> don't show lookalikes
+
+        # The deal often hinges on naming the prospect's TRUE rivals (Karl: "tell me my main competitor
+        # and I'll come on board"). When domain-overlap only surfaced brand-lookalikes, discover REAL
+        # same-vertical competitors by SERP-ing the business's service+location terms.
+        if len(competitors) < 4 and seed:
+            dlabel = _registrable_label(domain)
+            # Our OWN on-topic ranked keywords are the cleanest, most specific seeds (proven relevant) —
+            # but drop any carrying the brand prefix so we don't SERP for 'metro ...' (trains, not machining).
+            own = []
+            for k in our_keywords:
+                kw = (k.get("keyword") or "").strip()
+                toks = re.split(r"[^a-z0-9]+", kw.lower())
+                if kw and _on_topic(kw, vocab_pre) and not any(_is_brand_prefix(t, dlabel) for t in toks):
+                    own.append(kw)
+            # supplement with the SINGLE most specific service + location (the business's own
+            # descriptor first — 'machining' lives inside 'metromachining', so prefer it over the
+            # broader 'engineering'; a broad seed pulls job-boards/universities, not real rivals).
+            svc = [t for t in seed if len(t) >= 5 and t not in _GENERIC_TOPIC
+                   and not _is_brand_prefix(t, dlabel)]
+            svc.sort(key=lambda t: (t in dlabel), reverse=True)
+            loc = _business_location(pool, domain)
+            seed_kws = own[:3] + ([f"{svc[0]} {loc}".strip()] if svc and loc else [])
+            seed_kws = [k for k in dict.fromkeys(seed_kws) if k][:4]
+            if seed_kws:
+                disc = budget.run("serp_competitors", lambda: client.serp_competitors(seed_kws, limit=20))
+                real = _real_serp_competitors((disc or {}).get("items") or [], domain)
+                # keep only serp rivals whose domain is topically named (stem match) — a machine shop's
+                # rivals are 'onsitelineboring'/'mcsengineers', not 'ldmt'/'whereis'. Accuracy > volume.
+                real = [rc for rc in real if _label_is_relevant(rc.get("domain") or "", vocab_pre)]
+                have = {_clean_host(c.get("domain") or "") for c in competitors}
+                for rc in real:
+                    if _clean_host(rc["domain"]) not in have:
+                        competitors.append(rc); have.add(_clean_host(rc["domain"]))
+                if real:
+                    assumptions.append("Competitor set verified by who actually ranks for your core "
+                                       "service searches in your area — real same-industry rivals, not "
+                                       "just domains with a similar name.")
+                    # if the keyword gap is still thin, deep-fetch the top real rival for a genuine gap
+                    if len(keyword_gap) < 3:
+                        cd = real[0]["domain"]
+                        if cd not in competitor_keywords:
+                            rk = budget.run(f"ranked_keywords({cd})",
+                                            lambda cd=cd: client.ranked_keywords(cd, limit=COMP_KW_LIMIT))
+                            competitor_keywords[cd] = (rk or {}).get("keywords") or []
+                            keyword_gap = compute_keyword_gap(our_keywords, competitor_keywords, brands=brands,
+                                                              seed=seed, domain=domain, min_volume=40)
+                            outranked = compute_outranked(our_keywords, competitor_keywords, brands=brands, min_volume=40)
+                            content_gap = compute_content_gap(our_keywords, competitor_keywords, brands=brands,
+                                                              seed=seed, domain=domain)
     finally:
         client.close()
 

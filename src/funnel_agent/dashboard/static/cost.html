@@ -1,0 +1,220 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cost Intelligence · Traffic Radius</title>
+<link rel="icon" href="/logo.png"/>
+<style>
+  :root{--bg:#eef1f6;--panel:#fff;--panel2:#f4f7fb;--zebra:#fafbfe;--line:#dde4ef;--line2:#e7ecf4;--txt:#0e1726;--txt-dim:#51617c;--faint:#8493ab;
+    --accent:#3b49d6;--accent-soft:#e9ebfd;--good:#0f9d58;--good-soft:#e7f6ee;--warn:#c9820a;--warn-soft:#fbf1dc;
+    --blue:#1f6feb;--blue-soft:#e6f0fd;--red:#d9483b;--red-soft:#fbeceb;--rail:#0e1424;--head:#f6f8fc;
+    --sh:0 1px 2px rgba(14,23,38,.05),0 14px 34px -22px rgba(14,23,38,.30)}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#080d17;--panel:#111827;--panel2:#161f31;--zebra:#131c2c;--line:#243049;--line2:#1e293e;
+    --txt:#eaf0fb;--txt-dim:#9fb0c9;--faint:#66768f;--accent:#8a83f5;--accent-soft:#20204a;--good:#43d17f;--good-soft:#102a1c;
+    --warn:#e5a53a;--warn-soft:#2a2110;--blue:#5b9bf5;--blue-soft:#12233c;--red:#f4756a;--red-soft:#2c1512;--rail:#05090f;--head:#121b2b;
+    --sh:0 1px 2px rgba(0,0,0,.4),0 18px 40px -24px rgba(0,0,0,.7)}}
+  :root[data-theme="dark"]{--bg:#080d17;--panel:#111827;--panel2:#161f31;--zebra:#131c2c;--line:#243049;--line2:#1e293e;--txt:#eaf0fb;--txt-dim:#9fb0c9;
+    --faint:#66768f;--accent:#8a83f5;--accent-soft:#20204a;--good:#43d17f;--good-soft:#102a1c;--warn:#e5a53a;--warn-soft:#2a2110;
+    --blue:#5b9bf5;--blue-soft:#12233c;--red:#f4756a;--red-soft:#2c1512;--rail:#05090f;--head:#121b2b;--sh:0 1px 2px rgba(0,0,0,.4),0 18px 40px -24px rgba(0,0,0,.7)}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;-webkit-font-smoothing:antialiased}
+  .tr-rail{position:fixed;top:0;left:0;bottom:0;width:66px;background:var(--rail);display:flex;flex-direction:column;padding:12px 0;z-index:40;overflow:hidden;transition:width .16s}
+  .tr-rail:hover{width:230px}
+  .tr-rail-brand{display:flex;align-items:center;height:44px;margin:0 8px 10px;text-decoration:none;overflow:hidden;white-space:nowrap}
+  .tr-rail-brand .barsic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
+  .tr-rail-brand .barsic svg{width:26px;height:26px} .fulllogo{height:20px;filter:brightness(0) invert(1);opacity:.9}
+  .tr-rail-nav{flex:1;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+  .tr-rail-foot{display:flex;flex-direction:column;gap:2px}
+  .tr-rail-item,.tr-rail-user{display:flex;align-items:center;height:42px;margin:0 8px;border-radius:10px;color:#93a1ba;text-decoration:none;font-weight:600;font-size:13.5px;overflow:hidden;white-space:nowrap;transition:background .12s,color .12s}
+  .tr-rail-item:hover{background:rgba(255,255,255,.06);color:#fff}
+  .tr-rail-item.active{background:var(--accent-soft);color:#fff}
+  .tr-rail-item .ic,.tr-rail-user .ic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
+  .tr-rail-item .ic svg{width:19px;height:19px} .tr-rail .lbl{opacity:0;transition:opacity .16s} .tr-rail:hover .lbl{opacity:1}
+  .tr-rail-user .av{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px}
+  .main{margin-left:66px;padding:24px clamp(14px,3vw,34px) 80px;max-width:1200px}
+  .report-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;border-bottom:2px solid var(--txt);padding-bottom:14px;margin-bottom:16px}
+  .rh-left{display:flex;align-items:center;gap:14px}
+  .rh-mark{width:44px;height:44px;border-radius:11px;background:var(--rail);display:flex;align-items:center;justify-content:center;flex:none}
+  .rh-mark svg{width:26px;height:26px}
+  h1{font-size:22px;font-weight:850;letter-spacing:-.02em;margin:0}
+  .rh-meta{color:var(--txt-dim);font-size:12.5px;margin-top:3px}
+  .rh-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  select,.btn{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:9px;padding:8px 12px;font:inherit;font-size:13px;font-weight:700}
+  .btn:hover{border-color:var(--accent)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:15px 17px;box-shadow:var(--sh)}
+  .kpi b{display:block;font-size:26px;font-weight:850;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+  .kpi span{font-size:12px;color:var(--txt-dim);font-weight:600}
+  .kpi small{font-size:11.5px;color:var(--faint);display:block;margin-top:3px}
+  .sec-t{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:22px 2px 10px}
+  .tablewrap{border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--panel);box-shadow:var(--sh)}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:13.5px}
+  thead th{position:sticky;top:0;background:var(--head);text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-dim);padding:11px 14px;border-bottom:1.5px solid var(--line);white-space:nowrap}
+  th.num,td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody td{padding:10px 14px;border-bottom:1px solid var(--line2)}
+  tbody tr:nth-child(2n) td{background:var(--zebra)}
+  tbody tr.tot td{font-weight:850;border-top:2px solid var(--line);background:var(--panel2)}
+  .tool{font-weight:750}
+  .badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.03em}
+  .badge.usage{background:var(--good-soft);color:var(--good)} .badge.fixed{background:var(--blue-soft);color:var(--blue)} .badge.estimate{background:var(--warn-soft);color:var(--warn)}
+  tbody tr.grp td{background:var(--panel3);font-weight:800;color:var(--txt);border-top:1px solid var(--line)}
+  tbody tr.subh td{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:800;border-bottom:1px solid var(--line2)}
+  tbody tr.perrow .tool{font-weight:750;color:var(--txt)}
+  .detail{color:var(--txt-dim);font-size:12.5px}
+  .usegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .use{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 14px;box-shadow:var(--sh)}
+  .use b{display:block;font-size:19px;font-weight:850;font-variant-numeric:tabular-nums}
+  .use span{font-size:11.5px;color:var(--txt-dim)}
+  .note{background:var(--warn-soft);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;padding:12px 15px;font-size:13px;color:var(--txt-dim);margin-top:14px}
+  .prices{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:16px;margin-top:12px;display:none}
+  .prices.on{display:block}
+  .prow{display:grid;grid-template-columns:1fr 120px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)}
+  .prow label{font-size:13px;color:var(--txt-dim)} .prow input{border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--txt);color:var(--bg);padding:11px 18px;border-radius:10px;font-size:13.5px;font-weight:700;opacity:0;pointer-events:none;transition:.2s;z-index:60}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .tw-alert{background:var(--red-soft);border:1px solid var(--red);border-left:4px solid var(--red);color:var(--red);border-radius:11px;padding:13px 16px;font-size:13.5px;margin-bottom:14px}
+  .tw-alert b{color:var(--red)}
+  .tw-ok{background:var(--good-soft);border:1px solid var(--line);border-left:4px solid var(--good);color:var(--txt-dim);border-radius:11px;padding:10px 15px;font-size:13px;margin-bottom:14px}
+  .tw-ok b{color:var(--good)}
+  .empty{color:var(--faint);text-align:center;padding:48px}
+  .tr-theme-btn{position:fixed;right:16px;bottom:16px;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:16px;z-index:50}
+</style></head><body>
+<nav class="tr-rail" id="trRail" aria-label="Primary navigation"></nav>
+<div class="main">
+  <div class="report-head">
+    <div class="rh-left">
+      <div class="rh-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="#fff" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg></div>
+      <div><h1>Cost Intelligence</h1><div class="rh-meta" id="meta">What it costs to run the outbound-intelligence system — and whether it pays.</div></div>
+    </div>
+    <div class="rh-actions">
+      <select id="days" onchange="load()"><option value="1">Today (24h)</option><option value="3">Last 3 days</option><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option></select>
+      <button class="btn" onclick="document.getElementById('prices').classList.toggle('on')">Adjust prices</button>
+    </div>
+  </div>
+  <div id="twbal"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="sec-t">Cost breakdown by tool</div>
+  <div class="tablewrap"><table><thead><tr><th>Tool</th><th>Type</th><th>How it's counted</th><th class="num">Cost</th><th class="num">Share</th></tr></thead><tbody id="rows"></tbody></table></div>
+  <div class="prices" id="prices">
+    <div class="sec-t" style="margin-top:0">Unit prices — tune any figure and the report recomputes</div>
+    <div id="priceRows"></div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="savePrices()">Save &amp; recompute</button></div>
+  </div>
+  <div class="sec-t">Usage this period</div>
+  <div class="usegrid" id="usage"></div>
+  <div class="note" id="note"></div>
+</div>
+<div class="toast" id="toast"></div>
+<button class="tr-theme-btn" title="Toggle light / dark" onclick="var e=document.documentElement,n=e.getAttribute('data-theme')==='light'?'dark':'light';e.setAttribute('data-theme',n);try{localStorage.setItem('tr-theme-v2',n)}catch(x){};this.textContent=n==='light'?'\u{1F319}':'☀️'">🌙</button>
+<script>
+(function(){try{var t=localStorage.getItem('tr-theme-v2');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+var toastEl=document.getElementById('toast'),tT;
+function toast(m){toastEl.textContent=m;toastEl.classList.add('on');clearTimeout(tT);tT=setTimeout(function(){toastEl.classList.remove('on')},2200);}
+function api(u,o){return fetch(u,o).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();});}
+function money(v){return v==null?'—':'$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});}
+var DATA=null, PRICE_LABELS={retell_per_min:'Retell AI — per connected minute',twilio_sms_au:'Twilio — SMS to AU mobile',twilio_number_month:'Twilio — AU number / month',opus_in_per_mtok:'Opus — $/1M input tokens',opus_out_per_mtok:'Opus — $/1M output tokens',gpt4omini_in_per_mtok:'GPT-4o-mini — $/1M input',gpt4omini_out_per_mtok:'GPT-4o-mini — $/1M output',dataforseo_audit:'DataForSEO — per audit',places_per_1k:'Google Places — per 1,000',apollo_month:'Apollo — / month',aircall_seat_month:'Aircall — per seat / month',aircall_seats:'Aircall — seats',railway_month:'Railway — / month',fireflies_month:'Fireflies — / month',places_requests_month:'Google Places — requests / month (est.)',caller_numbers:'Twilio — AU numbers rented',avg_deal_value:'Average value per WON deal'};
+function render(d){
+  DATA=d;
+  var tw=d.twilio, tb=document.getElementById('twbal');
+  if(!tw){tb.innerHTML='';}
+  else if(tw.low){
+    tb.innerHTML='<div class="tw-alert"><b>⚠ Twilio balance low — $'+Number(tw.balance).toFixed(2)+' '+esc(tw.currency)+'</b>'+
+      (tw.window_spend!=null?(' · you\'ve spent $'+Number(tw.window_spend).toFixed(0)+' in the last '+d.days+' days — top up soon so SMS &amp; AI calls don\'t stop.'):' — top up soon.')+'</div>';
+  } else {
+    tb.innerHTML='<div class="tw-ok">Twilio balance: <b>$'+Number(tw.balance).toFixed(2)+' '+esc(tw.currency)+'</b>'+(tw.window_spend!=null?(' · $'+Number(tw.window_spend).toFixed(0)+' actual spend, last '+d.days+'d'):'')+'</div>';
+  }
+  var net=d.net, netc=net>=0?'var(--good)':'var(--red)';
+  document.getElementById('kpis').innerHTML=[
+    ['b:'+money(d.total),'Total cost · '+d.days+'d','var(--txt)',''],
+    ['b:'+money((d.groups||{}).outbound),'Outbound (Lisa AI) · '+d.days+'d','var(--blue)','AI outbound system'],
+    ['b:'+money((d.groups||{}).human_bde),'Human-BDE analytics · '+d.days+'d','var(--warn)','3CX / Aircall'],
+    ['b:'+money(d.cost_per_lead),'Cost per lead','var(--accent)',d.leads+' leads (bookings)'],
+    ['b:'+(d.cost_per_seen_meeting?money(d.cost_per_seen_meeting):'—'),'Cost per seen meeting',d.seen_meetings?'var(--blue)':'var(--faint)',d.seen_meetings?(d.seen_meetings+' reveals held ('+d.days+'d)'):'none held this period'],
+    ['b:'+(d.cost_per_acquisition?money(d.cost_per_acquisition):'—'),'Cost per acquisition',d.won?'var(--warn)':'var(--faint)',(d.won||0)+' won'],
+    ['b:'+money(d.revenue),'Revenue (won)','var(--good)','@ '+money(d.avg_deal_value)+'/deal'],
+    ['b:'+money(d.net),'Net (rev − cost)',netc,'projected '+money(d.projected_revenue)+' @30% close']
+  ].map(function(k){var v=k[0].slice(2);return '<div class="kpi"><b style="color:'+k[2]+'">'+v+'</b><span>'+k[1]+'</span>'+(k[3]?'<small>'+esc(k[3])+'</small>':'')+'</div>';}).join('');
+  var tot=d.total||1;
+  var GN={outbound:'🤖 Outbound Intelligence (Lisa AI)',human_bde:'👤 Human-BDE Analytics (3CX / Aircall)',shared:'☁ Shared infrastructure'};
+  var order=['outbound','human_bde','shared'], gr=d.groups||{};
+  var html='';
+  // ---- per-system daily / weekly / monthly run cost ----
+  var pd=d.periods;
+  if(pd&&pd.daily){
+    html+='<tr class="grp"><td colspan="5">📅 <b>Run cost by system</b> — auto-updates daily from real usage</td></tr>';
+    html+='<tr class="subh"><td>Period</td><td class="num">Human-BDE</td><td class="num">Outbound (Lisa AI)</td><td class="num">Shared</td><td class="num">Total</td></tr>';
+    [['Daily','daily','last 1 day'],['Weekly','weekly','last 7 days'],['Monthly','monthly','last 30 days']].forEach(function(pp){
+      var r=pd[pp[1]]||{};
+      html+='<tr class="perrow"><td class="tool">'+pp[0]+'<small style="color:var(--faint)"> · '+pp[2]+'</small></td><td class="num">'+money(r.human_bde)+'</td><td class="num">'+money(r.outbound)+'</td><td class="num">'+money(r.shared)+'</td><td class="num"><b>'+money(r.total)+'</b></td></tr>';
+    });
+    html+='<tr class="grp"><td colspan="5" style="padding-top:14px">🧾 <b>Line-item breakdown</b> · window: '+d.days+' days</td></tr>';
+  }
+  // ---- line items grouped by system ----
+  order.forEach(function(g){
+    var gl=d.lines.filter(function(l){return (l.group||'outbound')===g;});
+    if(!gl.length)return;
+    var sub=gl.reduce(function(a,l){return a+(l.usd||0);},0);
+    html+='<tr class="grp"><td colspan="3">'+GN[g]+'</td><td class="num"><b>'+money(sub)+'</b></td><td class="num">'+Math.round(sub/tot*100)+'%</td></tr>';
+    html+=gl.map(function(l){var pct=Math.round(l.usd/tot*100);
+      return '<tr><td class="tool">'+esc(l.tool)+'</td><td><span class="badge '+l.kind+'">'+l.kind+'</span></td>'+
+        '<td class="detail">'+esc(l.detail)+'</td><td class="num">'+money(l.usd)+'</td><td class="num">'+pct+'%</td></tr>';}).join('');
+  });
+  html+='<tr class="tot"><td>Total</td><td></td><td class="detail">per '+d.days+' days</td><td class="num">'+money(d.total)+'</td><td class="num">100%</td></tr>';
+  document.getElementById('rows').innerHTML=html;
+  var u=d.usage;
+  document.getElementById('usage').innerHTML=[
+    [Math.round(u.ai_minutes).toLocaleString(),'AI call minutes'],[u.ai_calls.toLocaleString(),'AI calls'],
+    [u.sms_out.toLocaleString(),'SMS sent'],[u.sites+u.audits+u.comparisons,'assets built'],
+    [u.classified.toLocaleString(),'transcripts classified'],[u.leads,'leads (bookings)'],
+    [u.revealed,'reveals done'],[u.won,'won']
+  ].map(function(x){return '<div class="use"><b>'+x[0]+'</b><span>'+x[1]+'</span></div>';}).join('');
+  document.getElementById('note').innerHTML='Rows marked <b>estimate</b> use per-asset token / API-volume estimates where exact counts aren’t logged (Opus builds, classifier, Places sweeps). Tune any unit price under “Adjust prices” and the whole report recomputes. Human 3CX/Aircall dial minutes are billed via subscription, not per-minute here.';
+  // price editor
+  var p=d.prices;
+  document.getElementById('priceRows').innerHTML=Object.keys(PRICE_LABELS).filter(function(k){return k in p;}).map(function(k){
+    return '<div class="prow"><label>'+esc(PRICE_LABELS[k])+'</label><input id="p_'+k+'" type="number" step="any" value="'+p[k]+'"/></div>';
+  }).join('');
+  document.getElementById('meta').textContent='Priced Aug 2026 · balance is live · auto-updates every 45s · refreshed '+new Date().toLocaleTimeString();
+}
+function load(){var days=document.getElementById('days').value;api('/api/cost?days='+days).then(render).catch(function(e){document.getElementById('rows').innerHTML='<tr><td colspan="5"><div class="empty">Couldn\'t load ('+e.message+')</div></td></tr>';});}
+function savePrices(){if(!DATA)return;var over={};Object.keys(PRICE_LABELS).forEach(function(k){var el=document.getElementById('p_'+k);if(el&&el.value!=='')over[k]=parseFloat(el.value);});
+  fetch('/api/cost/prices',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(over)}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(){toast('Saved — recomputing');load();}).catch(function(e){toast('Failed: '+e.message);});}
+window.load=load;window.savePrices=savePrices;
+load();
+// AUTOPILOT: refresh the whole report (incl. the LIVE Twilio balance) every 45s so the low-balance tag
+// clears itself the moment you top up — no manual reload. Skips a refresh while you're editing prices.
+setInterval(function(){
+  var pe=document.getElementById('prices'); if(pe&&pe.classList.contains('on'))return;
+  var a=document.activeElement; if(a&&(a.tagName==='INPUT'||a.tagName==='SELECT'))return;
+  load();
+},45000);
+document.addEventListener('visibilitychange',function(){if(!document.hidden)load();});
+</script>
+<script>(function(){
+  var P=location.pathname, S='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">';
+  var NAV=[
+    ['/','/','Dashboard','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>'],
+    ['/lisa-crm','/lisa-crm','Booked CRM','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',1],
+    ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
+    ['/tasks','/tasks','Tasks','<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l1.5 1.5L13 11"/><path d="M9 17h5"/>',3],
+    ['/cost','/cost','Cost','<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',3],
+    ['/status','/status','Engine Status','<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',1],
+    ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
+  ];
+  var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
+  var h='<a class="tr-rail-brand" href="/" title="Traffic Radius"><span class="barsic">'+BARS+'</span><img class="fulllogo" src="/logo.png" alt="Traffic Radius"/></a><div class="tr-rail-nav">';
+  for(var i=0;i<NAV.length;i++){var n=NAV[i];
+    var act=((n[1]==='/')?(P==='/'):(P===n[1]||P.indexOf(n[1]+'/')===0))?' active':'';
+    h+='<a class="tr-rail-item'+act+(n[4]===2?' tr-sched':n[4]===3?' tr-owner':n[4]?' tr-admin':'')+'" href="'+n[0]+'" data-nav="'+n[1]+'"'+(n[4]?' style="display:none"':'')+' title="'+n[2]+'"><span class="ic">'+S+n[3]+'</svg></span><span class="lbl">'+n[2]+'</span></a>';
+  }
+  h+='</div><div class="tr-rail-foot"><a class="tr-rail-item" href="/logout" title="Sign out"><span class="ic">'+S+'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span><span class="lbl">Sign out</span></a><div class="tr-rail-user" title="Account"><span class="ic"><span class="av" id="trAv">&middot;</span></span><span class="lbl" id="trWho">Account</span></div></div>';
+  var rail=document.getElementById('trRail'); if(rail) rail.innerHTML=h;
+  fetch('/api/me').then(function(r){return r.json()}).then(function(m){
+    if(!m)return;
+    if(m.role==='admin'){document.querySelectorAll('.tr-rail .tr-admin').forEach(function(el){el.style.display='';});}
+    if(m.crm_access){document.querySelectorAll('.tr-rail [data-nav="/lisa-crm"]').forEach(function(el){el.style.display='';});}if(m.lisa_access){document.querySelectorAll('.tr-rail [data-nav="/lisa"]').forEach(function(el){el.style.display='';});}
+    if(m.tasks_access){document.querySelectorAll('.tr-rail .tr-owner').forEach(function(el){el.style.display='';});}
+    var nm=(m.name||m.email||'').trim();var w=document.getElementById('trWho');if(w&&nm)w.textContent=nm;
+    var av=document.getElementById('trAv');if(av&&nm)av.textContent=nm[0].toUpperCase();
+  }).catch(function(){});
+})();</script>
+</body></html>

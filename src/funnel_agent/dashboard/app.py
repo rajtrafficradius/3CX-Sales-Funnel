@@ -508,7 +508,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                "/api/lisa5/postcall", "/api/lisa5/inbound", "/api/lisa5/sms-inbound"}
     # tokenised share links (audit SMS links + Lisa-4 reveal sites) + Emma's email-open pixel
     # (the prospect's mail client fetches it) — no login.
-    _PUBLIC_PREFIXES = ("/r/", "/api/lisa4/site/public/", "/api/emma/px/", "/s/")
+    _PUBLIC_PREFIXES = ("/r/", "/api/lisa4/site/public/", "/api/emma/px/", "/s/", "/api/track")
 
     @app.middleware("http")
     async def auth_mw(request: Request, call_next):
@@ -624,6 +624,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .. import tasks as _tsk
         return _tsk.has_access(pool, str(u.get("email") or ""))
 
+    def _lisa_allowed(request: Request) -> bool:
+        """True when the user may VIEW the Outbound-Intelligence page + its read APIs: any admin, or a user
+        (e.g. Alfred) whose email / bde_name / name is in crm_config 'lisa_view_emails'. CONTROL actions
+        (autodial toggles, web-call, recovery enable/send) stay admin-only."""
+        u = getattr(request.state, "user", None) or {}
+        if is_admin(u):
+            return True
+        try:
+            from .. import lisa as _l
+            r = _l._fetch(pool, "SELECT v FROM crm_config WHERE k='lisa_view_emails'")
+            raw = (r[0].get("v") if r else "") or ""
+        except Exception:
+            raw = ""
+        allow = {x.strip().lower() for x in raw.replace(";", ",").split(",") if x.strip()}
+        return bool(allow) and (str(u.get("email") or "").lower() in allow
+                                or str(u.get("bde_name") or "").lower() in allow
+                                or str(u.get("name") or "").lower() in allow)
+
     def _is_pilot_bde_viewer(request: Request) -> bool:
         """True when the viewer is a BDE on the GAds-pool PILOT (CALENDAR_ALLOC_NAMES — e.g. Mohit,
         Alfred, Ben). They work the WHOLE confirmed-Google-Ads pool, so the prospect/call ACL lets
@@ -736,7 +754,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              # drives the "Meeting Scheduler" rail entry (admins + SCHEDULER_USERS)
                              "scheduler_user": _can_schedule(request),
                              # owner-only Tasks board (Vysakh + Raj)
-                             "tasks_access": _tasks_allowed(request)})
+                             "tasks_access": _tasks_allowed(request),
+                             # reveals the "Outbound Intelligence" (/lisa) rail link for admins
+                             # + emails/BDEs in crm_config 'lisa_view_emails' (e.g. Alfred)
+                             "lisa_access": _lisa_allowed(request)})
 
     @app.get("/api/recent-bookings")
     def recent_bookings(request: Request) -> JSONResponse:
@@ -1447,6 +1468,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if hb:
                 where.append("NOT (bde_name = ANY(%s::text[]))")
                 params.append(hb)
+        # AI callers (Lisa / Lisa 4 / Lisa 5) are internal metrics: show them ONLY to admins on the
+        # dashboard, and NEVER on the public TV wall (?tv=1 or the kiosk role) — even for an admin who
+        # opened the wall. Everyone else sees only the human BDE floor.
+        _u = getattr(request.state, "user", None) or {}
+        _tv_wall = request.query_params.get("tv") == "1" or _u.get("role") == "kiosk"
+        if _tv_wall or not is_admin(_u):
+            where.append("bde_name NOT ILIKE 'Lisa%%'")
         rows = q(
             f"SELECT bde_name, {cols} FROM daily_funnel WHERE {' AND '.join(where)} "
             "GROUP BY bde_name ORDER BY SUM(meetings_booked) DESC, SUM(calls_made) DESC",
@@ -5106,6 +5134,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "not found")
         return JSONResponse(jsonable_encoder(rec))
 
+    @app.get("/api/lisa/crm/engagement/{dest9}")
+    def lisa_crm_engagement(dest9: str, request: Request) -> JSONResponse:
+        """Per-asset engagement (opens / scroll / time / clicks / email opens) for one booking's sent assets."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        from .. import tracking as _trk
+        return JSONResponse(jsonable_encoder(_trk.report(pool, dest9)))
+
     @app.post("/api/lisa/crm/update")
     async def lisa_crm_update(request: Request) -> JSONResponse:
         """Alfred/admin edits: stage, owner, next_action, next_action_at, outcome, contact_name, contact_email, status, note."""
@@ -5299,6 +5335,78 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.commit()
         return JSONResponse({"ok": True, "requeued": n})
 
+    @app.post("/api/lisa/crm/build-site")
+    async def lisa_crm_build_site(request: Request) -> JSONResponse:
+        """Manual override (Alfred/admin): queue a WEBSITE build for a booked prospect on demand — so a booking
+        of EITHER type can get a site (e.g. a Lisa-5 growth-audit booking that also wants a website). Ensures
+        the prospect is buildable (a lisa4_pool row exists — safe because a booked prospect is already in
+        lisa_calls, so the dialer's NOT-EXISTS-lisa_calls guard never re-dials it) then reuses the SAME enqueue
+        the CRM 'confirmed' trigger uses; the autopilot picks the queued build up. Returns {ok, queued}."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        import re as _re
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        info = q("SELECT COALESCE(NULLIF(lc.company_name,''), lp.company, 'your business') company, "
+                 "       COALESCE(lp.domain, lc.domain) domain "
+                 "FROM lisa_calls lc LEFT JOIN lisa4_pool lp ON lp.dest9=lc.dest9 "
+                 "WHERE lc.dest9=%s ORDER BY lc.started_at DESC LIMIT 1", (d9,))
+        company = (info[0].get("company") if info else None) or "your business"
+        domain = (info[0].get("domain") if info else None) or ""
+        from .. import lisa4 as _l4
+        _l4.ensure_lisa4_tables(pool)
+        # make the prospect buildable if it isn't in the pool yet (a Lisa-5 audit booking, or a Lisa-4 row
+        # retired once worked). ON CONFLICT DO NOTHING so a real Lisa-4 pool row (its true bucket/issue) is
+        # never overwritten.
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa4_pool (dest9, dest_number, company, domain, bucket, issue) "
+                        "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (dest9) DO NOTHING",
+                        (d9, "0" + d9, company, domain,
+                         "critical_issue" if domain else "no_website", "manual build (CRM override)"))
+            conn.commit()
+        queued = await run_in_threadpool(_l4.enqueue_lisa4_build, pool, d9)
+        if queued:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                            (d9, "Website build queued (manual override)", who))
+                conn.commit()
+        return JSONResponse({"ok": True, "queued": bool(queued)})
+
+    @app.post("/api/lisa/crm/generate-audit")
+    async def lisa_crm_generate_audit(request: Request) -> JSONResponse:
+        """Manual override (Alfred/admin): generate the plain-language GROWTH AUDIT for a booked prospect on
+        demand — so a booking of EITHER type can get an audit (e.g. a Lisa-4 website booking that also wants a
+        growth audit). Mirrors /api/lisa/crm/audit; returns {ok, token} on success or {ok:false,reason} when the
+        domain has no SEO enrichment yet. Never auto-sent — the closer shares the link."""
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        import re as _re
+        body = await request.json()
+        d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        if not d9:
+            raise HTTPException(400, "bad dest9")
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        info = q("SELECT COALESCE(NULLIF(lc.company_name,''), lp.company, 'your business') company, "
+                 "       COALESCE(lp.domain, lc.domain) domain "
+                 "FROM lisa_calls lc LEFT JOIN lisa4_pool lp ON lp.dest9=lc.dest9 "
+                 "WHERE lc.dest9=%s ORDER BY lc.started_at DESC LIMIT 1", (d9,))
+        company = (info[0].get("company") if info else None) or "your business"
+        domain = (info[0].get("domain") if info else None) or ""
+        if not domain:
+            return JSONResponse({"ok": False, "reason": "No website on file for this prospect."})
+        tok = await run_in_threadpool(_crm.ensure_growth_audit, pool, settings, d9, domain, company,
+                                      avg_ticket=None, force=True)
+        if not tok:
+            return JSONResponse({"ok": False, "reason": "No Google/SEO data for this website yet — can't build a data-backed audit."})
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                        (d9, "Growth audit generated (manual override)", who))
+            conn.commit()
+        return JSONResponse({"ok": True, "token": tok})
+
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page(request: Request):
         """Owner-only Tasks / project board (Vysakh + Raj)."""
@@ -5310,6 +5418,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             pass
         return HTMLResponse(_static("tasks.html"), headers=_NOCACHE)
+
+    @app.get("/cost", response_class=HTMLResponse)
+    def cost_page(request: Request):
+        """Owner-only Cost-Intelligence page (Vysakh + Raj)."""
+        if not _tasks_allowed(request):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        return HTMLResponse(_static("cost.html"), headers=_NOCACHE)
+
+    @app.get("/status", response_class=HTMLResponse)
+    def status_page(request: Request):
+        """Real-time engine/agent health board (admins). Every tile is a REAL signal, never a fake OK."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        return HTMLResponse(_static("status.html"), headers=_NOCACHE)
+
+    @app.get("/api/status")
+    async def api_status(request: Request) -> JSONResponse:
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "no access")
+        from .. import system_status as _ss
+        rep = await run_in_threadpool(_ss.compute, pool, settings)
+        return JSONResponse(jsonable_encoder(rep), headers=_NOCACHE)
+
+    @app.get("/blueprint", response_class=HTMLResponse)
+    def blueprint_page(request: Request):
+        """Real-time SYSTEM BLUEPRINT — a connected node/edge map of the whole floor where any single
+        failing element pops (admins). Same real-signal guarantee as /status, never a fake green."""
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        return HTMLResponse(_static("blueprint.html"), headers=_NOCACHE)
+
+    @app.get("/api/blueprint")
+    async def api_blueprint(request: Request) -> JSONResponse:
+        if not is_admin(getattr(request.state, "user", None) or {}):
+            raise HTTPException(403, "no access")
+        from .. import system_blueprint as _sb
+        rep = await run_in_threadpool(_sb.blueprint, pool, settings)
+        return JSONResponse(jsonable_encoder(rep), headers=_NOCACHE)
+
+    @app.get("/api/cost")
+    async def api_cost(request: Request, days: int = 30) -> JSONResponse:
+        if not _tasks_allowed(request):
+            raise HTTPException(403, "no access")
+        from .. import cost as _cost
+        days = max(1, min(365, int(days or 30)))
+        rep = await run_in_threadpool(_cost.compute, pool, settings, days)
+        # per-system daily/weekly/monthly (human-BDE analytics vs Lisa outbound-intelligence)
+        rep["periods"] = await run_in_threadpool(_cost.cost_periods, pool, None)
+        return JSONResponse(jsonable_encoder(rep))
+
+    @app.post("/api/cost/prices")
+    async def api_cost_prices(request: Request) -> JSONResponse:
+        if not _tasks_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        from .. import cost as _cost
+        _cost.save_prices(pool, body or {})
+        return JSONResponse({"ok": True})
 
     @app.get("/api/tasks")
     def api_tasks_list(request: Request) -> JSONResponse:
@@ -5345,13 +5511,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.get("/s/{code}")
-    def shortlink_redirect(code: str):
-        """Public short-link redirect for SMS (keeps outbound links clean). 302 -> the real public URL."""
+    def shortlink_redirect(code: str, request: Request):
+        """Public short-link redirect for SMS (keeps outbound links clean). 302 -> the real public URL.
+        Also records an engagement 'click' so the closer can see the prospect opened the SMS link."""
         from .. import shortlink as _sl
-        target = _sl.resolve(pool, code)
-        if not target:
+        row = _sl.resolve_row(pool, code)
+        if not row:
             raise HTTPException(404, "link not found")
+        target = row["target"]
+        try:
+            from .. import tracking as _trk
+            tok = target.rstrip("/").rsplit("/", 1)[-1].split("?")[0]
+            ua = request.headers.get("user-agent", ""); ip = (request.client.host if request.client else "")
+            _trk.record(pool, dest9=row.get("dest9"), token=tok, event="click", ua=ua, ip=ip)
+        except Exception:
+            pass
         return RedirectResponse(target, status_code=302)
+
+    @app.post("/api/track")
+    async def api_track(request: Request) -> Response:
+        """PUBLIC engagement beacon from a served asset (open / scroll / time). Body is text/plain JSON so it
+        rides navigator.sendBeacon. Never fails loudly — always 204."""
+        try:
+            # PROSPECT-ONLY (Vysakh): never count INTERNAL views as prospect engagement. Skip (a) any
+            # logged-in system user — request.state.user is set from the fa_session cookie on every path,
+            # incl. this public one — which also covers all trafficradius.com.au logins; and (b) non-Australian
+            # IPs — prospects open the public link from AU, while the team is either logged in or (like an
+            # India-based operator) on a non-AU IP. Country comes from Cloudflare's CF-IPCountry header.
+            country = (request.headers.get("cf-ipcountry") or "").upper()
+            if getattr(request.state, "user", None) or (country and country != "AU"):
+                return Response(status_code=204)
+            import json as _json
+            raw = (await request.body()).decode("utf-8", "ignore")[:2000]
+            b = _json.loads(raw) if raw else {}
+            from .. import tracking as _trk
+            ua = request.headers.get("user-agent", ""); ip = (request.client.host if request.client else "")
+            await run_in_threadpool(_trk.record, pool, token=b.get("token"), kind=b.get("kind", ""),
+                                    event=str(b.get("event", ""))[:12], value=b.get("value", 0), ua=ua, ip=ip)
+        except Exception:
+            pass
+        return Response(status_code=204)
+
+    @app.get("/api/track/px")
+    def api_track_pixel(request: Request, d9: str = "", k: str = "email") -> Response:
+        """1x1 email-open pixel. Records an 'open' for the prospect's email, returns a transparent gif."""
+        from .. import tracking as _trk
+        try:
+            ua = request.headers.get("user-agent", "")
+            _trk.record(pool, dest9=d9, kind=(k or "email")[:12], event="open", ua=ua)
+        except Exception:
+            pass
+        return Response(content=_trk.PIXEL_GIF, media_type="image/gif",
+                        headers={"Cache-Control": "no-store, max-age=0"})
 
     @app.get("/sw.js")
     def crm_service_worker():
@@ -5429,16 +5640,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/lisa", response_class=HTMLResponse)
     def lisa_page(request: Request):
-        u = getattr(request.state, "user", None) or {}
-        if not is_admin(u):
-            # Explicit "no access" (not a silent redirect) so a non-admin who opens /lisa is told plainly.
+        if not _lisa_allowed(request):
+            # Explicit "no access" (not a silent redirect) so a non-viewer who opens /lisa is told plainly.
             return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
         return HTMLResponse(_static("lisa.html"), headers=_NOCACHE)
 
     @app.get("/api/lisa/summary")
     def lisa_summary(request: Request, days: int = 30) -> JSONResponse:
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa as _lisa
         s = _lisa.summary(pool, days=days)
         s.update({"autodial_enabled": _lisa.get_autodial_state(pool, settings), "lisa_enabled": settings.lisa_enabled,
@@ -5461,9 +5671,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/lisa/costs")
     async def lisa_costs(request: Request, days: int = 30) -> JSONResponse:
-        """Accurate full running cost of the Lisa system (Retell + OpenAI + Twilio). Admin-only."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        """Accurate full running cost of the Lisa system (Retell + OpenAI + Twilio). Admin/viewer."""
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa as _lisa
         c = await run_in_threadpool(_lisa.system_costs, pool, settings, days)
         return JSONResponse(jsonable_encoder(c))
@@ -5490,17 +5700,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         (either-leg line attribution — from_number OR to_number identifies the Lisa-4 line), so
         a filtered view returns ALL matching rows for the period, not just those that happen to
         fall inside the most-recent-N window (inbound bookings were being dropped)."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa as _lisa
         # inbound = a call whose caller-ID is NONE of our agents' outbound numbers.
         # Must include BOTH Lisa-1 and Lisa-4 numbers, else every Lisa-4 outbound
         # call gets mislabeled inbound. ALSO include every line Lisa-4 has EVER owned
         # (registry) — a rested rotation number's historical outbound rows stay ours.
-        from ..lisa4 import L4_LINE_DIGITS_ALL
+        from ..lisa4 import L4_LINE_DIGITS_ALL, L5_LINE_DIGITS_ALL
         agent_nums = list(dict.fromkeys(
             list(settings.lisa_numbers or []) + list(settings.lisa4_numbers or [])
-            + ["+61" + d for d in L4_LINE_DIGITS_ALL]))
+            + list(settings.lisa5_numbers or [])
+            + ["+61" + d for d in L4_LINE_DIGITS_ALL]
+            + ["+61" + d for d in L5_LINE_DIGITS_ALL]))
         return JSONResponse(jsonable_encoder(
             {"calls": _lisa.recent_calls(pool, limit=limit, from_numbers=agent_nums,
                                          agent=agent, booked=booked, date=date)}))
@@ -5523,8 +5735,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def lisa_brief(request: Request, dest9: str | None = None, domain: str | None = None) -> JSONResponse:
         """Preview the injected brief for a prospect (admin-only) — so you can see exactly what Lisa is
         handed before any call. Nothing is dialed."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa as _lisa
         # show the SAVED per-prospect brief when we have a dest9; else a live-built preview by domain.
         b = (_lisa.get_brief(pool, settings, dest9=dest9, domain=domain) if dest9
@@ -5554,8 +5766,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lisa_agents(request: Request) -> JSONResponse:
         """List the Retell agents the Voice Orb can talk to (id, name, is_live) so the page can offer an
         agent picker for A/B testing an old vs rebuilt Lisa."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa as _lisa
         try:
             agents = await run_in_threadpool(_lisa.list_lisa_agents, settings)
@@ -5710,14 +5922,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rows = q("SELECT html FROM lisa4_sites WHERE share_token=%s AND status='built'", (token,))
         if not rows or not rows[0]["html"]:
             raise HTTPException(404, "not found")
-        return HTMLResponse(rows[0]["html"])
+        html = rows[0]["html"]
+        try:   # inject the engagement beacon so we can see if the prospect opened/scrolled it
+            from .. import tracking as _trk
+            _d9, _kind = _trk.kind_for_token(pool, token)
+            html = _trk.inject_beacon(html, token, _kind or "asset", "https://www.trmatrix.com.au")
+        except Exception:
+            pass
+        return HTMLResponse(html)
 
     @app.get("/api/lisa/floor")
     async def lisa_floor(request: Request) -> JSONResponse:
         """Rep-rail snapshot: per-agent (Lisa 1 + Lisa 4) live status, today's numbers, in-flight call,
         pool/queue, autodial state, heartbeat, Lisa 4 build pipeline. Powers the Outbound-Intelligence rail."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa4 as _l4
         snap = await run_in_threadpool(_l4.floor_snapshot, pool, settings)
         return JSONResponse(jsonable_encoder(snap))
@@ -5752,8 +5971,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/lisa4/sites")
     async def lisa4_sites(request: Request, limit: int = 50) -> JSONResponse:
         """Lisa 4's AI-designed sites (meta only) for the reveal pipeline / preview list."""
-        if not is_admin(getattr(request.state, "user", None) or {}):
-            raise HTTPException(403, "admin only")
+        if not _lisa_allowed(request):
+            raise HTTPException(403, "no access")
         from .. import lisa4 as _l4
         rows = await run_in_threadpool(_l4.list_sites, pool, limit)
         return JSONResponse(jsonable_encoder({"sites": rows}))

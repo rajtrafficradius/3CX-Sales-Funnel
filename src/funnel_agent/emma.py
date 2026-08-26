@@ -904,6 +904,484 @@ def graph_send_mail(settings: Settings, to_email: str, subject: str, html: str) 
 
 
 # --------------------------------------------------------------------------- #
+# CONFIRMED-MEETINGS SYNC — Emma reads the scheduler's M365 calendar (the
+# ground-truth set of confirmed meetings the human scheduler / Kiran books after
+# Alfred sets them up) and reconciles each event back into the booked CRM: the
+# authoritative meeting TIME + prospect email + Teams link that the call-based
+# capture keeps missing. READ + high-confidence MATCH + guarded write. Never
+# raises; dry_run writes NOTHING; when unsure it marks needs_review (no write) —
+# a wrong match writes the wrong meeting to the wrong client, so we always prefer
+# a false-negative over a false-positive.
+# --------------------------------------------------------------------------- #
+# Free/consumer mailbox providers: an address here identifies a PERSON, never a
+# business, so its domain root must NEVER be used to match a company (metromachining
+# @gmail.com is 'gmail', not the business) — these fall through to company matching.
+_GENERIC_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "hotmail.com", "hotmail.co.uk", "hotmail.com.au",
+    "outlook.com", "outlook.com.au", "live.com", "live.com.au", "msn.com",
+    "yahoo.com", "yahoo.com.au", "yahoo.co.uk", "ymail.com", "rocketmail.com",
+    "icloud.com", "me.com", "mac.com", "aol.com", "protonmail.com", "proton.me",
+    "gmx.com", "mail.com", "zoho.com", "bigpond.com", "bigpond.net.au",
+    "optusnet.com.au", "iinet.net.au", "internode.on.net", "tpg.com.au",
+    "westnet.com.au", "dodo.com.au", "exemail.com.au", "ozemail.com.au", "y7mail.com",
+}
+# Our own / partner mailboxes — the internal closer on every invite. Anything whose
+# domain contains one of these markers is dropped when picking the EXTERNAL prospect.
+_INTERNAL_EMAIL_MARKERS = ("trafficradius", "clicktrends", "trmatrix")
+# Corporate-form / boilerplate words stripped before a company string is normalised
+# to its compact identity key (so 'C & D Schroeder Tree Services Pty Ltd' and the
+# calendar's 'Cdschroedertr' collapse onto the same stem).
+_COMPANY_STOP_RE = re.compile(
+    r"\b(pty|ltd|limited|inc|incorporated|llc|co|company|corp|corporation|group|"
+    r"holdings|australia|team|teams|meeting|the|and)\b", re.I)
+
+
+def _email_domain(email: str | None) -> str:
+    e = (email or "").strip().lower()
+    return e.split("@", 1)[1] if "@" in e else ""
+
+
+def _is_internal_email(email: str | None) -> bool:
+    """True for one of our own / partner mailboxes (the internal closer on the invite)."""
+    dom = _email_domain(email)
+    return bool(dom) and any(mk in dom for mk in _INTERNAL_EMAIL_MARKERS)
+
+
+def _is_generic_email(email: str | None) -> bool:
+    """True for a consumer mailbox (gmail/hotmail/…): identifies a person, not a business."""
+    return _email_domain(email) in _GENERIC_EMAIL_DOMAINS
+
+
+def _domain_root(domain_or_email: str | None) -> str:
+    """The distinctive registrable label of a domain (or an email's domain), lowercased and
+    stripped to alphanumerics: 'metromachining.com.au' / 'sales@metromachining.com.au' ->
+    'metromachining', 'gjtechtronics.com' -> 'gjtechtronics', 'gpss.au' -> 'gpss'. Empty when
+    there's nothing usable. Two roots being equal is a strong same-business signal."""
+    d = (domain_or_email or "").strip().lower()
+    if "@" in d:
+        d = d.split("@", 1)[1]
+    d = re.sub(r"^https?://", "", d).split("/", 1)[0]
+    d = re.sub(r"^www\.", "", d)
+    label = d.split(".", 1)[0] if d else ""
+    return re.sub(r"[^a-z0-9]", "", label)
+
+
+def _norm_company(name: str | None) -> str:
+    """A company string reduced to its compact identity key: corporate-form words removed,
+    then lowercased alphanumerics only. 'In2 Nails Beauty Bar' -> 'in2nailsbeautybar',
+    'METRO MACHINING PTY LTD' -> 'metromachining', 'C & D Schroeder Tree Services Pty Ltd'
+    -> 'cdschroedertreeservices'."""
+    s = _COMPANY_STOP_RE.sub(" ", (name or "").lower())
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def _subject_company_token(subject: str | None) -> str:
+    """The prospect/company token carried in a scheduler-calendar subject. Handles the two
+    observed shapes: 'Teams Meeting: Traffic Radius with <TOKEN> Team' (token after the last
+    ' with ', trailing 'Team'/'Teams' dropped) and '<TOKEN> - 2nd Teams Meeting' (token before
+    ' - '). Returns the RAW token (e.g. 'Cdschroedertr', 'Nails Beauty'); normalise separately."""
+    s = (subject or "").strip()
+    if not s:
+        return ""
+    m = re.search(r"\bwith\s+(.+)$", s, re.I)
+    if m:
+        tok = m.group(1)
+    elif " - " in s:
+        tok = s.split(" - ", 1)[0]
+    else:
+        tok = re.sub(r"(?i)\b(2nd|3rd|face[- ]?to[- ]?face|teams?|meeting|traffic\s+radius)\b",
+                     " ", s)
+    # drop a trailing 'Team'/'Teams'/'Meeting' and any leftover meeting words
+    tok = re.sub(r"(?i)\b(team|teams|meeting)s?\b", " ", tok)
+    return re.sub(r"\s+", " ", tok).strip(" :-–—")
+
+
+def ensure_emma_synced_table(pool: ConnectionPool) -> None:
+    """Idempotency ledger for the confirmed-meetings sync: one row per Graph event we have
+    reconciled, so re-runs SKIP unchanged events but DETECT a moved start (reschedule).
+    Never raises."""
+    try:
+        _exec(pool, "CREATE TABLE IF NOT EXISTS emma_synced_meetings ("
+                    "  event_id text PRIMARY KEY, dest9 text, start_at timestamptz,"
+                    "  synced_at timestamptz DEFAULT now())")
+        # self-throttle watermark for the periodic sync (mirrors emma_control.sync_at et al).
+        _exec(pool, "CREATE TABLE IF NOT EXISTS emma_control ("
+                    "  id integer PRIMARY KEY, sync_at timestamptz, responses_at timestamptz,"
+                    "  inbox_scanned_at timestamptz, updated_at timestamptz DEFAULT now())")
+        _exec(pool, "INSERT INTO emma_control (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+        _exec(pool, "ALTER TABLE emma_control ADD COLUMN IF NOT EXISTS meetings_synced_at timestamptz")
+    except Exception as exc:
+        log.warning("emma_synced_table_failed", error=str(exc)[:120])
+
+
+def _parse_graph_event_start(block: dict | None) -> datetime | None:
+    """A Graph event start/end block ({'dateTime': '2026-08-18T01:00:00.0000000',
+    'timeZone': 'UTC'}) -> an aware datetime. Graph returns UTC by default; an IANA zone is
+    honoured, anything else (incl. a Windows zone name) falls back to UTC. Never raises."""
+    if not block:
+        return None
+    raw = (block.get("dateTime") or "").strip()
+    if not raw:
+        return None
+    raw = re.sub(r"\.\d+$", "", raw)            # trim fractional seconds (7-digit → unparseable)
+    try:
+        dt = datetime.fromisoformat(raw)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        tzname = (block.get("timeZone") or "UTC").strip()
+        if tzname.upper() == "UTC":
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            try:
+                dt = dt.replace(tzinfo=ZoneInfo(tzname))
+            except Exception:
+                dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _external_emails(attendees: list[dict], organizer_email: str | None) -> list[str]:
+    """Prospect-side attendee emails on an event: everything that ISN'T one of our own / partner
+    mailboxes and isn't the scheduler organiser. Order preserved, de-duplicated, lowercased."""
+    out: list[str] = []
+    seen: set[str] = set()
+    org = (organizer_email or "").strip().lower()
+    for a in attendees or []:
+        em = ((a.get("emailAddress") or {}).get("address") or "").strip().lower()
+        if not em or "@" not in em or em == org or _is_internal_email(em):
+            continue
+        if em not in seen:
+            seen.add(em)
+            out.append(em)
+    return out
+
+
+def _build_booking_index(pool: ConnectionPool) -> dict:
+    """Load the booking universe (the dest9s a calendar event can legitimately resolve to) into
+    in-memory lookup indexes — done ONCE per sync run, then every event matches in Python:
+      • by_email       {lower(email)      -> {dest9,…}}  exact prospect-email hits
+      • by_dom_root    {domain-root       -> {dest9,…}}  same-business-domain hits
+      • names          [(norm_company, dest9)]           compact-name entries for substring match
+      • company_of     {dest9 -> best display company}   for the match record
+      • booked         {dest9,…}                         dest9s that ARE a confirmed booking
+    Sources = the actual booking-adjacent tables (lisa_calls / lisa4_pool / booked_crm); each is
+    included only where it exists (local vs cloud differ). The huge D&B `companies` reference table
+    is deliberately NOT indexed here — a D&B row is not a booking, so name-matching it would invent
+    bookings and collide (e.g. a 'Southland' shopping-centre Laser-Clinics branch), which is exactly
+    the false-positive class we must avoid. `booked` breaks name collisions: the calendar event IS a
+    real booking, so among tied candidates the one that is itself a booking wins."""
+    by_email: dict[str, set] = {}
+    by_dom_root: dict[str, set] = {}
+    names: list[tuple[str, str]] = []
+    company_of: dict[str, str] = {}
+    booked: set = set()
+
+    def add_email(em: str | None, d9: str) -> None:
+        em = (em or "").strip().lower()
+        if em and "@" in em and not _is_generic_email(em) and not _is_internal_email(em):
+            by_email.setdefault(em, set()).add(d9)
+            root = _domain_root(em)
+            if root:
+                by_dom_root.setdefault(root, set()).add(d9)
+
+    def add_domain(dom: str | None, d9: str) -> None:
+        root = _domain_root(dom)
+        if root:
+            by_dom_root.setdefault(root, set()).add(d9)
+
+    def add_name(name: str | None, d9: str) -> None:
+        n = _norm_company(name)
+        if len(n) >= 6:
+            names.append((n, d9))
+            company_of.setdefault(d9, (name or "").strip())
+
+    if _tables_exist(pool, "lisa_calls"):
+        for r in _rows(pool, "SELECT dest9, company_name, domain, prospect_email, confirmed_email,"
+                             " COALESCE(meeting_agreed,false) AS booked"
+                             " FROM lisa_calls WHERE dest9 IS NOT NULL AND dest9 <> ''"):
+            d9 = r["dest9"]
+            add_email(r.get("prospect_email"), d9)
+            add_email(r.get("confirmed_email"), d9)
+            add_domain(r.get("domain"), d9)
+            add_name(r.get("company_name"), d9)
+            if r.get("booked"):
+                booked.add(d9)
+    if _tables_exist(pool, "lisa4_pool"):
+        for r in _rows(pool, "SELECT dest9, company, domain, email FROM lisa4_pool"
+                             " WHERE dest9 IS NOT NULL AND dest9 <> ''"):
+            d9 = r["dest9"]
+            add_email(r.get("email"), d9)
+            add_domain(r.get("domain"), d9)
+            add_name(r.get("company"), d9)
+    if _tables_exist(pool, "lisa_briefs"):
+        for r in _rows(pool, "SELECT dest9, domain, company_name FROM lisa_briefs"
+                             " WHERE dest9 IS NOT NULL AND dest9 <> ''"):
+            add_domain(r.get("domain"), r["dest9"])
+            add_name(r.get("company_name"), r["dest9"])
+    if _tables_exist(pool, "booked_crm"):
+        for r in _rows(pool, "SELECT dest9, contact_email FROM booked_crm"
+                             " WHERE dest9 IS NOT NULL AND dest9 <> ''"):
+            add_email(r.get("contact_email"), r["dest9"])
+            booked.add(r["dest9"])          # a booked_crm row IS a booking
+    return {"by_email": by_email, "by_dom_root": by_dom_root,
+            "names": names, "company_of": company_of, "booked": booked}
+
+
+def _match_meeting(idx: dict, external_emails: list[str], subject_token: str,
+                   ) -> tuple[str | None, str | None, str]:
+    """HIGH-confidence resolution of one calendar event to a single booking dest9. Priority:
+      (a) prospect email — exact hit, or same-business domain root (generic mailboxes already
+          excluded from the index, so gmail/hotmail can't match a company);
+      (b) company name — the subject token as a domain root, OR a substring match (either
+          direction, shorter side ≥ 8 chars) against the compact booking-company names.
+    A step counts only when it resolves to exactly ONE dest9 — either a single distinct candidate,
+    or, when several tie on name/domain, exactly one of them is a confirmed booking (the calendar
+    event IS a booking, so a booked candidate beats an un-booked namesake: 'Nails Beauty' →
+    'In2 Nails Beauty Bar' (booked) over 'Mina Nails & Beauty' (not booked)). Anything still
+    ambiguous ends as needs_review. Returns (dest9|None, company|None, confidence) where
+    confidence ∈ {'email','company','needs_review'}."""
+    by_email, by_dom_root = idx["by_email"], idx["by_dom_root"]
+    company_of, booked = idx["company_of"], idx["booked"]
+
+    def resolve(cands: set) -> str | None:
+        if len(cands) == 1:
+            return next(iter(cands))
+        if len(cands) > 1:                       # break the tie on 'is a real booking'
+            b = cands & booked
+            if len(b) == 1:
+                return next(iter(b))
+        return None
+
+    # (a) email — exact address, then same-business domain root (business emails only).
+    hits: set = set()
+    for em in external_emails:
+        if _is_generic_email(em):
+            continue
+        hits |= by_email.get(em, set())
+        hits |= by_dom_root.get(_domain_root(em), set())
+    d9 = resolve(hits)
+    if d9:
+        return d9, company_of.get(d9), "email"
+
+    # (b) company — the subject token is a domain-label-style string; try it as a domain root
+    # first (exact, strong), then a compact-name substring match.
+    tok_root = _domain_root(subject_token)
+    tok_norm = _norm_company(subject_token)
+    cand: set = set()
+    if len(tok_root) >= 6:
+        cand |= by_dom_root.get(tok_root, set())
+    if len(tok_norm) >= 8:
+        for nm, d9 in idx["names"]:
+            if tok_norm in nm or nm in tok_norm:
+                cand.add(d9)
+    d9 = resolve(cand)
+    if d9:
+        return d9, company_of.get(d9), "company"
+    return None, None, "needs_review"
+
+
+def _reveal_row(pool: ConnectionPool, dest9: str) -> dict | None:
+    """The booking's auto-created placeholder meeting row in calendar_events (type='reveal') — the
+    row the lisa-crm page reads its displayed meeting TIME from. Selected with the SAME ordering the
+    CRM list uses (pending first, then latest start) so the row we report/patch is the one on screen.
+    Returns {id, start_at, end_at, title, status} or None. Never raises."""
+    try:
+        return _row1(pool,
+                     "SELECT id, start_at, end_at, title, status FROM calendar_events"
+                     " WHERE type='reveal' AND status <> 'cancelled'"
+                     "   AND right(regexp_replace(COALESCE(dest_number,''),'[^0-9]','','g'),9)=%s"
+                     " ORDER BY (status='pending') DESC, start_at DESC NULLS LAST LIMIT 1", (dest9,))
+    except Exception as exc:
+        log.warning("emma_reveal_row_failed", dest9=dest9, error=str(exc)[:120])
+        return None
+
+
+def sync_confirmed_meetings(pool: ConnectionPool, settings: Settings, days_back: int = 2,
+                            days_ahead: int = 21, dry_run: bool = False) -> dict:
+    """Reconcile the scheduler's Microsoft-365 calendar (the ground-truth confirmed meetings) into
+    the booked CRM. Reads the calendarView window, extracts each event's time / external prospect
+    email(s) / Teams link / subject company token, resolves it to a SINGLE booking dest9 with
+    high confidence only (email → company; ambiguous ⇒ needs_review, no write), then — for a
+    confident, non-dry run — updates booked_crm (next_action + time, contact_email if blank,
+    stage→'confirmed' but never regressing revealed/won, a CRM note with the Teams link) and
+    records the event in emma_synced_meetings so re-runs skip unchanged events and detect a moved
+    start (reschedule). Fully guarded; never raises. Returns a per-event dump + counts."""
+    try:
+        miss = missing_creds(settings)
+        if miss:
+            return {"skipped": "no creds", "missing": miss}
+        ensure_emma_synced_table(pool)
+        now_local = _local_now(settings)
+        win_start = now_local - timedelta(days=max(0, int(days_back)))
+        win_end = now_local + timedelta(days=max(1, int(days_ahead)))
+        qs = urllib.parse.urlencode({
+            "startDateTime": win_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "endDateTime": win_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "$select": "subject,start,end,attendees,onlineMeetingUrl,organizer,bodyPreview",
+            "$orderby": "start/dateTime", "$top": "50"})
+        try:
+            data = _graph(settings, "GET",
+                          f"/users/{settings.scheduler_mailbox}/calendar/calendarView?{qs}")
+        except Exception as exc:
+            log.warning("emma_calendar_read_failed", error=str(exc)[:160])
+            return {"error": str(exc)[:160]}
+        events = data.get("value") or []
+        idx = _build_booking_index(pool)
+
+        records: list[dict] = []
+        matched = review = written = rescheduled = unchanged = 0
+        for ev in events:
+            subject = (ev.get("subject") or "").strip()
+            start_dt = _parse_graph_event_start(ev.get("start"))
+            organizer = (((ev.get("organizer") or {}).get("emailAddress") or {}).get("address"))
+            ext = _external_emails(ev.get("attendees") or [], organizer)
+            # Teams link: onlineMeetingUrl when present, else the first Teams URL in the body.
+            teams = (ev.get("onlineMeetingUrl") or "").strip()
+            if not teams:
+                mt = re.search(r"https://teams\.microsoft\.com/\S+", ev.get("bodyPreview") or "")
+                teams = mt.group(0).rstrip(').,>"') if mt else ""
+            token = _subject_company_token(subject)
+            # prospect email shown/stored: prefer a business address over a generic one.
+            prospect_email = next((e for e in ext if not _is_generic_email(e)),
+                                  (ext[0] if ext else ""))
+
+            dest9, company, confidence = _match_meeting(idx, ext, token)
+
+            rec = {"subject": subject, "start_local": _fmt_local(settings, start_dt),
+                   "prospect_email": prospect_email, "teams_link": teams,
+                   "matched_dest9": dest9, "matched_company": company,
+                   "confidence": confidence, "action": "",
+                   "reveal_exists": False, "reveal_current_start": ""}
+
+            if dest9 is None or start_dt is None:
+                rec["confidence"] = "needs_review"
+                rec["action"] = "needs_review"
+                review += 1
+                records.append(rec)
+                continue
+            matched += 1
+
+            # calendar_events reveal placeholder — the row the lisa-crm page shows the meeting time
+            # from. Report its CURRENT start vs the calendar's start (the stale ones we'd correct).
+            reveal = _reveal_row(pool, dest9)
+            rec["reveal_exists"] = bool(reveal)
+            rec["reveal_current_start"] = _fmt_local(settings, reveal.get("start_at")) if reveal else ""
+
+            # idempotency: unchanged event → skip; moved start → reschedule.
+            evid = ev.get("id") or ""
+            prior = _row1(pool, "SELECT start_at FROM emma_synced_meetings WHERE event_id=%s",
+                          (evid,)) if evid else None
+            is_reschedule = False
+            if prior and prior.get("start_at"):
+                if abs((prior["start_at"] - start_dt).total_seconds()) <= 60:
+                    rec["action"] = "skip-unchanged"
+                    unchanged += 1
+                    records.append(rec)
+                    continue
+                is_reschedule = True
+            rec["action"] = "reschedule" if is_reschedule else "update"
+
+            if not dry_run:
+                ok = _write_confirmed_meeting(pool, settings, dest9, start_dt, teams,
+                                              prospect_email, is_reschedule, reveal)
+                if ok and evid:
+                    _exec(pool, "INSERT INTO emma_synced_meetings (event_id, dest9, start_at, synced_at)"
+                                " VALUES (%s,%s,%s, now()) ON CONFLICT (event_id) DO UPDATE SET"
+                                " dest9=EXCLUDED.dest9, start_at=EXCLUDED.start_at, synced_at=now()",
+                          (evid, dest9, start_dt))
+                if ok and is_reschedule:
+                    rescheduled += 1
+                elif ok:
+                    written += 1
+            records.append(rec)
+
+        return {"events": records, "total": len(events), "matched": matched,
+                "needs_review": review, "written": written, "rescheduled": rescheduled,
+                "unchanged": unchanged, "dry_run": dry_run}
+    except Exception as exc:
+        log.warning("emma_sync_confirmed_failed", error=str(exc)[:160])
+        return {"error": str(exc)[:160]}
+
+
+def _update_reveal_row(pool: ConnectionPool, reveal: dict | None, start_dt: datetime,
+                       when: str, is_reschedule: bool) -> None:
+    """Correct the booking's calendar_events reveal placeholder (the row lisa-crm shows the meeting
+    TIME from) to the calendar-confirmed slot: start_at → the real meeting start, end_at keeps the
+    placeholder's original duration (else +15 min), notes stamped with the confirmed time. Only the
+    time/notes move — the reveal stays a 'reveal' the closer runs. No row ⇒ nothing to do (fine).
+    Never raises."""
+    if not reveal or not reveal.get("id"):
+        return
+    try:
+        old_s, old_e = reveal.get("start_at"), reveal.get("end_at")
+        dur = (old_e - old_s) if (old_s and old_e and old_e > old_s) else timedelta(minutes=15)
+        verb = "Rescheduled" if is_reschedule else "Confirmed"
+        _exec(pool, "UPDATE calendar_events SET start_at=%s, end_at=%s,"
+                    " notes=left(%s,500), status='pending' WHERE id=%s",
+              (start_dt, start_dt + dur,
+               f"{verb} via calendar for {when} (Emma calendar sync)", reveal["id"]))
+    except Exception as exc:
+        log.warning("emma_reveal_update_failed", reveal_id=reveal.get("id"), error=str(exc)[:120])
+
+
+def _write_confirmed_meeting(pool: ConnectionPool, settings: Settings, dest9: str,
+                             start_dt: datetime, teams: str, prospect_email: str,
+                             is_reschedule: bool, reveal: dict | None = None) -> bool:
+    """Guarded booked_crm write for one confidently-matched calendar event. Sets the confirmed
+    meeting time + next action, fills contact_email only when blank, moves stage to 'confirmed'
+    WITHOUT regressing a further-along stage (revealed/won/lost/no_show untouched), appends a CRM
+    note (Teams link + time), AND re-times the calendar_events reveal placeholder so the CRM page
+    stops showing the stale auto-slot. Never raises — returns True on success, False on any failure."""
+    when = _fmt_local(settings, start_dt)
+    na = f"Teams meeting {when} (confirmed via calendar)"
+    email = (prospect_email or "").strip() or None
+    if email and _is_internal_email(email):
+        email = None
+    try:
+        _exec(pool,
+              "INSERT INTO booked_crm (dest9, stage, next_action, next_action_at, contact_email,"
+              "                        updated_by, updated_at)"
+              " VALUES (%s,'confirmed',%s,%s,%s,'emma-calendar', now())"
+              " ON CONFLICT (dest9) DO UPDATE SET"
+              "   next_action=EXCLUDED.next_action,"
+              "   next_action_at=EXCLUDED.next_action_at,"
+              "   contact_email=COALESCE(NULLIF(booked_crm.contact_email,''), EXCLUDED.contact_email),"
+              "   stage=CASE WHEN booked_crm.stage IN ('revealed','won','lost','no_show')"
+              "              THEN booked_crm.stage ELSE 'confirmed' END,"
+              "   updated_by='emma-calendar', updated_at=now()",
+              (dest9, na, start_dt, email))
+    except Exception as exc:
+        # booked_crm may predate the CRM columns on a bare DB — create/patch, then retry once.
+        try:
+            _exec(pool, "CREATE TABLE IF NOT EXISTS booked_crm ("
+                        "  dest9 text PRIMARY KEY, status text, note text, updated_by text,"
+                        "  updated_at timestamptz DEFAULT now(), replies_seen_at timestamptz)")
+            for col, typ in (("stage", "text"), ("next_action", "text"),
+                             ("next_action_at", "timestamptz"), ("contact_email", "text")):
+                _exec(pool, f"ALTER TABLE booked_crm ADD COLUMN IF NOT EXISTS {col} {typ}")
+            _exec(pool,
+                  "INSERT INTO booked_crm (dest9, stage, next_action, next_action_at, contact_email,"
+                  "                        updated_by, updated_at)"
+                  " VALUES (%s,'confirmed',%s,%s,%s,'emma-calendar', now())"
+                  " ON CONFLICT (dest9) DO UPDATE SET"
+                  "   next_action=EXCLUDED.next_action, next_action_at=EXCLUDED.next_action_at,"
+                  "   contact_email=COALESCE(NULLIF(booked_crm.contact_email,''), EXCLUDED.contact_email),"
+                  "   stage=CASE WHEN booked_crm.stage IN ('revealed','won','lost','no_show')"
+                  "              THEN booked_crm.stage ELSE 'confirmed' END,"
+                  "   updated_by='emma-calendar', updated_at=now()",
+                  (dest9, na, start_dt, email))
+        except Exception as exc2:
+            log.warning("emma_confirmed_write_failed", dest9=dest9, error=str(exc2)[:120])
+            return False
+    verb = "rescheduled to" if is_reschedule else "scheduled for"
+    note = f"Emma (calendar): meeting {verb} {when}" + (f" — Teams: {teams}" if teams else "")
+    _crm_note(pool, dest9, note)
+    # re-time the CRM's displayed meeting slot (calendar_events reveal placeholder).
+    _update_reveal_row(pool, reveal, start_dt, when, is_reschedule)
+    return True
+
+
+# --------------------------------------------------------------------------- #
 # emails Emma writes (confirmation with open-pixel; reminders)
 # --------------------------------------------------------------------------- #
 def _confirmation_html(settings: Settings, row: dict) -> str:
@@ -1622,6 +2100,25 @@ def emma_tick(pool: ConnectionPool, settings: Settings) -> dict:
             stats["responses"] = poll_responses(pool, settings)
             stats["replies"] = scan_replies(pool, settings)
             stats["reminders"] = send_due_reminders(pool, settings)
+            # CONFIRMED-MEETINGS SYNC: pull the scheduler's M365 calendar (ground-truth confirmed
+            # meetings) back into the booked CRM. Self-throttled (~every 10 min), high-confidence
+            # match only, fully guarded — never blocks the dial loop. NOTE (off-peak deploy): this
+            # is the auto-write hook; confident matches update booked_crm, unsure ones stay
+            # needs_review (no write). Runs only once creds are present (guarded above).
+            try:
+                ensure_emma_synced_table(pool)
+                c = _row1(pool, "SELECT meetings_synced_at FROM emma_control WHERE id=1") or {}
+                due = (not c.get("meetings_synced_at")
+                       or c["meetings_synced_at"] < datetime.now(timezone.utc) - timedelta(minutes=10))
+                if due:
+                    _exec(pool, "UPDATE emma_control SET meetings_synced_at=now(),"
+                                " updated_at=now() WHERE id=1")
+                    stats["meetings_sync"] = sync_confirmed_meetings(pool, settings)
+                else:
+                    stats["meetings_sync"] = {"skipped": "throttled"}
+            except Exception as exc:
+                log.warning("emma_meetings_sync_hook_failed", error=str(exc)[:160])
+                stats["meetings_sync"] = {"error": str(exc)[:160]}
         else:
             stats["graph"] = "awaiting creds (approvals queue safely)"
         return stats
