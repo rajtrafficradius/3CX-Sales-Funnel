@@ -268,13 +268,18 @@ def compute(pool, settings=None, days: int = 30) -> dict:
     groups = {g: round(sum(l["usd"] for l in lines if l.get("group") == g), 2)
               for g in ("outbound", "human_bde", "shared")}
     leads = u["leads"] or u["ai_booked"]
+    # Cost per MEETING must be attributed to the AI OUTBOUND system + its shared infra ONLY — NOT the whole
+    # company. The human-BDE floor (Aircall/3CX) books its OWN meetings in the human funnel, so folding its
+    # cost into the AI's per-meeting figure overstated it. Two honest views, both on the SAME AI-system cost:
+    #   • per BOOKING  — every meeting Lisa agreed (ai_booked)
+    #   • per HELD reveal — meetings that actually happened (seen_meetings)
+    ai_sys_cost = round(groups.get("outbound", 0.0) + groups.get("shared", 0.0), 2)
+    seen_meetings = int(u.get("seen_meetings") or 0)
+    cost_per_booking = round(ai_sys_cost / u["ai_booked"], 2) if u.get("ai_booked") else None
+    cost_per_seen_meeting = round(ai_sys_cost / seen_meetings, 2) if seen_meetings else None
+    # cost-per-lead / acquisition keep the whole-company basis (they're company-wide funnel metrics).
     cpl = round(total / leads, 2) if leads else None
     cpa = round(total / u["won"], 2) if u["won"] else None
-    # Cost per SEEN meeting — same window-prorated cost basis as cost-per-lead/acquisition, divided by the
-    # reveals that actually happened this window. None (→ '—' in the UI) when zero, so we never divide by zero
-    # or show a misleading number.
-    seen_meetings = int(u.get("seen_meetings") or 0)
-    cost_per_seen_meeting = round(total / seen_meetings, 2) if seen_meetings else None
     revenue = round(u["won"] * p["avg_deal_value"], 2)
     net = round(revenue - total, 2)
     # projected: pipeline value if bookings close at a modest rate
@@ -290,6 +295,7 @@ def compute(pool, settings=None, days: int = 30) -> dict:
         "days": days, "usage": u, "prices": p, "lines": lines, "total": total, "groups": groups,
         "cost_per_lead": cpl, "cost_per_acquisition": cpa, "leads": leads, "won": u["won"],
         "cost_per_seen_meeting": cost_per_seen_meeting, "seen_meetings": seen_meetings,
+        "cost_per_booking": cost_per_booking, "ai_meeting_cost": ai_sys_cost, "ai_booked": u["ai_booked"],
         "revenue": revenue, "net": net, "projected_revenue": proj_rev,
         "avg_deal_value": p["avg_deal_value"], "twilio": twilio,
     }

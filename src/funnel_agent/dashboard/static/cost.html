@@ -128,7 +128,8 @@ function render(d){
     ['b:'+money((d.groups||{}).outbound),'Outbound (Lisa AI) · '+d.days+'d','var(--blue)','AI outbound system'],
     ['b:'+money((d.groups||{}).human_bde),'Human-BDE analytics · '+d.days+'d','var(--warn)','3CX / Aircall'],
     ['b:'+money(d.cost_per_lead),'Cost per lead','var(--accent)',d.leads+' leads (bookings)'],
-    ['b:'+(d.cost_per_seen_meeting?money(d.cost_per_seen_meeting):'—'),'Cost per seen meeting',d.seen_meetings?'var(--blue)':'var(--faint)',d.seen_meetings?(d.seen_meetings+' reveals held ('+d.days+'d)'):'none held this period'],
+    ['b:'+(d.cost_per_booking?money(d.cost_per_booking):'—'),'Cost per meeting (booked)','#22c55e',(d.ai_booked||0)+' AI bookings · AI-system cost '+money(d.ai_meeting_cost||0)],
+    ['b:'+(d.cost_per_seen_meeting?money(d.cost_per_seen_meeting):'—'),'Cost per meeting (held)',d.seen_meetings?'var(--blue)':'var(--faint)',d.seen_meetings?(d.seen_meetings+' reveals held ('+d.days+'d)'):'none held this period'],
     ['b:'+(d.cost_per_acquisition?money(d.cost_per_acquisition):'—'),'Cost per acquisition',d.won?'var(--warn)':'var(--faint)',(d.won||0)+' won'],
     ['b:'+money(d.revenue),'Revenue (won)','var(--good)','@ '+money(d.avg_deal_value)+'/deal'],
     ['b:'+money(d.net),'Net (rev − cost)',netc,'projected '+money(d.projected_revenue)+' @30% close']
