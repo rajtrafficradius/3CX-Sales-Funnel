@@ -455,7 +455,8 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
                 industry, sub_industry = crow.get("industry"), crow.get("sub_industry")
             except Exception:
                 pass
-            avg_ticket, _bucket = _ga.default_avg_ticket(industry, sub_industry)
+            # market-grounded per-business estimate (recurring->annual, one-off->per-job) — not a coarse guess
+            avg_ticket, _bucket, _est = _ga.estimate_avg_ticket(settings, company, industry, sub_industry)
             ticket_estimated = True
         audit_model = _a.assemble_audit(pool, dom, avg_ticket=avg_ticket)
         if not audit_model:

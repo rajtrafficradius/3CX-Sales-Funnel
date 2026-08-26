@@ -150,6 +150,48 @@ def default_avg_ticket(industry, sub_industry=None):
     return _default_ticket(industry, sub_industry)
 
 
+def estimate_avg_ticket(settings, company, industry=None, sub_industry=None, services_hint="", location=""):
+    """Market-GROUNDED estimate of the average value of ONE NEW CUSTOMER (AUD) for an Australian SMB — asks
+    Anthropic to apply real AU market standards and, crucially, to use the ANNUAL customer value for a
+    RECURRING service (gardening/cleaning/maintenance) and the per-job value for one-off work, so the audit's
+    revenue model stops mis-pricing (e.g. a gardening-maintenance client valued as a $3,500 landscaping build).
+    Falls back to the industry table on any failure. Returns (value:int, label:str, estimated:bool=True)."""
+    fb_val, fb_label = _default_ticket(industry, sub_industry)
+    key = (getattr(settings, "anthropic_api_key", "") or "").strip()
+    if not key or not (company or industry or sub_industry):
+        return fb_val, fb_label, True
+    try:
+        import anthropic
+        import json as _json
+        model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
+        sys_p = (
+            "You are a market analyst for AUSTRALIAN small businesses. Estimate the realistic AVERAGE VALUE OF "
+            "ONE NEW CUSTOMER in AUD, to CURRENT Australian market standards. Rules: if the business is a "
+            "RECURRING service (gardening, lawn/garden maintenance, cleaning, pest, pool care, bookkeeping), use "
+            "the customer's typical ANNUAL value (per-visit price x realistic visits/year), NOT one visit. If it "
+            "is one-off/project work (a landscaping build, a legal matter, a renovation), use the typical per-job "
+            "value. Be realistic and mid-market, not the top end. Output ONLY compact JSON: "
+            '{"avg_customer_value_aud": <number>, "recurring": <true|false>, "basis": "<max 8 words>"}.')
+        usr = (f"Business name: {company or '?'}\nIndustry: {industry or '?'} / {sub_industry or '?'}\n"
+               f"Services / notes: {services_hint or '(infer from the name/industry)'}\n"
+               f"Location: {location or 'Australia'}")
+        r = anthropic.Anthropic(api_key=key).messages.create(
+            model=model, max_tokens=200, temperature=0,
+            system=sys_p, messages=[{"role": "user", "content": usr}])
+        txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
+        mobj = _re.search(r"\{.*\}", txt, _re.S)
+        data = _json.loads(mobj.group(0)) if mobj else {}
+        val = data.get("avg_customer_value_aud")
+        if isinstance(val, (int, float)) and 40 <= val <= 250000:
+            basis = str(data.get("basis") or "").strip()[:60]
+            recurring = bool(data.get("recurring"))
+            label = basis or (f"{fb_label} (recurring, annual)" if recurring else fb_label)
+            return int(round(val)), label, True
+    except Exception:
+        pass
+    return fb_val, fb_label, True
+
+
 # --------------------------------------------------------------------------- keyword scrub / accuracy ---
 # Equipment-PURCHASE-intent terms: for a SERVICE business ("we machine / bore / repair for you"), a search
 # for buying/hiring the equipment itself ("line boring machine for sale", "…for hire") is NOT demand they
