@@ -95,6 +95,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        COALESCE(NULLIF(bc.contact_email,''), NULLIF(b.prospect_email,''), cl.prospect_email) AS contact_email,
        COALESCE(NULLIF(b.company_name,''), lp.company, lb.company_name, cl.prospect_company,
                 NULLIF(co.company_name,''), '0'||b.dest9) AS company,
+       co.gmaps_place_id AS gmaps_place_id,
        COALESCE(lp.domain, lb.domain, cl.prospect_website) AS domain,
        COALESCE(NULLIF(cl.problem_summary,''), NULLIF(lp.issue,'')) AS finding,
        (SELECT recording_url FROM lisa_calls WHERE call_id=b.call_id) AS recording_url,
@@ -146,7 +147,7 @@ LEFT JOIN lisa4_pool lp ON lp.dest9=b.dest9
 LEFT JOIN lisa_briefs lb ON lb.dest9=b.dest9
 LEFT JOIN classifications cl ON cl.call_id=b.call_id
 LEFT JOIN LATERAL (SELECT status, share_token, building_at, built_at FROM lisa4_sites s WHERE s.dest9=b.dest9 ORDER BY (status='built') DESC, id DESC LIMIT 1) st ON true
-LEFT JOIN LATERAL (SELECT company_name FROM companies cc
+LEFT JOIN LATERAL (SELECT company_name, gmaps_place_id FROM companies cc
    WHERE right(regexp_replace(COALESCE(cc.phone,''),'[^0-9]','','g'),9)=b.dest9
    ORDER BY (cc.source='gmaps') DESC LIMIT 1) co ON true
 LEFT JOIN booked_crm bc ON bc.dest9=b.dest9
@@ -219,12 +220,41 @@ def clean_person_name(name):
     return n
 
 
+# Where each booking's prospect came FROM — the DATA SOURCE, keyed by the AI line that booked it.
+_LEAD_SOURCE = {
+    "lisa4": "Google Maps",                    # Lisa 4 = Google Maps / Places sweeps (no/broken-website SMBs)
+    "lisa5": "Dun & Bradstreet ($1–50M)",      # Lisa 5 = D&B firmographic list (has-website, 10+ reviews)
+    "lisa1": "Google Ads prospects",           # Lisa 1 = GAds-running prospects ($2–50M)
+}
+
+
+def lead_source(agent) -> str:
+    return _LEAD_SOURCE.get((agent or "").strip().lower(), "BDE-sourced")
+
+
+def gbp_url(agent, place_id, company):
+    """Google Business Profile PROOF link for a Google-Maps-sourced (Lisa 4) booking — the exact GBP when we
+    have the place_id, else a Maps search on the business name. None for non-Maps sources (D&B / GAds)."""
+    if (agent or "").strip().lower() != "lisa4":
+        return None
+    pid = (place_id or "").strip()
+    if pid:
+        return "https://www.google.com/maps/place/?q=place_id:" + pid
+    name = (company or "").strip()
+    if name and not name.startswith("0"):
+        import urllib.parse as _up
+        return "https://www.google.com/maps/search/?api=1&query=" + _up.quote(name)
+    return None
+
+
 def crm_rows(q, closers: list[str]) -> list[dict]:
     rows = q(LIST_SQL, {"closers": closers or ["__none__"]})
     for r in rows:
         r["stage"] = _derived_stage(r)
         r["stage_reason"] = _stage_reason(r)
         r["contact_name"] = clean_person_name(r.get("contact_name"))   # never show 'there'/'mate'/etc.
+        r["lead_source"] = lead_source(r.get("agent"))                 # data source: Google Maps / D&B / GAds
+        r["gbp_url"] = gbp_url(r.get("agent"), r.get("gmaps_place_id"), r.get("company"))
     return rows
 
 
@@ -241,6 +271,9 @@ def crm_record(q, dest9: str, closers: list[str]) -> dict:
         return {}
     cid = rec.get("call_id")
     dom = rec.get("domain")
+    rec["lead_source"] = lead_source(rec.get("agent"))          # data source of this booking (Google Maps / D&B / GAds)
+    rec["gbp_url"] = gbp_url(rec.get("agent"), rec.get("gmaps_place_id"), rec.get("company"))
+    rec["contact_name"] = clean_person_name(rec.get("contact_name"))
 
     # ---- booking-call extras (transcript, objection, the AI-tell flag) ----
     bc = _first(q("SELECT transcript, main_objection, asked_if_ai, duration_ms FROM lisa_calls WHERE call_id=%s", (cid,)))

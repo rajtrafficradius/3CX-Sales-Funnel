@@ -355,6 +355,8 @@ function pill(label,c){return `<span class="spill" style="color:${c};background:
 function heroBadges(r){
   const line=LINE[r.agent]||LINE.lisa1, st=STAGES.find(x=>x.id===r.stage)||STAGES[0], q=r.qual||{};
   const b=[`<span class="lpill" style="color:${line.c};background:${line.c}22;border-color:${line.c}55">${line.label}</span>`, pill(st.label,st.c)];
+  if(r.lead_source) b.push(`<span class="spill" style="color:#5b9dff;background:#5b9dff1f;border-color:#5b9dff55" title="Data source of this lead">📍 ${esc(r.lead_source)}</span>`);
+  if(r.gbp_url) b.push(`<a class="spill" href="${esc(r.gbp_url)}" target="_blank" rel="noopener" style="color:#34d399;background:#34d39918;border-color:#34d39955;text-decoration:none" title="Google Business Profile — proof of the Google Maps source">Google profile ↗</a>`);
   const t=(q.lead_temperature||'').toLowerCase(); if(TEMP[t])b.push(`<span class="badge" style="color:${TEMP[t].c};border-color:${TEMP[t].c}66;background:${TEMP[t].c}1a"><span class="d" style="background:${TEMP[t].c}"></span>${TEMP[t].label} lead</span>`);
   if(q.booking_status)b.push(`<span class="badge" style="color:var(--txt-dim);border-color:var(--line2);background:var(--panel2)">📌 ${esc(q.booking_status)}</span>`);
   if(q.qualified===true)b.push(`<span class="badge" style="color:var(--good);border-color:rgba(74,222,128,.4);background:var(--good-soft)">✓ Qualified</span>`);
