@@ -5439,6 +5439,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(403, "no access")
         from .. import system_status as _ss
         rep = await run_in_threadpool(_ss.compute, pool, settings)
+        rep["inventory"] = await run_in_threadpool(_ss.module_inventory)
         return JSONResponse(jsonable_encoder(rep), headers=_NOCACHE)
 
     @app.get("/blueprint", response_class=HTMLResponse)

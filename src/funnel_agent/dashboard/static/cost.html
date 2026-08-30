@@ -138,6 +138,13 @@
   .badge.estimate{background:var(--warn-soft);color:var(--warn)} .badge.live{background:var(--good-soft);color:var(--good)}
   tbody tr.grp td{background:var(--panel2);font-weight:800;color:var(--txt);border-top:1px solid var(--line)}
   .detail{color:var(--txt-dim);font-size:12.5px}
+  tr.proofable{cursor:pointer} tr.proofable:hover td{background:var(--accent-soft)!important}
+  .pf-btn{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;
+    border:1.4px solid var(--faint);color:var(--faint);font-size:10.5px;font-weight:800;margin-left:7px;vertical-align:-3px}
+  tr.proof td{background:var(--panel2)!important;border-left:3px solid var(--accent);padding:12px 16px}
+  .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 22px;font-size:12.5px}
+  .pf-grid b{display:block;font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:3px}
+  .pf-grid span{color:var(--txt-dim);line-height:1.5}
   .usegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px}
   .use{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 14px;box-shadow:var(--sh)}
   .use b{display:block;font-size:18px;font-weight:850;font-variant-numeric:tabular-nums}
@@ -264,9 +271,10 @@ function render(d){
       '<div class="exec-big"><b>'+aud(runRate)+'<span style="font-size:17px;color:#9fb0c9;font-weight:700"> /month</span></b>'+
         '<span>Total monthly run-rate — everything: AI calling, SMS, AI builds, analytics, subscriptions</span>'+
         '<small>'+usd(runRate)+' USD · based on the last '+d.days+' day'+(d.days>1?'s':'')+' of real usage</small></div>'+
-      '<div class="exec-item"><b>'+aud(d.total)+'</b><span>Spent · last '+d.days+'d</span><small>'+usd(d.total)+' USD</small></div>'+
-      '<div class="exec-item"><b style="color:#a5b6f7">'+aud(g.outbound)+'</b><span>Outbound Intelligence (Lisa AI)</span><small>'+pct(g.outbound,d.total)+'% of spend</small></div>'+
-      '<div class="exec-item"><b style="color:#f0c674">'+aud(g.human_bde)+'</b><span>Human-BDE analytics (3CX/Aircall)</span><small>'+pct(g.human_bde,d.total)+'% of spend</small></div>'+
+      '<div class="exec-item"><b style="color:#a5b6f7">'+aud(g.outbound)+'</b><span>Outbound Intelligence — total cost</span><small>'+usd(g.outbound)+' USD · '+pct(g.outbound,d.total)+'% of all spend</small></div>'+
+      '<div class="exec-item"><b style="color:#e8b64c">'+aud(d.cost_per_booking)+'</b><span>Cost per MEETING BOOKED</span><small>'+(d.ai_booked||0)+' meetings booked ('+d.days+'d) · AI system cost ÷ bookings</small></div>'+
+      '<div class="exec-item"><b style="color:#e8b64c">'+aud(d.cost_per_seen_meeting)+'</b><span>Cost per MEETING HELD</span><small>'+(d.seen_meetings||0)+' actually held — verified via closer calls + Fireflies recordings</small></div>'+
+      '<div class="exec-item"><b>'+aud(d.total)+'</b><span>All-systems spend · '+d.days+'d</span><small>incl. Human-BDE '+aud(g.human_bde)+' + shared '+aud(g.shared)+'</small></div>'+
       '<div class="exec-item"><b style="color:'+(netAUD>=0?'#43d17f':'#f4756a')+'">'+audRaw(netAUD)+'</b><span>Net position (revenue − cost)</span><small>'+(d.won||0)+' won × '+audRaw(d.avg_deal_value)+'</small></div>'+
     '</div>'+
     '<div class="exec-foot">'+twChip+
@@ -336,9 +344,17 @@ function render(d){
     if(!gl.length)return;
     var sub=gl.reduce(function(a,l){return a+(l.usd||0);},0);
     html+='<tr class="grp"><td colspan="3">'+GN[gk]+'</td><td class="num"><b>'+aud(sub)+'</b></td><td class="num">'+usd(sub)+'</td><td class="num">'+pct(sub,tot)+'%</td></tr>';
-    html+=gl.map(function(l){
-      return '<tr><td class="tool">'+esc(l.tool)+'</td><td><span class="badge '+l.kind+'">'+(l.kind==='live'?'live ✓':l.kind)+'</span></td>'+
-        '<td class="detail">'+esc(l.detail)+'</td><td class="num"><b>'+aud(l.usd)+'</b></td><td class="num">'+usd(l.usd)+'</td><td class="num">'+pct(l.usd,tot)+'%</td></tr>';}).join('');
+    html+=gl.map(function(l,li){
+      var pid=gk+'_'+li, pf=l.proof;
+      var row='<tr'+(pf?' class="proofable" onclick="var p=document.getElementById(\''+pid+'\');p.style.display=p.style.display===\'none\'?\'\':\'none\'" title="Click for proof / source of this figure"':'')+'>'+
+        '<td class="tool">'+esc(l.tool)+(pf?'<span class="pf-btn">i</span>':'')+'</td><td><span class="badge '+l.kind+'">'+(l.kind==='live'?'live ✓':l.kind)+'</span></td>'+
+        '<td class="detail">'+esc(l.detail)+'</td><td class="num"><b>'+aud(l.usd)+'</b></td><td class="num">'+usd(l.usd)+'</td><td class="num">'+pct(l.usd,tot)+'%</td></tr>';
+      if(pf){row+='<tr class="proof" id="'+pid+'" style="display:none"><td colspan="6"><div class="pf-grid">'+
+        '<div><b>Where the number comes from</b><span>'+esc(pf.data)+'</span></div>'+
+        '<div><b>Where the price comes from</b><span>'+esc(pf.price)+'</span></div>'+
+        '<div><b>Cross-check it yourself</b><span>'+esc(pf.verify)+'</span></div>'+
+        '<div><b>Computation</b><span>'+esc(l.detail)+' = '+usd(l.usd,2)+' → × '+FX+' = '+aud(l.usd,2)+'</span></div></div></td></tr>';}
+      return row;}).join('');
   });
   html+='<tr class="tot"><td>Total</td><td></td><td class="detail">last '+d.days+' days</td><td class="num">'+aud(d.total)+'</td><td class="num">'+usd(d.total)+'</td><td class="num">100%</td></tr>';
   document.getElementById('rows').innerHTML=html;
@@ -358,7 +374,9 @@ function render(d){
     '<li><b>Estimated lines</b> use per-asset token / request-volume estimates where exact counts aren\'t logged (Claude builds, classifier tokens, Places sweeps). Every unit price is editable under <b>Adjust prices</b> and the entire report recomputes.</li>'+
     '<li><b>Currency:</b> vendor prices are USD; the report shows <b>AUD-first</b> at '+FX+' (editable). Deal values are AUD, so revenue-vs-cost compares like-for-like.</li>'+
     '<li><b>Attribution:</b> per-meeting economics use only the AI outbound system + shared infra — the human-BDE floor\'s cost is never blended into Lisa\'s cost-per-meeting.</li>'+
-    '<li><b>Fixed subscriptions</b> (Apollo, Aircall, Railway, Fireflies, numbers) are prorated to the selected window; the monthly run-rate normalises everything back to 30 days.</li></ul>';
+    '<li><b>Fixed subscriptions</b> (Apollo, Aircall, Railway, Fireflies, numbers) are prorated to the selected window; the monthly run-rate normalises everything back to 30 days.</li>'+
+    '<li><b>Proof per line:</b> click any row in the breakdown above — it expands to show exactly where the usage number comes from, where the unit price comes from, and where to cross-check it in the vendor\'s own console.</li></ul>'+
+    (d.usage_sources?'<h3 style="margin-top:16px">System of record for every count</h3><ul>'+Object.keys(d.usage_sources).map(function(k){return '<li><b>'+esc(k)+'</b> — '+esc(d.usage_sources[k])+'</li>';}).join('')+'</ul>':'');
   // ---------- price editor ----------
   var p=d.prices||{};
   document.getElementById('priceRows').innerHTML=Object.keys(PRICE_LABELS).filter(function(k){return k in p;}).map(function(k){

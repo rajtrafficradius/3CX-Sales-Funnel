@@ -51,6 +51,72 @@ _DEFAULT_PRICES = {
 }
 
 
+# --- PROVENANCE (the justification layer): for every line item — where the USAGE number comes from
+# (the exact system-of-record), where the UNIT PRICE comes from, and where a manager can cross-check
+# the figure externally. Attached to each line so the /cost page can show proof on demand. ---
+_PROOF = {
+    "Retell AI voice": {
+        "data": "Metered from our own DB: lisa_calls.duration_ms — every AI call row is written by Retell's call_analyzed webhook the moment a call ends.",
+        "price": "retellai.com/pricing — voice engine per connected minute (telephony excluded: calls run on our Twilio trunk, billed on the Twilio line). Researched Aug 2026; editable.",
+        "verify": "Retell dashboard → Billing → call history (minutes should match lisa_calls within rounding)."},
+    "Twilio (live)": {
+        "data": "NOT an estimate — actual billed spend pulled live from Twilio's Usage Records API (Category=totalprice) for this window.",
+        "price": "Twilio's own billing — this line IS the vendor's number.",
+        "verify": "console.twilio.com → Monitor → Usage. The balance chip above is the live Balance API."},
+    "Twilio — SMS": {
+        "data": "Metered from our own DB: lisa_sms rows with direction='outbound' (every SMS the system sends is logged before send).",
+        "price": "twilio.com/en-us/sms/pricing/au — outbound SMS per segment to AU mobile. Researched Aug 2026; editable.",
+        "verify": "console.twilio.com → Monitor → Usage → SMS."},
+    "Twilio — numbers": {
+        "data": "Fixed: count of AU mobile numbers rented (caller_numbers price setting), prorated to the window.",
+        "price": "twilio.com pricing — AU mobile number monthly rental. Editable.",
+        "verify": "console.twilio.com → Phone Numbers → Active numbers."},
+    "Anthropic Opus": {
+        "data": "Metered builds from lisa4_sites (status='built' in window: sites/audits/comparisons) × per-asset TOKEN ESTIMATES (exact tokens aren't logged — the token figures are editable settings).",
+        "price": "anthropic.com/pricing — Claude Opus per 1M input/output tokens. Researched Aug 2026.",
+        "verify": "console.anthropic.com → Usage (compare monthly spend; our figure is the estimate to tune toward)."},
+    "OpenAI classifier (Lisa)": {
+        "data": "Metered from lisa_calls rows classified in the window × per-call token estimates (editable).",
+        "price": "openai.com/api/pricing — GPT-4o-mini per 1M tokens. Researched Aug 2026.",
+        "verify": "platform.openai.com → Usage."},
+    "BDE call transcription": {
+        "data": "Metered from calls.talk_seconds where has_transcript (3CX/Aircall recordings actually transcribed) — Whisper STT minutes.",
+        "price": "openai.com/api/pricing — Whisper $/minute. Researched Aug 2026.",
+        "verify": "platform.openai.com → Usage → Audio."},
+    "BDE call classification": {
+        "data": "Metered: human-BDE calls with a classification row (classifications ⋈ calls) × per-call token estimates.",
+        "price": "openai.com/api/pricing — GPT-4o-mini.",
+        "verify": "platform.openai.com → Usage."},
+    "DataForSEO": {
+        "data": "Metered: growth audits built in window (lisa4_sites kind='audit') × per-audit API bundle price (~10-20 SERP/Labs calls each).",
+        "price": "dataforseo.com/pricing. Researched Aug 2026; editable.",
+        "verify": "app.dataforseo.com → Finances (live balance also shown on the Engine Room)."},
+    "Google Places": {
+        "data": "ESTIMATE: configured monthly sweep volume (places_requests_month, editable) — request counts aren't individually logged.",
+        "price": "developers.google.com/maps/billing — Places API (New) Pro SKU per 1,000. Researched Aug 2026.",
+        "verify": "console.cloud.google.com → Billing → Reports (filter Places API)."},
+    "Apollo": {"data": "Fixed subscription, prorated to the window.", "price": "apollo.io/pricing — Basic plan.", "verify": "Apollo → Settings → Billing."},
+    "Aircall": {"data": "Fixed subscription: seats × per-seat price, prorated.", "price": "aircall.io/pricing — Essentials (3-seat minimum).", "verify": "Aircall admin → Billing."},
+    "3CX": {"data": "Fixed subscription (operator-set; 0 = not counted).", "price": "Operator-entered plan price.", "verify": "3CX license portal."},
+    "Railway": {"data": "Fixed: hosting + Postgres monthly estimate, prorated.", "price": "railway.com/pricing (usage-based; figure is the observed monthly average — editable).", "verify": "railway.com → project → Usage."},
+    "Fireflies": {"data": "Fixed subscription, prorated.", "price": "fireflies.ai/pricing — Pro.", "verify": "Fireflies → Settings → Billing."},
+}
+
+# where every USAGE metric on the page comes from (the counts the maths runs on)
+_USAGE_SOURCES = {
+    "ai_calls": "lisa_calls — one row per AI call, written at placement, completed by Retell's webhook",
+    "ai_minutes": "sum(lisa_calls.duration_ms) — connected time reported by Retell per call",
+    "ai_convos": "lisa_calls with ≥20s talk or a booking — same rule as the floor cards",
+    "ai_booked": "lisa_calls.meeting_agreed — set ONLY by our own transcript classifier behind the G1 gate",
+    "sms_out": "lisa_sms direction='outbound' — logged at send time",
+    "sites/audits/comparisons": "lisa4_sites status='built' — one row per AI-built asset with built_at",
+    "classified": "lisa_calls status='analyzed' — classifier writes the outcome onto the row",
+    "bde_*": "calls (provider 3cx/aircall) + classifications — the human-floor analytics ledger",
+    "seen_meetings": "booked_crm stage/status='revealed' (closer call ≥2min or Fireflies reveal transcript), deduped by prospect",
+    "won": "booked_crm stage='won' — set by the team in the CRM when a deal closes",
+}
+
+
 def _prices(pool) -> dict:
     p = dict(_DEFAULT_PRICES)
     try:
@@ -292,6 +358,8 @@ def compute(pool, settings=None, days: int = 30) -> dict:
     # projected: pipeline value if bookings close at a modest rate
     proj_rev = round(leads * 0.30 * p["avg_deal_value"], 2)
     lines.sort(key=lambda l: -l["usd"])
+    for l in lines:                              # attach the justification (data source / price source / verify)
+        l["proof"] = _PROOF.get(l["tool"])
     twilio = None
     if tw:
         low = tw.get("balance") is not None and tw["balance"] < p["twilio_low_balance"]
@@ -305,6 +373,7 @@ def compute(pool, settings=None, days: int = 30) -> dict:
         "cost_per_booking": cost_per_booking, "ai_meeting_cost": ai_sys_cost, "ai_booked": u["ai_booked"],
         "revenue": revenue, "net": net, "projected_revenue": proj_rev,
         "avg_deal_value": p["avg_deal_value"], "twilio": twilio,
+        "usage_sources": _USAGE_SOURCES,
     }
 
 

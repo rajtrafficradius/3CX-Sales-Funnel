@@ -435,3 +435,119 @@ def compute(pool, settings) -> dict:
 def _one_all(pool, sql, args=()):
     from . import lisa as _l
     return _l._fetch(pool, sql, args) or []
+
+
+# ------------------------------------------------------------------ codebase inventory (the real engines)
+# Curated role/subsystem for every meaningful module in src/funnel_agent — the .py files ARE the engines.
+# LOC is measured live at call time so the numbers are always the truth of the deployed code.
+_MODULE_REGISTRY = {
+    # file (relative to funnel_agent)        (subsystem, role, live-tile key or None)
+    "lisa.py":                  ("Calling", "Lisa core: dial machinery, briefs, SMS, classifier, postcall", "dialer"),
+    "lisa4.py":                 ("Calling", "Lisa 4: website-selling dialer, pool, AI site designer", "lisa4_dialer"),
+    "lisa5.py":                 ("Calling", "Lisa 5: D&B growth-audit dialer", "lisa5_dialer"),
+    "ingest.py":                ("Calling", "3CX call ledger ingest", None),
+    "aircall/ingest.py":        ("Calling", "Aircall call ingest", "aircall"),
+    "aircall/transcribe.py":    ("Calling", "Aircall recording transcription", None),
+    "aircall/calls.py":         ("Calling", "Aircall API — call fetch", None),
+    "aircall/api.py":           ("Calling", "Aircall API client", None),
+    "threecx/api.py":           ("Calling", "3CX API client", None),
+    "threecx/cdr.py":           ("Calling", "3CX CDR reader", None),
+    "threecx/recordings.py":    ("Calling", "3CX recording fetcher", None),
+    "threecx/discover.py":      ("Calling", "3CX endpoint discovery", None),
+    "transcribe.py":            ("Intelligence", "Whisper STT for human-BDE recordings", None),
+    "classify/classifier.py":   ("Intelligence", "Call-outcome classifier (BANT, bookings)", "classifier"),
+    "classify/prompt.py":       ("Intelligence", "Classifier prompt + rules", None),
+    "classify/schema.py":       ("Intelligence", "Classification schema", None),
+    "classify/memory.py":       ("Intelligence", "Company booking memory (dedupe)", None),
+    "qa/gates.py":              ("Intelligence", "QA gates: G1 booking verdict", "bookings"),
+    "qa/outbound.py":           ("Intelligence", "Outbound QA checks", None),
+    "qa/dynvars.py":            ("Intelligence", "Dynamic-variable safety (G8-G10)", None),
+    "bde_capture.py":           ("Intelligence", "Alfred call capture → CRM (Aircall+Fireflies)", None),
+    "fireflies.py":             ("Intelligence", "Fireflies meeting watch", "fireflies"),
+    "audit.py":                 ("Intelligence", "SEO/competitor audit model + relevance gate", None),
+    "audit_signals.py":         ("Intelligence", "PageSpeed/CWV + technical signals (DataForSEO)", None),
+    "competitor.py":            ("Intelligence", "Competitor discovery + share-of-voice", None),
+    "enrich.py":                ("Enrichment", "Enrichment orchestrator (per-domain full)", None),
+    "enrichment/website.py":    ("Enrichment", "Website scrape + media/logo extraction", None),
+    "enrichment/dataforseo.py": ("Enrichment", "DataForSEO client (SERP/Labs/keywords)", "dataforseo"),
+    "enrichment/apollo.py":     ("Enrichment", "Apollo decision-maker lookup", None),
+    "enrichment/whois_lookup.py": ("Enrichment", "WHOIS domain intel", None),
+    "enrichment/semrush.py":    ("Enrichment", "SEMrush metrics (gap-fill)", None),
+    "enrichment/business_intel.py": ("Enrichment", "Business intel scrape", None),
+    "gmaps.py":                 ("Enrichment", "Google Places sweeps + GBP photos", None),
+    "website_finder.py":        ("Enrichment", "Website finder for no-domain prospects", None),
+    "tracking.py":              ("Enrichment", "Ad/pixel tracking detection", None),
+    "growth_audit.py":          ("Builders", "Growth-audit report writer (Opus)", "audit_builder"),
+    "comparison.py":            ("Builders", "Old-vs-new site comparison builder", "cmp_builder"),
+    "quote.py":                 ("Builders", "Quote document builder", None),
+    "reveal_guide.py":          ("Builders", "Reveal meeting guide builder", None),
+    "site_qa.py":               ("Builders", "Built-site QA checks", None),
+    "crm.py":                   ("Autopilot", "Booked CRM + booking-docs autopilot", None),
+    "emma.py":                  ("Autopilot", "Emma: invites, reminders, staff alerts", "emma"),
+    "noshow_recovery.py":       ("Autopilot", "No-show recovery SMS campaign", "noshow"),
+    "whatsapp.py":              ("Autopilot", "WhatsApp nurture (dry-run)", None),
+    "messages.py":              ("Autopilot", "Inbound SMS classifier + booking firmer", "sms"),
+    "recalls.py":               ("Autopilot", "Callback / recall scheduling", None),
+    "retry.py":                 ("Autopilot", "Retry ladder for unanswered calls", None),
+    "fresh_alloc.py":           ("Autopilot", "GAds fresh-prospect calendar allocator", None),
+    "tasks.py":                 ("Autopilot", "Daily readiness + post-booking tracker", None),
+    "push.py":                  ("Autopilot", "Chrome push alerts (new bookings)", None),
+    "emailer.py":               ("Autopilot", "Report emailer", None),
+    "aggregate.py":             ("Core", "Funnel aggregation (booked/qualified)", "loop"),
+    "pipeline.py":              ("Core", "Classification pipeline window", None),
+    "pipeline2.py":             ("Core", "Pipeline v2 (4-pipeline design)", None),
+    "cli.py":                   ("Core", "Process entrypoints: loops, dial, refresh", None),
+    "config.py":                ("Core", "Settings (env + defaults)", None),
+    "auth.py":                  ("Core", "Login, roles, page access", None),
+    "roster.py":                ("Core", "BDE roster sync", None),
+    "sources.py":               ("Core", "Call-source composition (3CX+Aircall)", None),
+    "db/analytics.py":          ("Core", "Analytics DB access", "db"),
+    "db/migrate.py":            ("Core", "Schema migration", None),
+    "db/source.py":             ("Core", "Source DB access", None),
+    "dashboard/app.py":         ("Surfaces", "FastAPI web app — every console + API", None),
+    "system_status.py":         ("Surfaces", "Engine Room signals (this page)", None),
+    "system_blueprint.py":      ("Surfaces", "System map nodes+edges", None),
+    "cost.py":                  ("Surfaces", "Cost Intelligence engine", None),
+    "report.py":                ("Surfaces", "Daily report generator", None),
+    "next_call.py":             ("Surfaces", "Next-call coaching intelligence", None),
+    "rpc.py":                   ("Surfaces", "RPC-connect intelligence", None),
+    "calendar.py":              ("Surfaces", "Calendar engine", None),
+    "prospects.py":             ("Surfaces", "Prospect DB pages", None),
+    "companies.py":             ("Surfaces", "Companies table loader", None),
+}
+
+
+def module_inventory() -> dict:
+    """Walk the deployed source tree and return the REAL engine inventory: every .py module with live
+    line-counts, mapped to subsystem + role from the curated registry (unknown files still listed).
+    Guarded — {} on any error."""
+    import os as _os
+    try:
+        base = _os.path.dirname(_os.path.abspath(__file__))
+        mods = []
+        total_loc = 0
+        for root, dirs, files in _os.walk(base):
+            dirs[:] = [d for d in dirs if d not in ("__pycache__",)]
+            for fn in files:
+                if not fn.endswith(".py") or fn == "__init__.py":
+                    continue
+                p = _os.path.join(root, fn)
+                rel = _os.path.relpath(p, base).replace("\\", "/")
+                try:
+                    with open(p, "rb") as fh:
+                        loc = sum(1 for _ in fh)
+                except Exception:
+                    loc = 0
+                total_loc += loc
+                grp, role, tile = _MODULE_REGISTRY.get(rel, ("Other", "", None))
+                mods.append({"file": rel, "loc": loc, "group": grp, "role": role, "tile": tile})
+        mods.sort(key=lambda m: -m["loc"])
+        pages = 0
+        try:
+            sd = _os.path.join(base, "dashboard", "static")
+            pages = len([f for f in _os.listdir(sd) if f.endswith(".html")])
+        except Exception:
+            pass
+        return {"modules": mods, "totals": {"files": len(mods), "loc": total_loc, "pages": pages}}
+    except Exception:
+        return {}
