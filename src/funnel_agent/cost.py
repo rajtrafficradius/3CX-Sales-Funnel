@@ -46,6 +46,8 @@ _DEFAULT_PRICES = {
     "aircall_seats": 3,                # Aircall 3-seat minimum
     "caller_numbers": 6,               # Twilio AU numbers rented (Lisa 4 + Lisa 5 pools)
     "avg_deal_value": 3000.0,          # avg $ per WON deal (for revenue vs cost)
+    "fx_usd_aud": 1.52,                # USD→AUD rate — unit prices are USD; the page shows AUD-first so the
+                                       # finance view lives in ONE currency (tune when the rate moves)
 }
 
 
@@ -102,6 +104,11 @@ def usage(pool, days: int = 30) -> dict:
     u["ai_minutes"] = float(c.get("minutes") or 0)
     u["ai_booked"] = int(c.get("booked") or 0)
     u["classified"] = int(c.get("analyzed") or 0)
+    # real CONVERSATIONS (>=20s talk or booked) — the funnel stage between dials and bookings, so the page
+    # can price every stage of the funnel (cost/call → /convo → /booking → /held → /won).
+    cv = one(f"SELECT count(*) n FROM lisa_calls WHERE created_at > {win} "
+             f"AND (COALESCE(duration_ms,0)/1000 >= 20 OR meeting_agreed)")
+    u["ai_convos"] = int(cv.get("n") or 0)
     s = one(f"SELECT count(*) FILTER (WHERE direction='outbound') out FROM lisa_sms WHERE created_at > {win}")
     u["sms_out"] = int(s.get("out") or 0)
     # HUMAN-BDE (3CX + Aircall) analytics workload — the STT transcription minutes + call-classifications that
@@ -299,6 +306,67 @@ def compute(pool, settings=None, days: int = 30) -> dict:
         "revenue": revenue, "net": net, "projected_revenue": proj_rev,
         "avg_deal_value": p["avg_deal_value"], "twilio": twilio,
     }
+
+
+def daily_series(pool, days: int = 30) -> list:
+    """Per-DAY cost series for the spend chart, split by system (outbound / human_bde / shared). Built from
+    real per-day usage × unit prices in a handful of grouped queries (NOT 30 × compute()). Fixed monthly
+    subscriptions are spread evenly per day. Guarded → [] on any error."""
+    from datetime import date, timedelta
+    from . import lisa as _l
+    try:
+        p = _prices(pool)
+        days = max(1, min(120, int(days)))
+        win = f"now() - interval '{days} days'"
+        TZ = "Australia/Melbourne"
+
+        def per_day(sql):
+            try:
+                return {str(r["d"]): r for r in _l._fetch(pool, sql)}
+            except Exception:
+                return {}
+        ai = per_day(f"SELECT (created_at AT TIME ZONE '{TZ}')::date d, COALESCE(sum(duration_ms),0)/60000.0 minutes, "
+                     f"count(*) FILTER (WHERE status='analyzed') classified FROM lisa_calls "
+                     f"WHERE created_at > {win} GROUP BY 1")
+        sms = per_day(f"SELECT (created_at AT TIME ZONE '{TZ}')::date d, count(*) n FROM lisa_sms "
+                      f"WHERE direction='outbound' AND created_at > {win} GROUP BY 1")
+        assets = per_day(f"SELECT (built_at AT TIME ZONE '{TZ}')::date d, "
+                         f"count(*) FILTER (WHERE kind='reveal') sites, count(*) FILTER (WHERE kind='audit') audits, "
+                         f"count(*) FILTER (WHERE kind='comparison') comps FROM lisa4_sites "
+                         f"WHERE status='built' AND built_at > {win} GROUP BY 1")
+        bde = per_day(f"SELECT (started_at AT TIME ZONE '{TZ}')::date d, "
+                      f"COALESCE(sum(talk_seconds) FILTER (WHERE has_transcript),0)/60.0 tx_min, "
+                      f"count(*) FILTER (WHERE EXISTS(SELECT 1 FROM classifications cl WHERE cl.call_id=calls.call_id)) cls "
+                      f"FROM calls WHERE provider IN ('3cx','aircall') AND started_at > {win} GROUP BY 1")
+        # fixed subscriptions spread per day
+        fx_out = (p["caller_numbers"] * p["twilio_number_month"] + (p["places_requests_month"] / 1000.0) * p["places_per_1k"]
+                  + p["apollo_month"]) / 30.0
+        fx_bde = (p["aircall_seats"] * p["aircall_seat_month"] + (p.get("threecx_month") or 0)) / 30.0
+        fx_sh = (p["railway_month"] + p["fireflies_month"]) / 30.0
+        out = []
+        today = date.today()
+        for i in range(days - 1, -1, -1):
+            d = str(today - timedelta(days=i))
+            a = ai.get(d) or {}
+            s = sms.get(d) or {}
+            asr = assets.get(d) or {}
+            b = bde.get(d) or {}
+            opus = (_mtok((asr.get("sites") or 0) * p["opus_tokens_site_out"] + (asr.get("audits") or 0) * p["opus_tokens_audit_out"]
+                          + (asr.get("comps") or 0) * p["opus_tokens_comparison_out"]) * p["opus_out_per_mtok"]
+                    + _mtok((asr.get("sites") or 0) * p["opus_tokens_site_in"] + (asr.get("audits") or 0) * p["opus_tokens_audit_in"]
+                            + (asr.get("comps") or 0) * p["opus_tokens_comparison_in"]) * p["opus_in_per_mtok"])
+            gpt = (_mtok((a.get("classified") or 0) * p["gpt_tokens_classify_in"]) * p["gpt4omini_in_per_mtok"]
+                   + _mtok((a.get("classified") or 0) * p["gpt_tokens_classify_out"]) * p["gpt4omini_out_per_mtok"])
+            outbound = ((a.get("minutes") or 0) * p["retell_per_min"] + (s.get("n") or 0) * p["twilio_sms_au"]
+                        + opus + gpt + (asr.get("audits") or 0) * p["dataforseo_audit"] + fx_out)
+            human = ((b.get("tx_min") or 0) * p["whisper_per_min"]
+                     + _mtok((b.get("cls") or 0) * p["gpt_tokens_classify_in"]) * p["gpt4omini_in_per_mtok"]
+                     + _mtok((b.get("cls") or 0) * p["gpt_tokens_classify_out"]) * p["gpt4omini_out_per_mtok"] + fx_bde)
+            out.append({"date": d, "outbound": round(outbound, 2), "human_bde": round(human, 2),
+                        "shared": round(fx_sh, 2), "total": round(outbound + human + fx_sh, 2)})
+        return out
+    except Exception:
+        return []
 
 
 def cost_periods(pool, settings=None) -> dict:

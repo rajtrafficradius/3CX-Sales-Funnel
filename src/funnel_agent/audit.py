@@ -14,6 +14,10 @@ import os
 import re
 from datetime import date, datetime
 
+import structlog
+
+log = structlog.get_logger()
+
 _LOGO_CACHE: dict = {}
 
 
@@ -133,6 +137,53 @@ def _trade_vocab(discovered, industry, sub_industry, name) -> set:
             if w not in _TRADE_STOP and w not in _TRADE_LOC:
                 vocab.add(w)
     return vocab
+
+
+def _relevance_drop_set(settings, name, industry, sub_industry, suburb, state, keywords) -> set:
+    """LLM SEMANTIC relevance gate (2026-08-28). Token-overlap trade filtering structurally CANNOT catch
+    same-word/wrong-intent junk: 'Animal Production' let wildlife searches ('quokka animal', 'capybara
+    animal') into a farm's audit (Prendergast), and a builder's vocabulary let another city's local terms
+    ('adelaide home builders') + courses/associations ('cert iv building construction', 'civil contractors
+    federation') through (Essendon). One cheap-model call classifies every candidate keyword against the
+    BUSINESS itself; returns the DROP set. Guarded — {} on any failure (no filtering, prior behaviour)."""
+    kws = sorted({(k or "").strip().lower() for k in keywords if k and 2 < len(str(k)) < 80})[:400]
+    if len(kws) < 5:
+        return set()
+    key = (getattr(settings, "anthropic_api_key", "") or "").strip()
+    if not key:
+        return set()
+    try:
+        import anthropic
+        import json as _json
+        model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
+        loc = ", ".join(x for x in (suburb, state) if x) or "Australia"
+        sys_p = (
+            "You are vetting SEO keywords for a report shown to an AUSTRALIAN small-business OWNER as "
+            "'searches your customers type when they want to buy from you'. Given the business and a keyword "
+            "list, return ONLY the keywords to DROP because a paying LOCAL customer of THIS business would "
+            "never type them to buy its services. DROP: wildlife/nature/encyclopedic terms; searches with "
+            "local intent for a DIFFERENT city/state than the business's; other companies' brand names; "
+            "training courses, certificates, industry associations/federations/unions; job-seeking terms; "
+            "pop-culture/celebrity terms; a completely different trade; US/overseas terms. KEEP everything a "
+            "genuine buyer might type, including generic service terms and the business's own suburb/city "
+            "terms. Output ONLY a JSON array of the exact keyword strings to drop ([] if none).")
+        usr = (f"Business: {name or '?'}\nTrade/industry: {industry or '?'} / {sub_industry or '?'}\n"
+               f"Located: {loc}\n\nKeywords:\n" + "\n".join(kws))
+        r = anthropic.Anthropic(api_key=key).messages.create(
+            model=model, max_tokens=4000, temperature=0,
+            system=sys_p, messages=[{"role": "user", "content": usr}])
+        txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
+        m = re.search(r"\[.*\]", txt, re.S)
+        arr = _json.loads(m.group(0)) if m else []
+        drop = {str(s).strip().lower() for s in arr if isinstance(s, str)}
+        # sanity: only revert on a TOTAL wipe (likely a parse/LLM misfire). A ~90% drop can be the TRUTH —
+        # Prendergast's universe really was ~95% wildlife junk; reverting there re-admitted it (2026-08-28).
+        # A near-total drop now stands: the audit collapses to the honest THIN/seed-cluster path instead.
+        if len(drop) >= len(kws):
+            return set()
+        return drop
+    except Exception:
+        return set()
 
 
 def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None,
@@ -321,6 +372,41 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None,
             _trade_applied = False
     except Exception:
         _trade_applied = False
+
+    # ---- LLM SEMANTIC RELEVANCE GATE (2026-08-28) — catches what token overlap can't ------------------
+    # Applies to the SAME lists as the trade filter, before any $ totals / universe are computed, so junk
+    # ('quokka animal', 'adelaide home builders', 'cert iv construction') never reaches tables or figures.
+    try:
+        from .config import get_settings as _gs2
+        _cand = []
+        for _rows in ((ca.get("keyword_gap") if isinstance(ca, dict) else None),
+                      (ca.get("outranked") if isinstance(ca, dict) else None),
+                      (seo.get("money_keywords") if isinstance(seo, dict) else None),
+                      (seo.get("proof_winning") if isinstance(seo, dict) else None),
+                      df.get("ranked_kw"), _orig_gap, _discovered_add):
+            for _r in (_rows or []):
+                _cand.append(_r.get("keyword") if isinstance(_r, dict) else str(_r))
+        _drop = _relevance_drop_set(_gs2(), name, (comp or {}).get("industry"),
+                                    (comp or {}).get("sub_industry"),
+                                    (comp or {}).get("suburb"), (comp or {}).get("state"), _cand)
+        if _drop:
+            def _rgate(rows):
+                return [r for r in (rows or [])
+                        if ((r.get("keyword") if isinstance(r, dict) else str(r)) or "").strip().lower() not in _drop]
+            if isinstance(ca, dict):
+                for _k in ("keyword_gap", "outranked", "content_gap", "quick_wins", "growth_plan"):
+                    if isinstance(ca.get(_k), list):
+                        ca[_k] = _rgate(ca[_k])
+            if isinstance(seo, dict):
+                for _k in ("money_keywords", "proof_winning"):
+                    if isinstance(seo.get(_k), list):
+                        seo[_k] = _rgate(seo[_k])
+            df["ranked_kw"] = _rgate(df.get("ranked_kw") or [])
+            _orig_gap = _rgate(_orig_gap)
+            _discovered_add = _rgate(_discovered_add)
+            log.info("audit_relevance_gate", domain=domain, dropped=len(_drop))
+    except Exception as _exc:
+        log.warning("audit_relevance_gate_failed", domain=domain, error=str(_exc)[:120])
 
     # ---- quantified opportunity ----
     seo_tot = seo.get("totals") or {}

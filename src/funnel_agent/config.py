@@ -355,6 +355,11 @@ class Settings(BaseSettings):
     ms_client_secret: str = ""    # MS_CLIENT_SECRET
     scheduler_mailbox: str = ""   # SCHEDULER_MAILBOX — e.g. emma.collins@trafficradius.com.au
     emma_default_duration_min: int = 45   # default meeting length for Emma's invites
+    # Staff who get an EMAIL the moment a new Lisa booking lands needing a confirmation call
+    # (Alfred = the closer who rings to confirm; Kiran = the scheduler/approver). CSV, overridable.
+    # NOTE (2026-08-28, Vysakh): Alfred's REAL inbox is alfred@trafficradiusdigital.com.au — the staff
+    # DB's alfred.m@digitalexpo.com.au address was wrong/stale and he received nothing.
+    emma_booking_notify_emails: str = "alfred@trafficradiusdigital.com.au,kiran@trafficradius.com.au"
 
     # --- Report email (optional) ---
     smtp_host: str = ""
@@ -445,6 +450,12 @@ class Settings(BaseSettings):
         """True once all Microsoft Graph credentials for invite-sending are present."""
         return bool(self.ms_tenant_id and self.ms_client_id
                     and self.ms_client_secret and self.scheduler_mailbox)
+
+    @property
+    def emma_booking_notify_list(self) -> list[str]:
+        """Emails alerted when a new Lisa booking needs a confirmation call (Alfred + Kiran).
+        From EMMA_BOOKING_NOTIFY_EMAILS (CSV)."""
+        return [e.lower() for e in _csv(self.emma_booking_notify_emails)]
 
     @property
     def reveal_closers(self) -> list[str]:

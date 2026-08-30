@@ -529,6 +529,14 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
         audit_model = _a.assemble_audit(pool, dom, avg_ticket=avg_ticket)
         if not audit_model:
             return None
+        # PageSpeed / Core Web Vitals (DataForSEO Lighthouse, cached 7d) → the Speed section of the audit.
+        try:
+            from .audit_signals import get_or_fetch_pagespeed_dfs
+            _ps = get_or_fetch_pagespeed_dfs(pool, dom, settings)
+            if _ps:
+                audit_model["pagespeed"] = _ps
+        except Exception:
+            pass
         if ticket_estimated:   # tell the report the ticket is an industry estimate, not the owner's real number
             audit_model.setdefault("revenue", {})["avg_ticket_estimated"] = True
         html = _ga.gen_growth_audit(key, model, audit_model, avg_ticket=avg_ticket, company=company or "")

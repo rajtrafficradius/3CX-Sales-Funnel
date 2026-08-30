@@ -134,6 +134,14 @@ _BIZ_WORDS = {
     "BROKERS", "AGENCY", "MEDIA", "DESIGN", "GRAPHICS", "MARKETING", "EVENTS", "PRODUCTIONS", "BAR",
     "GRILL", "KEBABS", "SUSHI", "CHICKEN", "BURGERS", "CHIPS", "NEWSAGENCY", "POST", "OPTOMETRIST",
     "PODIATRY", "PHYSIOTHERAPY", "OSTEOPATHY", "ACUPUNCTURE", "WELLNESS", "YOGA", "PILATES", "EXCAVATION",
+    # 2026-08-27: missing trade nouns caused real businesses to be MISREAD as person names ('KINA DIVING'
+    # -> rejected -> ugly domain run-on 'Kinadiving' shipped on the site). Keep extending when one recurs.
+    "DIVING", "ASPHALT", "PAVING", "SURVEYING", "SURVEYORS", "RIGGING", "CRANES", "HAULAGE", "FREIGHT",
+    "COURIERS", "CARTAGE", "MOWING", "ARBOR", "ARBORIST", "TREES", "TURF", "IRRIGATION", "DRAINAGE",
+    "PSYCHOLOGY", "COUNSELLING", "CHIROPRACTIC", "RADIOLOGY", "PATHOLOGY", "GROOMING", "DOGGY", "PETS",
+    "STABLES", "SHEARING", "FENCERS", "WELDERS", "FABRICATION", "STEEL", "ALUMINIUM", "STAINLESS",
+    "MECHANICS", "DETAILING", "PANEL", "SMASH", "TOWING", "BATTERIES", "EXHAUST", "SUSPENSION",
+    "CONTRACTING", "CONTRACTORS", "CIVIL", "EARTHWORKS", "PLANT", "FORMWORK", "PILING",
 }
 
 
@@ -754,6 +762,24 @@ _DESIGNER_SYSTEM = (
     "fluid type scale via clamp() — the TYPE PERSONALITY (geometric grotesk / condensed display / "
     "high-contrast serif / single bold grotesk / elegant serif / humanist rounded / Swiss grotesk) is set "
     "by the archetype.\n"
+    "\nCINEMATIC MOTION (non-negotiable — this site must FEEL alive and expensive, not a static page with a "
+    "couple of fades; a flat, motionless build is an instant failure):\n"
+    "- A CHOREOGRAPHED HERO ENTRANCE on load: a short, deliberate sequence (not everything at once) — the "
+    "kicker, then the headline revealing line-by-line (or word-by-word) via clip-path/mask wipes, then the "
+    "subhead + CTAs easing up, while the hero photo settles with a slow scale/ken-burns. Stagger with small "
+    "delays; use rich easing (cubic-bezier, not linear/ease).\n"
+    "- CONTINUOUS AMBIENT MOTION in the background so the page is never dead: slow-drifting gradient-mesh or "
+    "aurora, gently floating decorative shapes/orbs, a faint animated grain/sheen, or a subtle conic/gradient "
+    "rotation behind the hero — GPU-cheap (transform/opacity only), looping, and understated.\n"
+    "- LAYERED PARALLAX & scroll choreography: hero photo, decorative layers and foreground copy move at "
+    "different rates on scroll; section reveals are staggered with DIRECTIONAL intent (content enters from "
+    "the side it lives on); headline numerals/stats count up when scrolled into view.\n"
+    "- MICRO-INTERACTIONS everywhere with real depth: buttons with a light-sweep/glow on hover, cards that "
+    "lift + tilt (or reveal an accent) on hover, nav underline that tracks, an animated scroll cue, smooth "
+    "scroll-behavior.\n"
+    "- A REAL motion system: define MANY distinct @keyframes (aim for ~8+) and reuse them — this is a "
+    "signature, not decoration. ALL of it MUST sit inside an @media (prefers-reduced-motion: reduce) guard "
+    "that disables transforms/loops for users who ask for less; nothing may break if motion is off.\n"
     "\nBANNED (instant failure): reusing the same skeleton or section order you'd use for any other business; "
     "defaulting to the generic glass-nav + centred-hero + three-glass-card template regardless of archetype; "
     "centered-everything layouts; equal three-card rows repeated; thin grey text on white; generic hero with "
@@ -762,7 +788,9 @@ _DESIGNER_SYSTEM = (
     "\nREQUIRED CONTENT INGREDIENTS (write like you know this trade cold, Australian tone + spelling) — the "
     "site MUST contain ALL of these, but you ARRANGE and TREAT them per the assigned archetype + signature "
     "opener; do NOT use one fixed order every time:\n"
-    "hero · trust signals (rating/years/insured/licensed) · services (REAL trade-specific services, "
+    "hero · trust signals (rating/years/insured/licensed — ONLY flattering ones: NEVER display a Google "
+    "rating below 4.2 or a tiny review count ('3.0★ from 2 reviews' harms trust; simply omit the rating "
+    "and lead with insured/licensed/years instead) · services (REAL trade-specific services, "
     "materials, job types — each with a custom SVG icon and 2-3 lines of expert copy) · a signature "
     "'why us' with animated stats · a process (3-4 steps) · a real photo gallery/portfolio (use the "
     "provided {{IMG_n}} photos; only where NO real photo exists, fall back to tasteful CSS-art tiles marked "
@@ -900,14 +928,16 @@ _SIGNATURE_OPENERS: tuple[str, ...] = (
 )
 
 
-def _pick_archetype(seed_key: str) -> tuple[int, str, str, int, str]:
+def _pick_archetype(seed_key: str, archetype_idx: int | None = None) -> tuple[int, str, str, int, str]:
     """Deterministically map a stable seed string (e.g. dest9 + business name) to ONE layout archetype and
     ONE signature opener. Uses a stable hash (sha256, NOT Python's per-process hash() and NOT random/date)
     so a given business always rebuilds to the SAME identity, while different businesses diverge. Returns
-    (archetype_idx, archetype_name, archetype_spec, opener_idx, opener_text)."""
+    (archetype_idx, archetype_name, archetype_spec, opener_idx, opener_text).
+    archetype_idx (optional) FORCES a specific archetype (ops override for a trade that wants a specific
+    look — e.g. Dark Luxe for an auto shop); the signature opener still varies deterministically by seed."""
     import hashlib as _hashlib
     h = int(_hashlib.sha256((seed_key or "seed").encode("utf-8")).hexdigest(), 16)
-    a_idx = h % len(_LAYOUT_ARCHETYPES)
+    a_idx = (archetype_idx % len(_LAYOUT_ARCHETYPES)) if archetype_idx is not None else (h % len(_LAYOUT_ARCHETYPES))
     o_idx = (h // len(_LAYOUT_ARCHETYPES)) % len(_SIGNATURE_OPENERS)
     a_name, a_spec = _LAYOUT_ARCHETYPES[a_idx]
     return a_idx, a_name, a_spec, o_idx, _SIGNATURE_OPENERS[o_idx]
@@ -1085,7 +1115,153 @@ def _fetch_niche_images(queries, want=6, timeout=12.0):
     return out[:want]
 
 
-def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_run: bool = False) -> dict:
+def _wrap_bare_image_uris(html: str) -> str:
+    """Self-heal a designer slip: {{IMG_n}} tokens placed as BARE TEXT inside a div (instead of an <img>
+    src / url(...)) become raw base64 rendered as visible text after substitution (GJ Techtronics case,
+    2026-08-28 — 16 leaked runs). Wrap any text-node data URI in a proper <img>. Guarded — input returned
+    unchanged on any failure."""
+    try:
+        import re as _re2
+        pat = _re2.compile(r"(>\s*)(data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)(\s*<)")
+        return pat.sub(lambda m: f'{m.group(1)}<img src="{m.group(2)}" alt="" loading="lazy" '
+                                 f'decoding="async" style="width:100%;height:100%;object-fit:cover">{m.group(3)}',
+                       html)
+    except Exception:
+        return html
+
+
+def _recompress_embedded_images(html: str) -> str:
+    """Post-process the finished site: re-encode every LARGE embedded raster (>300KB) to progressive JPEG
+    q78 (bounded 2000px). The 2000px sharp-photo standard can balloon a 10-photo site past 20MB of data
+    URIs (Pathway 22MB case, 2026-08-27) — this keeps full sharpness at hero size while the page stays a
+    few MB. Small assets (logos/icons) untouched. Guarded — returns the input unchanged on any failure."""
+    try:
+        import base64 as _b64, io as _io, re as _re2
+        from PIL import Image
+        def _one(m):
+            b64 = m.group(2)
+            try:
+                raw = _b64.b64decode(b64 + "=" * (-len(b64) % 4))
+                if len(raw) < 300_000:
+                    return m.group(0)
+                im = Image.open(_io.BytesIO(raw)).convert("RGB")
+                im.thumbnail((2000, 2000))
+                buf = _io.BytesIO()
+                im.save(buf, "JPEG", quality=78, optimize=True, progressive=True)
+                out = buf.getvalue()
+                if len(out) >= len(raw):
+                    return m.group(0)
+                return "data:image/jpeg;base64," + _b64.b64encode(out).decode("ascii")
+            except Exception:
+                return m.group(0)
+        return _re2.sub(r"data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)", _one, html)
+    except Exception:
+        return html
+
+
+def _logo_mark_ok(data_uri: str) -> bool:
+    """Validation gate for an EXTRACTED site logo: accept SVG marks and transparent rasters outright; an
+    opaque raster must read as a brand card (flat, uniform border) and a sane logo aspect — never a
+    PHOTOGRAPH. Guards against extract_logo grabbing a hero/banner photo and shipping it as the header
+    logo (Kina Diving diver-photo case, 2026-08-27). On any decode error accept (fail-open: the old
+    behaviour) so a weird-but-valid mark is not dropped."""
+    try:
+        if (data_uri or "").lstrip().lower().startswith("<svg"):
+            return True
+        import base64 as _b64, io as _io
+        from PIL import Image
+        b64 = data_uri.split(",", 1)[1]
+        im = Image.open(_io.BytesIO(_b64.b64decode(b64 + "=" * (-len(b64) % 4))))
+        if im.mode in ("RGBA", "LA", "P"):
+            try:
+                a = im.convert("RGBA").getchannel("A")
+                if (a.getextrema() or (255, 255))[0] < 250:   # real transparency -> a cut-out mark
+                    return True
+            except Exception:
+                pass
+        im = im.convert("RGB")
+        w, h = im.size
+        if (w / max(h, 1)) > 6.5 or (h / max(w, 1)) > 3.0:    # banner-photo / skyscraper aspect -> not a logo
+            return False
+        px = im.load()
+        m = max(2, min(w, h) // 50)
+        base = px[m, m]
+        def close(a, b): return sum(abs(a[i] - b[i]) for i in range(3)) < 60
+        corners = [px[w - 1 - m, m], px[m, h - 1 - m], px[w - 1 - m, h - 1 - m]]
+        if not all(close(c, base) for c in corners):
+            return False                                       # photographic edges -> not a brand card
+        import random as _rnd
+        _rnd.seed(7)
+        edge = 0
+        for _ in range(80):
+            if _rnd.random() < 0.5:
+                x, y = _rnd.randrange(w), (m if _rnd.random() < 0.5 else h - 1 - m)
+            else:
+                x, y = (m if _rnd.random() < 0.5 else w - 1 - m), _rnd.randrange(h)
+            if close(px[x, y], base):
+                edge += 1
+        return edge >= 64
+    except Exception:
+        return True
+
+
+def _flat_border_graphic(data_uri: str) -> bool:
+    """True when an image is a designed GRAPHIC (poster/flyer/services board), not a photograph. Signal =
+    colour concentration: flat-fill artwork is dominated by a handful of colours, a photo is continuous
+    tone. Measured on the Whyalla posters (.66-.84) vs real trade photos (.36-.41) — top-5 adaptive-palette
+    colours covering >=55% of pixels => graphic. Guarded — False on any error."""
+    try:
+        import base64 as _b64, io as _io
+        from PIL import Image
+        b64 = data_uri.split(",", 1)[1]
+        im = Image.open(_io.BytesIO(_b64.b64decode(b64 + "=" * (-len(b64) % 4)))).convert("RGB")
+        im.thumbnail((128, 128))
+        q = im.quantize(colors=16)
+        hist = sorted(q.histogram(), reverse=True)
+        total = sum(hist) or 1
+        return (sum(hist[:5]) / total) >= 0.55
+    except Exception:
+        return False
+
+
+def _looks_like_logo_photo(data_uri: str) -> bool:
+    """True when a GBP photo is actually the business's LOGO/brand card, not a real photo: near-square with a
+    flat, uniform background (all four corners ~the same colour covering the edges). No-website prospects
+    usually have their only brand mark as a GBP 'photo' — it must go in the header as the REAL logo, never be
+    wasted as a blurry hero/gallery image (Whyalla gear+wrench case, 2026-08-27). Guarded — False on any error."""
+    try:
+        import base64 as _b64, io as _io
+        from PIL import Image
+        b64 = data_uri.split(",", 1)[1]
+        im = Image.open(_io.BytesIO(_b64.b64decode(b64 + "=" * (-len(b64) % 4)))).convert("RGB")
+        w, h = im.size
+        if not (0.72 <= (w / max(h, 1)) <= 1.38):        # logos/brand cards are near-square
+            return False
+        px = im.load()
+        m = max(2, min(w, h) // 50)
+        corners = [px[m, m], px[w - 1 - m, m], px[m, h - 1 - m], px[w - 1 - m, h - 1 - m]]
+        base = corners[0]
+        def close(a, b): return sum(abs(a[i] - b[i]) for i in range(3)) < 60
+        if not all(close(c, base) for c in corners[1:]):
+            return False
+        # background must dominate the border (sample the frame): a photo has varied edges, a logo card doesn't
+        import random as _rnd
+        _rnd.seed(7)
+        edge = 0
+        for _ in range(80):
+            if _rnd.random() < 0.5:
+                x, y = _rnd.randrange(w), (m if _rnd.random() < 0.5 else h - 1 - m)
+            else:
+                x, y = (m if _rnd.random() < 0.5 else w - 1 - m), _rnd.randrange(h)
+            if close(px[x, y], base):
+                edge += 1
+        return edge >= 64          # >=80% of the border is the flat background -> a logo card
+    except Exception:
+        return False
+
+
+def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_run: bool = False,
+                  archetype_idx: int | None = None) -> dict:
     """AI designer: generate the prospect's website with Claude, store the HTML in lisa4_sites (status
     'built'). Called when a reveal is booked. For critical-issue prospects we feed the scraped content of
     their existing site so the rebuild is faithful. Returns {status, id, bytes} or {error}.
@@ -1212,6 +1388,11 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
             real_logo = None
         if not (real_logo and real_logo.get("data_uri")) and media and isinstance(media.get("logo"), dict):
             real_logo = media["logo"]   # reuse the logo scrape_site_media already resolved
+        # VALIDATION GATE: an extracted "logo" that is actually a photograph (hero/banner grabbed by the
+        # scraper) must never ship as the header mark — drop it and fall back to a styled wordmark.
+        if real_logo and real_logo.get("data_uri") and not _logo_mark_ok(real_logo["data_uri"]):
+            log.info("lisa4_logo_rejected_not_a_mark", dest9=dest9, source=real_logo.get("source"))
+            real_logo = None
         if real_logo and real_logo.get("data_uri"):
             # Classify the mark for VISIBILITY: a header logo pulled from the old site is very often a
             # white/reversed or transparent mark that vanishes on a light rebuilt header. Store the tone
@@ -1247,6 +1428,20 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
         except Exception:
             _photos = []
         for _uri in (_photos or []):
+            # A GBP "photo" that is actually the brand's LOGO card becomes the site's REAL logo (header/footer)
+            # instead of a wasted blurry hero image — for a no-website prospect it's the only brand mark we have.
+            if (real_logo is None or not real_logo.get("data_uri")) and _looks_like_logo_photo(_uri):
+                real_logo = {"data_uri": _uri, "source": "gbp_photo", "url": ""}
+                log.info("lisa4_logo_from_gbp_photo", dest9=dest9)
+                continue
+            # a flat-background GBP image at non-logo aspect = a POSTER/flyer graphic, not a photo. Blown up
+            # as a hero/section background its text turns into noise behind the headline (Whyalla board case)
+            # — steer the designer to frame it small instead.
+            if _flat_border_graphic(_uri):
+                real_images.append(_uri)
+                real_image_descs.append("the business's own POSTER/flyer graphic — place ONLY as a small framed "
+                                        "gallery/about tile; NEVER as a hero or section background")
+                continue
             real_images.append(_uri)
             real_image_descs.append("real Google Business Profile photo of this business")
     # NICHE-IMAGE GUARANTEE (any prospect): if we gathered NO real photos — a no-website prospect with no GBP
@@ -1254,6 +1449,16 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
     # slots and not look like the trade at all (the pet-groomer-with-no-images failure). Source on-trade CC0
     # imagery so every site reads as the right kind of business. Fully guarded — a fetch failure leaves it as
     # before (CSS-art fallback). These are design-concept images for the REVEAL, not claimed as the client's own.
+    # TOP-UP (2026-08-27): a sparse real set (1-4 photos) also reads thin/repetitive — supplement up to ~6 with
+    # clearly-labelled on-trade design-concept imagery so galleries and photo bands feel rich, never stretched.
+    if real_images and len(real_images) < 5:
+        try:
+            _iq = _niche_image_queries(settings, disp or p.get("company") or "", "")
+            for _uri in _fetch_niche_images(_iq, want=6 - len(real_images)):
+                real_images.append(_uri)
+                real_image_descs.append("representative on-trade photo of this kind of business (design-concept image)")
+        except Exception:
+            pass
     if not real_images:
         try:
             _iq = _niche_image_queries(settings, disp or p.get("company") or "", "")
@@ -1301,7 +1506,7 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
     # VARIETY: give THIS business a distinct visual identity from a STABLE seed (dest9 + name), so two
     # different businesses never share the same skeleton, yet a rebuild of the SAME business is consistent.
     _seed_key = f"{dest9}|{(disp or p.get('company') or '').strip().lower()}"
-    _a_idx, _a_name, _a_spec, _o_idx, _o_text = _pick_archetype(_seed_key)
+    _a_idx, _a_name, _a_spec, _o_idx, _o_text = _pick_archetype(_seed_key, archetype_idx)
     _archetype_block = (
         f"\n\nASSIGNED LAYOUT ARCHETYPE (variety seed {_seed_key!r} → archetype #{_a_idx + 1} of "
         f"{len(_LAYOUT_ARCHETYPES)}): \"{_a_name}\". Commit FULLY to this identity — hero treatment, "
@@ -1435,6 +1640,10 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
                 _pos = _low.rfind("</html>")
             html = (html[:_pos] + _gallery + html[_pos:]) if _pos != -1 else (html + _gallery)
         _images_used = sum(1 for _u in real_images if _u and (_u in html))
+        # self-heal bare-text data URIs (a token outside <img>/url() renders as visible base64 text)
+        html = _wrap_bare_image_uris(html)
+        # keep the page a few MB: sharp 2000px embeds re-encoded to progressive JPEG (Pathway 22MB case)
+        html = _recompress_embedded_images(html)
         if dry_run:
             # No DB write in dry_run — hand back the finished HTML + the metrics a test needs.
             log.info("lisa4_site_dryrun_built", dest9=dest9, company=p.get("company"), bytes=len(html),
@@ -2074,12 +2283,14 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
     # inbound = a prospect returning Lisa's missed call/SMS: THEY are from_number, our line is to_number
     d9 = _L1._d9(call.get("from_number") if inbound else (meta.get("dest9") or call.get("to_number")))
     if inbound and cid:
+        # inbound caller has no brief → recover the company (+domain) from our own data by dest9 so the
+        # booking is never a nameless '?' in the CRM / OTHER bucket.
+        _co, _dom = _L1.inbound_company(pool, d9, (call.get("retell_llm_dynamic_variables") or {}).get("company_name"))
         with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO lisa_calls (call_id, dest9, to_number, from_number, company_name, "
-                        "  status, brief) VALUES (%s,%s,%s,%s,%s,'ongoing','{}') "
+            cur.execute("INSERT INTO lisa_calls (call_id, dest9, to_number, from_number, company_name, domain, "
+                        "  status, brief) VALUES (%s,%s,%s,%s,%s,%s,'ongoing','{}') "
                         "ON CONFLICT (call_id) DO NOTHING",
-                        (cid, d9, call.get("to_number"), call.get("from_number"),
-                         (call.get("retell_llm_dynamic_variables") or {}).get("company_name")))
+                        (cid, d9, call.get("to_number"), call.get("from_number"), _co, _dom))
             conn.commit()
     # SOLE SOURCE OF TRUTH = OUR transcript classifier (never Retell's custom_analysis_data). It runs
     # post-call (off the dial loop) and is idempotent per call_id; {} when there is no transcript so the
@@ -2088,6 +2299,24 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
     cad = _L1._lisa_postcall_cad(pool, settings, call, cid)
     outcome = (cad.get("call_outcome") or "").strip().lower()
     booked = bool(cad.get("meeting_agreed"))
+    # QA G1 (same gate Lisa-5 has had; Lisa-4 was missing it — 15s fragment booked Lekcom 2026-08-28):
+    # honour a "booked" only for a genuine two-party conversation (disconnect + duration) with a concrete
+    # agreed time in the transcript. A gate-fail un-books so CRM/calendar/SMS/funnel all agree.
+    if booked:
+        from .qa import gates as _qg, audit as _qa
+        _v = _qg.booking_verdict(
+            transcript=call.get("transcript"), disconnect_reason=call.get("disconnection_reason"),
+            duration_ms=call.get("duration_ms") or call.get("call_length_ms"),
+            claimed_time=cad.get("agreed_day_time"))
+        if not _v.ok:
+            booked = False
+            try:
+                _qa.log_event(pool, gate="G1", kind="unbooked", call_id=cid, agent="Lisa 4",
+                              detail={"reason": _v.reason, "classifier_meeting_agreed": True,
+                                      "disconnect": call.get("disconnection_reason"),
+                                      "duration_ms": call.get("duration_ms")})
+            except Exception:
+                pass
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute("UPDATE lisa_calls SET status='analyzed', call_outcome=%s, meeting_agreed=%s, "
                     "  agreed_day_time=%s, call_summary=%s, transcript=%s, recording_url=%s, "
@@ -2104,7 +2333,7 @@ def handle_lisa4_postcall(pool: ConnectionPool, settings: Settings, payload: dic
     try:
         _L1._write_funnel_call(pool, cid, call.get("retell_llm_dynamic_variables") or {}, cad,
                                ({**call, "to_number": call.get("from_number")} if inbound else call),
-                               bde_ext="LISA4", bde_name="Lisa 4")
+                               bde_ext="LISA4", bde_name="Lisa 4", booked_override=booked)
     except Exception as exc:
         log.warning("lisa4_funnel_write_failed", error=str(exc)[:140])
     # BOOKED REVEAL → queue the AI designer to build the site (idempotent: skip if one already queued/built)

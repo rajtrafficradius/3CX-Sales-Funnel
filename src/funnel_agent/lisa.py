@@ -211,6 +211,28 @@ def _d9(s: str | None) -> str:
     return re.sub(r"[^0-9]", "", s or "")[-9:]
 
 
+def inbound_company(pool: ConnectionPool, d9: str, fallback: str | None = None) -> tuple[str | None, str | None]:
+    """Best (company, domain) for an INBOUND caller by dest9 — a prospect ringing a Lisa line back arrives with
+    NO brief, so Retell's company_name var is usually blank. Recover it from our own data (the pool the number
+    was dialed from, then the master companies table) so the booking is never a nameless '?' in the CRM.
+    Returns (fallback, its-domain) when the Retell var is already meaningful; never raises."""
+    fb = (fallback or "").strip()
+    try:
+        # lisa4_pool = the outbound worklist (gmaps SMBs); most inbound call-backs are prospects we dialed.
+        r = _fetch(pool, "SELECT company, domain FROM lisa4_pool WHERE dest9=%s AND COALESCE(company,'')<>'' LIMIT 1", (d9,))
+        if r:
+            return (fb or r[0].get("company"), r[0].get("domain"))
+        # master companies table, matched on the phone's last 9 digits (covers D&B / Lisa-5 prospects too).
+        r = _fetch(pool, "SELECT company_name AS company, domain FROM companies "
+                         "WHERE right(regexp_replace(COALESCE(phone,''),'[^0-9]','','g'),9)=%s "
+                         "AND COALESCE(company_name,'')<>'' LIMIT 1", (d9,))
+        if r:
+            return (fb or r[0].get("company"), r[0].get("domain"))
+    except Exception as exc:
+        log.warning("inbound_company_lookup_failed", d9=d9, error=str(exc)[:120])
+    return (fb or None, None)
+
+
 def _norm_domain(s: str | None) -> str:
     """A website/URL → bare registrable-ish domain ('https://www.Feathers.com.au/x' → 'feathers.com.au')."""
     d = re.sub(r"^https?://", "", (s or "").strip().lower())

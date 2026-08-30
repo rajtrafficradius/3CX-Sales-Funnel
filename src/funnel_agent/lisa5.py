@@ -479,12 +479,14 @@ def handle_lisa5_postcall(pool: ConnectionPool, settings: Settings, payload: dic
     # inbound = a prospect returning Lisa's missed call/SMS: THEY are from_number, our line is to_number
     d9 = _L1._d9(call.get("from_number") if inbound else (meta.get("dest9") or call.get("to_number")))
     if inbound and cid:
+        # inbound caller has no brief → recover the company (+domain) from our own data by dest9 so the
+        # booking is never a nameless '?' in the CRM / OTHER bucket.
+        _co, _dom = _L1.inbound_company(pool, d9, (call.get("retell_llm_dynamic_variables") or {}).get("company_name"))
         with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO lisa_calls (call_id, dest9, to_number, from_number, company_name, "
-                        "  status, brief) VALUES (%s,%s,%s,%s,%s,'ongoing','{}') "
+            cur.execute("INSERT INTO lisa_calls (call_id, dest9, to_number, from_number, company_name, domain, "
+                        "  status, brief) VALUES (%s,%s,%s,%s,%s,%s,'ongoing','{}') "
                         "ON CONFLICT (call_id) DO NOTHING",
-                        (cid, d9, call.get("to_number"), call.get("from_number"),
-                         (call.get("retell_llm_dynamic_variables") or {}).get("company_name")))
+                        (cid, d9, call.get("to_number"), call.get("from_number"), _co, _dom))
             conn.commit()
     # SOLE SOURCE OF TRUTH = OUR transcript classifier (never Retell's custom_analysis_data). It runs
     # post-call (off the dial loop) and is idempotent per call_id; {} when there is no transcript so the

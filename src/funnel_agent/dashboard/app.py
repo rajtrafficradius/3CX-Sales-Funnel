@@ -5466,6 +5466,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rep = await run_in_threadpool(_cost.compute, pool, settings, days)
         # per-system daily/weekly/monthly (human-BDE analytics vs Lisa outbound-intelligence)
         rep["periods"] = await run_in_threadpool(_cost.cost_periods, pool, None)
+        # per-day spend series for the chart (capped window)
+        rep["daily"] = await run_in_threadpool(_cost.daily_series, pool, min(days, 60))
         return JSONResponse(jsonable_encoder(rep))
 
     @app.post("/api/cost/prices")

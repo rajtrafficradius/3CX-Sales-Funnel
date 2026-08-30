@@ -325,7 +325,7 @@ def ensure_emma_tables(pool: ConnectionPool, force: bool = False) -> None:
         try:
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM information_schema.columns "
-                            "WHERE table_name='emma_meetings' AND column_name='reminders_enabled'")
+                            "WHERE table_name='emma_meetings' AND column_name='staff_notified_at'")
                 if cur.fetchone() is not None:
                     _TABLES_READY = True
                     return
@@ -359,6 +359,7 @@ def ensure_emma_tables(pool: ConnectionPool, force: bool = False) -> None:
             "  confirmation_sent_at timestamptz,"
             "  reminder_sent_at timestamptz,"
             "  reminders_enabled boolean NOT NULL DEFAULT true,"  # per-meeting reminder opt-out (console toggle)
+            "  staff_notified_at timestamptz,"       # when Alfred+Kiran were emailed this new booking (once)
             "  response_checked_at timestamptz,"
             "  approved_by text, approved_at timestamptz,"
             "  error text, booked_at timestamptz,"
@@ -371,6 +372,15 @@ def ensure_emma_tables(pool: ConnectionPool, force: bool = False) -> None:
         # v3 column — per-meeting reminders on/off (console toggle; default ON).
         cur.execute("ALTER TABLE emma_meetings ADD COLUMN IF NOT EXISTS "
                     "reminders_enabled boolean NOT NULL DEFAULT true")
+        # v4 column — staff (Alfred+Kiran) new-booking email alert, sent exactly once per booking.
+        # This block runs ONCE (the probe above keys on staff_notified_at), so backfilling every
+        # EXISTING row as already-notified here is safe and stops a first-deploy blast of old bookings.
+        cur.execute("SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='emma_meetings' AND column_name='staff_notified_at'")
+        _had_col = cur.fetchone() is not None
+        cur.execute("ALTER TABLE emma_meetings ADD COLUMN IF NOT EXISTS staff_notified_at timestamptz")
+        if not _had_col:
+            cur.execute("UPDATE emma_meetings SET staff_notified_at=now() WHERE staff_notified_at IS NULL")
         # Full journal of everything Emma does / observes per meeting.
         cur.execute(
             "CREATE TABLE IF NOT EXISTS emma_events ("
@@ -2088,6 +2098,107 @@ def send_due_reminders(pool: ConnectionPool, settings: Settings, limit: int = 10
 # --------------------------------------------------------------------------- #
 # the tick — wired into the cli.py background loop next to sync_qualifier_calls
 # --------------------------------------------------------------------------- #
+_SOURCE_LABEL = {
+    "lisa4": "Lisa 4 — Google Maps / websites line",
+    "lisa5": "Lisa 5 — Dun &amp; Bradstreet / marketing line",
+    "lisa1": "Lisa 1 — cold line",
+}
+
+
+def _booking_alert_email(settings: Settings, r: dict) -> tuple[str, str]:
+    """Build (subject, html) for the 'new booking to confirm' alert to Alfred + Kiran."""
+    company = (r.get("company") or "New prospect").strip()
+    src = (r.get("source") or "").lower()
+    line = _SOURCE_LABEL.get(src, "Lisa")
+    contact = (r.get("contact_name") or "").strip() or "—"
+    agreed = (r.get("agreed_text") or "").strip() or "—"
+    email = (r.get("attendee_email") or "").strip() or "—"
+    d9 = (r.get("dest9") or "").strip()
+    phone = ("0" + d9) if d9 else "—"                       # trailing-9 → readable AU mobile
+    domain = (r.get("domain") or "").strip()
+    summary = (r.get("summary") or "").strip()
+    base = settings.public_base_url.rstrip("/")
+    crm_link = f"{base}/lisa-crm/{d9}" if d9 else base + "/lisa-crm"
+    when_disp = ""
+    if r.get("start_at"):
+        try:
+            when_disp = _fmt_local(settings, r["start_at"])
+        except Exception:
+            when_disp = ""
+    subject = f"🔔 New booking to confirm — {company}"
+    def _row(lbl, val):
+        return (f'<tr><td style="padding:6px 14px 6px 0;color:#6b7280;font-size:13px;white-space:nowrap;'
+                f'vertical-align:top">{lbl}</td>'
+                f'<td style="padding:6px 0;color:#111827;font-size:14px;font-weight:600">{val}</td></tr>')
+    rows_html = (
+        _row("Business", company)
+        + _row("Booked via", line)
+        + _row("Contact", contact)
+        + _row("Phone", f'<a href="tel:+61{d9}" style="color:#2563eb;text-decoration:none">{phone}</a>' if d9 else "—")
+        + _row("Agreed time", agreed)
+        + (_row("Parsed slot", when_disp) if when_disp else "")
+        + _row("Email", email)
+        + (_row("Website", domain) if domain else "")
+    )
+    summary_html = (f'<div style="margin:18px 0 6px;color:#6b7280;font-size:12px;text-transform:uppercase;'
+                    f'letter-spacing:.04em">From the call</div>'
+                    f'<div style="color:#374151;font-size:13.5px;line-height:1.55;background:#f9fafb;'
+                    f'border:1px solid #eef2f7;border-radius:10px;padding:12px 14px">{summary}</div>'
+                    ) if summary else ""
+    html = f"""<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      max-width:560px;margin:0 auto;padding:4px">
+      <div style="background:linear-gradient(135deg,#111827,#1f2937);border-radius:14px 14px 0 0;
+        padding:20px 22px">
+        <div style="color:#9ca3af;font-size:12px;letter-spacing:.06em;text-transform:uppercase">Traffic Radius · new booking</div>
+        <div style="color:#fff;font-size:20px;font-weight:700;margin-top:4px">Confirmation call needed</div>
+      </div>
+      <div style="border:1px solid #eef2f7;border-top:0;border-radius:0 0 14px 14px;padding:20px 22px">
+        <p style="color:#374151;font-size:14px;line-height:1.5;margin:0 0 14px">
+          Lisa just booked a meeting. Please ring the prospect to <b>confirm</b> the time, then it's ready for Kiran to schedule.</p>
+        <table style="border-collapse:collapse;width:100%">{rows_html}</table>
+        {summary_html}
+        <div style="margin-top:22px">
+          <a href="{crm_link}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;
+            font-size:14px;font-weight:600;padding:11px 20px;border-radius:10px">Open in CRM →</a>
+        </div>
+        <p style="color:#9ca3af;font-size:12px;margin:18px 0 0">Sent automatically by Emma the moment the booking landed.</p>
+      </div></div>"""
+    return subject, html
+
+
+def notify_staff_new_bookings(pool: ConnectionPool, settings: Settings) -> dict:
+    """Email Alfred (confirmation-call closer) + Kiran (scheduler) the instant a NEW Lisa booking
+    enters the queue needing a confirmation call. Exactly ONCE per booking (staff_notified_at guard).
+    Lisa-sourced bookings only (human-BDE bookings don't need Alfred's confirm call). Never raises;
+    skips silently when Graph creds or recipients are absent."""
+    recips = settings.emma_booking_notify_list
+    if not (settings.graph_configured and recips):
+        return {"skipped": "no graph/recipients"}
+    rows = _rows(pool,
+        "SELECT id, dest9, source, company, contact_name, attendee_email, agreed_text, start_at, "
+        "       domain, summary, booked_at "
+        "FROM emma_meetings "
+        "WHERE staff_notified_at IS NULL "
+        "  AND source LIKE 'lisa%' "                       # Lisa bookings only — Alfred confirms these
+        "  AND status IN ('draft','needs-info','approved-awaiting-creds') "
+        "  AND booked_at IS NOT NULL "
+        "ORDER BY booked_at ASC LIMIT 25")
+    sent = 0
+    for r in rows:
+        try:
+            subject, html = _booking_alert_email(settings, r)
+            for to in recips:
+                graph_send_mail(settings, to, subject, html)
+            _exec(pool, "UPDATE emma_meetings SET staff_notified_at=now(), updated_at=now() WHERE id=%s", (r["id"],))
+            _log_event(pool, r["id"], "staff_notified", recipients=recips, company=r.get("company"))
+            sent += 1
+        except Exception as exc:
+            log.warning("emma_staff_notify_failed", meeting_id=r.get("id"), error=str(exc)[:140])
+    if sent:
+        log.info("emma_staff_notified", bookings=sent, recipients=len(recips))
+    return {"notified": sent, "recipients": len(recips)}
+
+
 def emma_tick(pool: ConnectionPool, settings: Settings) -> dict:
     """Emma's heartbeat: refresh the unified queue, then (only when the Graph credentials are
     present) send approved invites, poll RSVPs, read replies and fire due reminders. Everything
@@ -2096,6 +2207,8 @@ def emma_tick(pool: ConnectionPool, settings: Settings) -> dict:
         ensure_emma_tables(pool)
         stats: dict = {"queue": sync_queue(pool, settings, min_interval_seconds=120)}
         if settings.graph_configured:
+            # alert Alfred + Kiran of brand-new bookings needing a confirmation call (once each)
+            stats["staff_notify"] = notify_staff_new_bookings(pool, settings)
             stats["send"] = process_awaiting(pool, settings)
             stats["responses"] = poll_responses(pool, settings)
             stats["replies"] = scan_replies(pool, settings)

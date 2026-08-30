@@ -315,7 +315,12 @@ def report(pool) -> dict:
         "FROM booked_crm") or [{}]
     r = rows[0]
     recent = _l._fetch(pool,
-        "SELECT b.dest9, b.company, b.recovery_status, "
+        # booked_crm has NO company column (500'd the Outbound-Intelligence page, 2026-08-30) — pull the
+        # prospect's name from their latest named Lisa call instead.
+        "SELECT b.dest9, "
+        "  (SELECT lc.company_name FROM lisa_calls lc WHERE lc.dest9=b.dest9 "
+        "     AND COALESCE(lc.company_name,'')<>'' ORDER BY lc.started_at DESC LIMIT 1) AS company, "
+        "  b.recovery_status, "
         "  to_char(b.recovery_sent_at,'Mon DD HH24:MI') sent_at, "
         "  (b.recovery_reply_at IS NOT NULL) replied, (b.recovery_rebooked_at IS NOT NULL) rebooked "
         "FROM booked_crm b WHERE b.recovery_sent_at IS NOT NULL "

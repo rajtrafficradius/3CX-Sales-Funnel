@@ -369,7 +369,8 @@ def run_gmaps_autosweep(pool, settings, *, stock_floor: int = 500, min_gap_hours
 # team. Pull them so the rebuild shows the real business instead of stock. Every hop is guarded: no key /
 # no match / any API error -> [] (never raises), so a photo miss never blocks a build.
 
-_PHOTO_MAX_PX = 1200          # size cap on each fetched image (keeps the data URI a sane size)
+_PHOTO_MAX_PX = 2000          # size cap on each fetched image — 1200 blurred when stretched full-bleed on
+                              # 1440+ screens (Whyalla 2026-08-27); 2000 stays sharp at hero size, data URI ~2x
 
 
 def _places_key(settings: Settings) -> str:

@@ -76,13 +76,58 @@ _LEGAL = _re.compile(r"\b(the trustee for|pty\.?\s*ltd\.?|p/?l|ltd\.?|proprietar
                      r"trust|t/?as|trading as|holdings|enterprises)\b", _re.I)
 
 
+_TRADING_AS = _re.compile(r"\b(?:t/?as|trading as)\s+(.+)$", _re.I)
+
+
+def _strip_legal_boilerplate(raw: str) -> str:
+    """Reduce a legal / trust entity name to its recognizable core so an audit shows a REAL name, never a
+    placeholder. 'The trustee for The Hutchinson Family Trust & The trustee for The Page Family Trust'
+    -> 'Hutchinson Family Trust'; 'Smith Pty Ltd' -> 'Smith'; "X Co t/as Joe's Plumbing" -> "Joe's Plumbing"."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    m = _TRADING_AS.search(s)                       # 'trading as NAME' -> the real trading name
+    if m and m.group(1).strip():
+        return m.group(1).strip(" .,&-")
+    # multiple 'trustee for ... trust' clauses joined by & / and -> keep only the FIRST entity
+    s = _re.split(r"\s*(?:&|/|,|\band\b)\s+the trustee for\b", s, flags=_re.I)[0]
+    s = _re.sub(r"^\s*(the\s+)?(as\s+)?(trustee for|a\.?t\.?f\.?)\s+", "", s, flags=_re.I)  # drop 'the trustee for'
+    s = _re.sub(r"^\s*the\s+", "", s, flags=_re.I)                                          # drop leading 'The'
+    s = _re.sub(r"\s*\b(pty\.?\s*ltd\.?|p/?l|proprietary( limited)?|ltd\.?|limited|inc(orporated)?\.?)\.?\s*$",
+                "", s, flags=_re.I)                                                          # drop trailing co. suffix
+    # drop a trailing legal wrapper ('... Unit Trust' -> '...', 'Hutchinson Family Trust' -> 'Hutchinson'),
+    # but only when a distinctive name remains in front of it.
+    _stripped = _re.sub(r"\s*\b((unit|family|discretionary|hybrid)\s+)?trust\b\.?\s*$", "", s, flags=_re.I).strip(" .,&-")
+    if _stripped and any(len(t) >= 3 for t in _stripped.split()):
+        s = _stripped
+    return s.strip(" .,&-")
+
+
+def _looks_placeholder(s: str) -> bool:
+    """True for a domain-derived name that reads like a blank/placeholder — e.g. 'Scale X' (a bare single-letter
+    token) or a stub under 3 chars. Such a string must NEVER be shown as the business name on an audit."""
+    toks = [t for t in (s or "").split() if t]
+    return (not toks) or any(len(t) == 1 for t in toks) or len(s.replace(" ", "")) < 3
+
+
 def _clean_name(name: str, company: str, domain: str) -> str:
+    # 1) a clean, non-legal trading name always wins
     for cand in (company, name):
         c = (cand or "").strip()
         if c and not _LEGAL.search(c) and c.lower() not in ("none", ""):
             return c
+    # 2) the recognizable core of the legal/trust name — this is the REAL brand and beats a domain run-on:
+    #    'KINA DIVING PTY LTD' -> 'Kina Diving' (not the domain 'kinacommercialdiving'); the trustee case
+    #    -> 'Hutchinson Family Trust'. Require a token with real letters so stubs ('A1 Pty Ltd') fall through.
+    for cand in (company, name):
+        core = _strip_legal_boilerplate(cand)
+        if core and len(core) >= 3 and any(len(t) >= 3 for t in core.split()):
+            return core.title() if (core.islower() or core.isupper()) else core
+    # 3) a descriptive domain brand — only if it doesn't read like a placeholder ('scale-x' -> 'Scale X')
     base = (domain or "").split("/")[0].split(".")[0].replace("-", " ").strip()
-    return base.title() if base else (company or name or "your business")
+    if base and not _looks_placeholder(base):
+        return base.title()
+    return (company or name or "your business")
 
 
 def _nums_in(text) -> set:
@@ -157,12 +202,18 @@ def service_seeds(settings, company, industry=None, sub_industry=None, limit=14)
     LLM-derived (guarded), with a light fallback from the industry text. Returns short keywords (no brand,
     no suburb/location, no filler); [] only if there's truly nothing to go on."""
     def _fallback():
-        text = f"{sub_industry or ''} {industry or ''}".lower()
-        base = [w for w in _re.split(r"[^a-z]+", text) if len(w) > 3 and w not in
-                ("services", "service", "other", "general", "nonresidential", "residential", "building")]
+        # NEVER emit a bare industry NOUN: 'Animal Production' seeded 'animal' -> DataForSEO returned
+        # wildlife searches ('quokka animal', 'capybara animal') on the Prendergast audit (2026-08-28).
+        # Only the full COMPOUND label (2+ words) is safe enough to seed; a bare sector word is not.
+        # A thin audit is honest; a wildlife audit destroys credibility. [] => seed-less (thin) path.
         seeds = []
-        for w in base[:4]:
-            seeds += [w, w + " services", w + " company", w + " near me"]
+        for label in (sub_industry, industry):
+            t = (label or "").lower()
+            t = _re.sub(r"\b(sector|other|general|misc(ellaneous)?|n\.?e\.?c\.?)\b", " ", t)
+            t = _re.sub(r"[^a-z ]+", " ", t)
+            t = _re.sub(r"\s+", " ", t).strip()
+            if t and " " in t and len(t) >= 8:          # compound phrase only, never one bare noun
+                seeds.append(t)
         return list(dict.fromkeys(seeds))[:limit]
     key = (getattr(settings, "anthropic_api_key", "") or "").strip()
     if not key and not (industry or sub_industry):
@@ -2080,6 +2131,7 @@ def gen_growth_audit(key: str, model: str, audit_model: dict, avg_ticket: float 
             # honest hero state. The seed-cluster table pivots "we found little on your domain" into the real
             # market demand (from service/product keyword clusters) — so the audit is never empty even here.
             body = (_thin_state(name, d, m, nv, allowed)   # honest limited-data state — no empty sections
+                    + _pagespeed(m, nv, allowed)           # site speed is independent of keyword data — show it even here
                     + _seed_cluster_strategy(m, nv, allowed)
                     + _growth_strategy(key, model, m, name, allowed, thin=True))
         else:
@@ -2088,6 +2140,7 @@ def gen_growth_audit(key: str, model: str, audit_model: dict, avg_ticket: float 
                 _methodology(m, nv, allowed),
                 _findings(seeds, nv, allowed),
                 _visibility(m, nv, allowed),
+                _pagespeed(m, nv, allowed),
                 _money_tables(m, nv, allowed),
                 _clusters_funnel(m, nv, allowed),
                 _benchmark(m, nv, allowed),
@@ -2120,3 +2173,246 @@ def gen_growth_audit(key: str, model: str, audit_model: dict, avg_ticket: float 
         return html
     except Exception:
         return None
+
+
+# --------------------------------------------------------------------------- #
+# PageSpeed & Core Web Vitals section (DataForSEO Lighthouse — lab-only; reads m['pagespeed'])
+# --------------------------------------------------------------------------- #
+_CWV = {
+    "lcp": {"good": 2500, "poor": 4000, "short": "Loading speed", "name": "Largest Contentful Paint",
+            "plain": "how long until the main thing on your page actually appears", "unit": "s", "div": 1000.0},
+    "inp": {"good": 200, "poor": 500, "short": "Responsiveness", "name": "Interaction to Next Paint",
+            "plain": "how quickly the page reacts when someone taps or clicks", "unit": "ms", "div": 1.0},
+    "cls": {"good": 0.1, "poor": 0.25, "short": "Visual stability", "name": "Cumulative Layout Shift",
+            "plain": "how much the page jumps around while it loads", "unit": "", "div": 1.0},
+}
+
+
+def _grade_cwv(metric, value):
+    t = _CWV[metric]
+    if value < t["good"]:
+        return ("Good", "#2f7d52", "This is where Google wants it — nothing to fix here.")
+    if value < t["poor"]:
+        return ("Needs work", "#c8802a", "Over Google's bar for a good experience — worth tightening.")
+    return ("Poor", "#a6432c", "Well past Google's limit — this is actively costing you visitors.")
+
+
+def _fmt_cwv(metric, value):
+    t = _CWV[metric]
+    if t["unit"] == "s":
+        return f'{value / t["div"]:.1f}s'
+    if t["unit"] == "ms":
+        return f'{int(round(value))}ms'
+    return f'{value:.2f}'
+
+
+def _ps_gauge(score, label):
+    """Speed gauge — mirrors growth_audit._gauge (same geometry/palette) with a custom caption."""
+    try:
+        sc = max(0, min(100, int(round(float(score)))))
+    except Exception:
+        sc = 0
+    word, col = _band(sc)
+    C = 515.0
+    dash = round(sc / 100.0 * C, 1)
+    return ('<div class="gauge"><svg viewBox="0 0 200 200" width="220" height="220">'
+            '<circle cx="100" cy="100" r="82" fill="none" stroke="#eee7d8" stroke-width="20"/>'
+            f'<circle cx="100" cy="100" r="82" fill="none" stroke="{col}" stroke-width="20" stroke-linecap="round" '
+            f'stroke-dasharray="{dash} {C - dash:.1f}" transform="rotate(-90 100 100)"/></svg>'
+            f'<div class="num"><b>{sc}</b><span>{_e(label)}</span><em style="color:{col}">{word}</em></div></div>')
+
+
+def _pagespeed(m, nv, allowed):
+    """PageSpeed & Core Web Vitals — mobile speed gauge, the three Core Web Vitals graded in plain
+    English against Google's thresholds (from a Lighthouse LAB test — we have no real-user data, and
+    say so), the biggest speed wins, and the revenue cost of a slow phone load framed on avg_ticket.
+    Returns '' when there's nothing measurable (never an empty shell)."""
+    ps = m.get("pagespeed") or {}
+    mob = ps.get("mobile") or {}
+    dsk = ps.get("desktop") or {}
+    lab = mob.get("lab") or {}
+    perf = mob.get("performance")
+    # nothing measurable at all → omit the whole section
+    if perf is None and not lab and not (mob.get("opportunities") or []):
+        return ""
+    rev = m.get("revenue") or {}
+    ticket = rev.get("avg_ticket")
+
+    # DataForSEO Lighthouse is lab-only — the honest, repeated provenance line for this section.
+    _lab_src = ("Source: Google Lighthouse (via DataForSEO) — a lab test on a simulated mid-tier phone. "
+                "It's a controlled diagnostic, not a reading from your real visitors, so treat the numbers "
+                "as directional. Lab scores naturally vary a few points run-to-run.")
+
+    # 1) Prominent mobile speed gauge + desktop / category chips ----------------------------------
+    gauge = _ps_gauge(perf, "Mobile speed score") if perf is not None else ""
+    chips = []
+    if dsk.get("performance") is not None:
+        _w, c = _band(dsk["performance"])
+        chips.append(f'<div class="ps-chip"><b style="color:{c}">{dsk["performance"]}</b><span>Desktop speed</span></div>')
+    for lab_name, k in (("SEO", "seo"), ("Accessibility", "accessibility"), ("Best practices", "best_practices")):
+        v = mob.get(k)
+        if v is not None:
+            _w, c = _band(v)
+            chips.append(f'<div class="ps-chip"><b style="color:{c}">{v}</b><span>{lab_name}</span></div>')
+    chip_html = f'<div class="ps-chips">{"".join(chips)}</div>' if chips else ""
+    verdict_line = ""
+    if perf is not None:
+        if perf < 50:
+            verdict_line = ("On a phone — how most of your customers arrive — your site scores "
+                            f"<b>{perf}/100</b> for speed. That's slow enough that people feel the wait, "
+                            "and many won't hang around for it.")
+        elif perf < 90:
+            verdict_line = (f"On a phone your site scores <b>{perf}/100</b> for speed — usable, but with clear "
+                            "room to get faster and hold more of the visitors you're already paying to attract.")
+        else:
+            verdict_line = (f"On a phone your site scores <b>{perf}/100</b> for speed — genuinely fast. "
+                            "That's an advantage worth protecting.")
+    top = (f'<div class="ps-hero"><div>{gauge}</div><div class="ps-hero-txt">'
+           f'<p style="margin:0 0 12px">{verdict_line}</p>{chip_html}</div></div>') if gauge else chip_html
+
+    # 2) The three Core Web Vitals, graded in plain English (LAB values) ---------------------------
+    measured = {}
+    if lab.get("lcp_ms") is not None:
+        measured["lcp"] = lab["lcp_ms"]
+    if lab.get("cls") is not None:
+        measured["cls"] = lab["cls"]
+    inp_proxy = ("inp" not in measured and lab.get("tbt_ms") is not None)   # INP has no lab metric — TBT is the honest proxy
+    cwv_cards = ""
+    for metric in ("lcp", "inp", "cls"):
+        if metric == "inp":
+            if not inp_proxy:
+                continue
+            tbt = lab["tbt_ms"]
+            v_word, col = (("Good", "#2f7d52") if tbt < 200 else
+                           ("Needs work", "#c8802a") if tbt < 600 else ("Poor", "#a6432c"))
+            cwv_cards += ('<div class="cwv-card"><div class="cwv-top">'
+                          '<span class="cwv-name">Responsiveness</span>'
+                          f'<span class="cwv-verdict" style="color:{col}">{v_word}</span></div>'
+                          f'<div class="cwv-val" style="color:{col}">{int(round(tbt))}ms <small>blocking</small>'
+                          '<span class="cwv-lab">lab proxy</span></div>'
+                          '<p class="cwv-plain"><b>How quickly the page reacts when someone taps or clicks.</b> '
+                          'Google measures this from real visitors (Interaction to Next Paint); we don\'t have that '
+                          'feed, so this is the closest lab stand-in — total blocking time.</p></div>')
+            continue
+        if metric not in measured:
+            continue
+        value = measured[metric]
+        t = _CWV[metric]
+        v_word, col, read = _grade_cwv(metric, value)
+        cwv_cards += ('<div class="cwv-card"><div class="cwv-top">'
+                      f'<span class="cwv-name">{_e(t["short"])}</span>'
+                      f'<span class="cwv-verdict" style="color:{col}">{v_word}</span></div>'
+                      f'<div class="cwv-val" style="color:{col}">{_fmt_cwv(metric, value)} '
+                      f'<small>target &lt; {_fmt_cwv(metric, t["good"])}</small>'
+                      '<span class="cwv-lab">lab estimate</span></div>'
+                      f'<p class="cwv-plain"><b>{_e(t["plain"][:1].upper() + t["plain"][1:])}.</b> {_e(read)}</p></div>')
+    cwv_block = ""
+    if cwv_cards:
+        n_measured = len(measured) + (1 if inp_proxy else 0)
+        overall_note = ('<div class="cwv-overall">These are single lab measurements of the three metrics Google '
+                        'groups as Core Web Vitals — a reliable early read on the experience it rewards in search, '
+                        'but not its official real-visitor verdict (that needs more live traffic than a controlled '
+                        'test can stand in for).</div>') if n_measured else ""
+        cwv_block = ('<h3 class="ps-h3">Your three Core Web Vitals — the experience Google actually grades</h3>'
+                     f'{overall_note}<div class="cwv-grid">{cwv_cards}</div>{_src(_lab_src)}')
+
+    # 3) Biggest speed opportunities --------------------------------------------------------------
+    opp_block = ""
+    opps = mob.get("opportunities") or []
+    if opps:
+        rows = ""
+        for o in opps:
+            ms = o.get("savings_ms") or 0
+            secs = ms / 1000.0
+            saved = f'{secs:.1f}s faster' if secs >= 0.1 else f'{ms}ms faster'
+            rows += (f'<li><div class="opp-lab">{o.get("label") or ""}</div>'
+                     f'<div class="opp-save">up to <b>{_e(saved)}</b></div></li>')
+        opp_block = ('<h3 class="ps-h3">The biggest wins — where the seconds are hiding</h3>'
+                     f'<ul class="opp-list">{rows}</ul>'
+                     f'{_src("Source: Google Lighthouse (via DataForSEO) — estimated load-time saved on mobile for each fix. Every item is a specific, fixable thing on the page.")}')
+
+    # 4) Revenue framing on avg_ticket + credible public benchmarks -------------------------------
+    rev_block = ""
+    load_ms = lab.get("lcp_ms")
+    if load_ms is not None:
+        load_s = load_ms / 1000.0
+        ticket_txt = _fmt_money(ticket) if ticket else "a typical job"
+        tkt_est = rev.get("avg_ticket_estimated")
+        stat = None
+        if load_s >= 3.0:
+            headline = (f"Your main content takes about <b>{load_s:.1f} seconds</b> to appear on a phone. Google's "
+                        "own research found <b>53% of mobile visits are abandoned when a page takes longer than 3 "
+                        "seconds to load</b>.")
+            stat = ("53%", "of mobile visitors give up before a 3s+ page loads",
+                    "Source: Google / DoubleClick mobile speed research, 2016.")
+        elif load_s >= 2.5:
+            headline = (f"Your main content takes about <b>{load_s:.1f} seconds</b> on a phone — just over Google's "
+                        "2.5-second 'good' bar. Bounce risk climbs steeply in exactly this 2–4 second band.")
+            stat = ("+32%", "bounce risk as mobile load goes from 1s to 3s",
+                    "Source: Google / SOASTA page-speed research, 2017.")
+        else:
+            headline = (f"Your main content appears in about <b>{load_s:.1f} seconds</b> on a phone — inside Google's "
+                        "2.5-second target. That speed is quietly winning you visitors your slower competitors lose.")
+        uplift = ""
+        pct = 0
+        if load_s > 2.5:
+            gap = load_s - 2.5
+            pct = min(60, round(gap * 10 * 8.4))   # ~8.4% conversion lift per 0.1s, capped conservatively
+            job_line = (f" On a job worth {ticket_txt}{' (est.)' if tkt_est else ''}, that lift lands straight on "
+                        "your bottom line — same ads, same calls, more of them turning into paid work.") if ticket else ""
+            uplift = ('<p style="margin:14px 0 0">Google and Deloitte\'s <i>Milliseconds Make Millions</i> study '
+                      'found every 0.1s of mobile speed lifts conversions ~8.4%. Getting you back under the 2.5s bar '
+                      f'is roughly a <b>{pct}% lift in enquiries from the traffic you already have</b>.{job_line}</p>')
+        stat_html = f'<div class="oppstat light"><b>{stat[0]}</b><span>{_e(stat[1])}</span></div>' if stat else ""
+        abs_html = ""
+        monthly = rev.get("monthly")
+        if monthly and pct:   # absolute $ ONLY off a real model figure — never fabricated here
+            recover = round(float(monthly) * (pct / 100.0))
+            if recover >= 1:
+                abs_html = (f'<div class="oppstat light"><b>{_fmt_money(recover)}<i>/mo</i></b><span>illustrative work '
+                            'recoverable from speed alone, on your current pipeline</span></div>')
+        grid = f'<div class="oppgrid" style="margin-top:6px">{stat_html}{abs_html}</div>' if (stat_html or abs_html) else ""
+        cap = ("Public benchmarks applied illustratively to your measured mobile load — a way to size the cost of "
+               "slowness, not a promise. Uplift uses the Deloitte/Google 8.4%-per-0.1s figure, capped conservatively.")
+        rev_block = ('<div class="oppcard ps-cost"><h3 style="margin-top:0">What a slow phone experience costs you</h3>'
+                     f'<p>{headline}</p>{grid}{uplift}'
+                     f'<div class="srccap onopp">{_e((stat[2] + " " if stat else "") + cap)}</div></div>')
+
+    body = f'{top}{cwv_block}{opp_block}{rev_block}'
+    intro = _clean_prose(nv.get("intro_pagespeed"), allowed,
+                         "Most of your customers meet you on a phone first. Here's how fast that first impression "
+                         "loads — measured with Google's own Lighthouse engine — and what the wait is costing you.")
+    return _sec("Speed &amp; Core Web Vitals",
+                "How fast your site feels on a phone — and what slow costs you", intro, body)
+
+
+# --- extra CSS to append to the _CSS string (uses the existing cstda tokens) ------------------
+_PAGESPEED_CSS = """
+.ps-hero{display:flex;gap:28px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.ps-hero-txt{flex:1;min-width:240px}
+.ps-h3{font-size:19px;margin:30px 0 12px}
+.ps-chips{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px}
+.ps-chip{background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:11px 16px;min-width:96px}
+.ps-chip b{display:block;font-family:var(--serif);font-size:22px;line-height:1}
+.ps-chip span{font-size:11.5px;color:var(--muted);display:block;margin-top:4px}
+.cwv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:640px){.cwv-grid{grid-template-columns:1fr}.ps-hero{gap:16px}}
+.cwv-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow)}
+.cwv-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.cwv-name{font-size:13px;font-weight:700;color:var(--ink-2)}
+.cwv-verdict{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.cwv-val{font-family:var(--serif);font-size:30px;color:var(--ink);margin:8px 0 6px;line-height:1}
+.cwv-val small{font-family:var(--sans);font-size:12px;color:var(--muted);font-weight:600;margin-left:6px}
+.cwv-lab{display:inline-block;font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:#8a5410;background:var(--amber-soft);border-radius:6px;padding:2px 7px;margin-left:8px;vertical-align:middle}
+.cwv-plain{font-size:13px;color:var(--ink-2);margin:0;line-height:1.5}
+.cwv-overall{font-size:14px;border-radius:10px;padding:12px 15px;margin:2px 0 16px;background:var(--paper-2);border:1px solid var(--line);color:var(--ink-2)}
+.opp-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:10px}
+.opp-list li{display:flex;justify-content:space-between;align-items:center;gap:16px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;padding:13px 16px}
+.opp-lab{font-size:14.5px;color:var(--ink);font-weight:600}
+.opp-save{font-size:13px;color:var(--muted);white-space:nowrap}.opp-save b{color:var(--forest)}
+.ps-cost{margin-top:26px}
+"""
+
+
+_CSS = _CSS + _PAGESPEED_CSS  # register the PageSpeed section styles into the page stylesheet
