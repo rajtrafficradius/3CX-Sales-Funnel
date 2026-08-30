@@ -2518,16 +2518,24 @@ def schedule_lisa4_followup(pool: ConnectionPool, settings: Settings, *, dest9: 
 L4_LINE_DIGITS_ALL = ("468030256", "489266405", "495044526", "468091513")
 L4_LINE_RX = "(" + "|".join(L4_LINE_DIGITS_ALL) + ")"
 L4_LINE_DIGITS = L4_LINE_DIGITS_ALL[0]  # legacy single-line marker (pre-rotation importers)
-_L4_PRED = ("(COALESCE(from_number,'') ~ %s "
-            "OR COALESCE(to_number,'') ~ %s)")
+# 468091513 CHANGED HANDS (confirmed from dialed-pool data, 2026-08-30): Lisa-4's rotation until
+# 2026-08-17, Lisa-5's from 2026-08-18 (149-150 D&B dials/day since). The GUARD registries above keep it
+# in BOTH sets (append-only, self-dial safety); ATTRIBUTION is made date-aware here instead so each row
+# lands on the agent who actually made/took it. Bookings Aug-24/26 on this line were Lisa-5's.
+_N091513_SWITCH = "'2026-08-18 00:00:00+10'"
+_ON_091513 = "(COALESCE(from_number,'') ~ '468091513' OR COALESCE(to_number,'') ~ '468091513')"
+_L4_PRED = ("((COALESCE(from_number,'') ~ %s "
+            "OR COALESCE(to_number,'') ~ %s) "
+            f"AND NOT ({_ON_091513} AND created_at >= {_N091513_SWITCH}))")
 # Lisa-5 line registry (append-only, same either-leg rule as Lisa-4). Lisa-5 got her own caller IDs
 # AFTER the 2-agent partition above was written, so her legs were falling into the Lisa-1 bucket and
 # her calls/inbound callbacks showed up on the OFF Lisa-1 card (Raj flagged 2026-08-14). Lisa-1 must be
 # EVERYTHING that is neither Lisa-4 nor Lisa-5.
 L5_LINE_DIGITS_ALL = ("468096730", "468008827")
 L5_LINE_RX = "(" + "|".join(L5_LINE_DIGITS_ALL) + ")"
-_L5_PRED = ("(COALESCE(from_number,'') ~ %s "
-            "OR COALESCE(to_number,'') ~ %s)")
+_L5_PRED = ("((COALESCE(from_number,'') ~ %s "
+            "OR COALESCE(to_number,'') ~ %s) "
+            f"OR ({_ON_091513} AND created_at >= {_N091513_SWITCH}))")
 
 
 def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: list[str],
@@ -2540,7 +2548,9 @@ def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: lis
     # Lisa-1 = neither Lisa-4 NOR Lisa-5 (else Lisa-5's legs leak onto the OFF Lisa-1 card).
     attr = _L4_PRED if lisa4 else f"(NOT {_L4_PRED} AND NOT {_L5_PRED})"
     if lisa4:
-        out_cond, out_param = "COALESCE(from_number,'') ~ %s", L4_LINE_RX
+        out_cond = ("(COALESCE(from_number,'') ~ %s AND NOT (COALESCE(from_number,'') ~ '468091513' "
+                    f"AND created_at >= {_N091513_SWITCH}))")
+        out_param = L4_LINE_RX
         attr_params = (L4_LINE_RX, L4_LINE_RX)
     else:
         out_cond, out_param = "from_number = ANY(%s)", list(out_numbers or [])

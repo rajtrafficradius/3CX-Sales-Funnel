@@ -345,23 +345,29 @@ def daily_series(pool, days: int = 30) -> list:
         fx_sh = (p["railway_month"] + p["fireflies_month"]) / 30.0
         out = []
         today = date.today()
+
+        def f(row, key):        # Postgres numerics arrive as Decimal — coerce before float math
+            try:
+                return float(row.get(key) or 0)
+            except Exception:
+                return 0.0
         for i in range(days - 1, -1, -1):
             d = str(today - timedelta(days=i))
             a = ai.get(d) or {}
             s = sms.get(d) or {}
             asr = assets.get(d) or {}
             b = bde.get(d) or {}
-            opus = (_mtok((asr.get("sites") or 0) * p["opus_tokens_site_out"] + (asr.get("audits") or 0) * p["opus_tokens_audit_out"]
-                          + (asr.get("comps") or 0) * p["opus_tokens_comparison_out"]) * p["opus_out_per_mtok"]
-                    + _mtok((asr.get("sites") or 0) * p["opus_tokens_site_in"] + (asr.get("audits") or 0) * p["opus_tokens_audit_in"]
-                            + (asr.get("comps") or 0) * p["opus_tokens_comparison_in"]) * p["opus_in_per_mtok"])
-            gpt = (_mtok((a.get("classified") or 0) * p["gpt_tokens_classify_in"]) * p["gpt4omini_in_per_mtok"]
-                   + _mtok((a.get("classified") or 0) * p["gpt_tokens_classify_out"]) * p["gpt4omini_out_per_mtok"])
-            outbound = ((a.get("minutes") or 0) * p["retell_per_min"] + (s.get("n") or 0) * p["twilio_sms_au"]
-                        + opus + gpt + (asr.get("audits") or 0) * p["dataforseo_audit"] + fx_out)
-            human = ((b.get("tx_min") or 0) * p["whisper_per_min"]
-                     + _mtok((b.get("cls") or 0) * p["gpt_tokens_classify_in"]) * p["gpt4omini_in_per_mtok"]
-                     + _mtok((b.get("cls") or 0) * p["gpt_tokens_classify_out"]) * p["gpt4omini_out_per_mtok"] + fx_bde)
+            opus = (_mtok(f(asr, "sites") * p["opus_tokens_site_out"] + f(asr, "audits") * p["opus_tokens_audit_out"]
+                          + f(asr, "comps") * p["opus_tokens_comparison_out"]) * p["opus_out_per_mtok"]
+                    + _mtok(f(asr, "sites") * p["opus_tokens_site_in"] + f(asr, "audits") * p["opus_tokens_audit_in"]
+                            + f(asr, "comps") * p["opus_tokens_comparison_in"]) * p["opus_in_per_mtok"])
+            gpt = (_mtok(f(a, "classified") * p["gpt_tokens_classify_in"]) * p["gpt4omini_in_per_mtok"]
+                   + _mtok(f(a, "classified") * p["gpt_tokens_classify_out"]) * p["gpt4omini_out_per_mtok"])
+            outbound = (f(a, "minutes") * p["retell_per_min"] + f(s, "n") * p["twilio_sms_au"]
+                        + opus + gpt + f(asr, "audits") * p["dataforseo_audit"] + fx_out)
+            human = (f(b, "tx_min") * p["whisper_per_min"]
+                     + _mtok(f(b, "cls") * p["gpt_tokens_classify_in"]) * p["gpt4omini_in_per_mtok"]
+                     + _mtok(f(b, "cls") * p["gpt_tokens_classify_out"]) * p["gpt4omini_out_per_mtok"] + fx_bde)
             out.append({"date": d, "outbound": round(outbound, 2), "human_bde": round(human, 2),
                         "shared": round(fx_sh, 2), "total": round(outbound + human + fx_sh, 2)})
         return out

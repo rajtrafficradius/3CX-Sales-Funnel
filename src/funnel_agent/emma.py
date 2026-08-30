@@ -491,7 +491,7 @@ def sync_queue(pool: ConnectionPool, settings: Settings, *, min_interval_seconds
             + nf_cols + [_clean("b.prospect_name"), "'0'||b.dest9"]) + ")"
         # Line attribution: match against the FULL Lisa-4 caller-ID registry (all lines Lisa-4 has ever owned),
         # not just the original 0256 — otherwise the newer L4 lines (Buraq/ZS etc.) mis-tag as lisa1.
-        from .lisa4 import L4_LINE_RX  # single source of truth for the Lisa-4 line set
+        from .lisa4 import L4_LINE_RX, _N091513_SWITCH  # single source of truth for the Lisa-4 line set
         lisa = _exec(pool, f"""
         WITH booked AS (
           SELECT DISTINCT ON (dest9) dest9, call_id, company_name, prospect_name,
@@ -499,8 +499,11 @@ def sync_queue(pool: ConnectionPool, settings: Settings, *, min_interval_seconds
                  -- business line: Lisa-4 sells WEBSITES on any of her registered lines; everything else is
                  -- Lisa-1 selling organic & paid marketing (same rule as the Booked CRM). Match EITHER leg
                  -- against the full L4 caller-ID registry so inbound call-backs attribute to the right line.
-                 (COALESCE(from_number,'') ~ '{L4_LINE_RX}'
-                  OR COALESCE(to_number,'') ~ '{L4_LINE_RX}') AS is_lisa4
+                 -- 468091513 moved to Lisa-5 on 2026-08-18 — date-aware, same rule as the floor cards.
+                 ((COALESCE(from_number,'') ~ '{L4_LINE_RX}'
+                  OR COALESCE(to_number,'') ~ '{L4_LINE_RX}')
+                  AND NOT ((COALESCE(from_number,'') ~ '468091513' OR COALESCE(to_number,'') ~ '468091513')
+                           AND created_at >= {_N091513_SWITCH})) AS is_lisa4
           FROM lisa_calls
           WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
             AND created_at > now() - interval '60 days'

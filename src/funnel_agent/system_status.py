@@ -263,11 +263,14 @@ def compute(pool, settings) -> dict:
         from . import cost as _cost
         ts = _cost.twilio_status(settings, days=1) or {}
         bal = ts.get("balance")
-        low = ts.get("low")
         if bal is None:
             return "unknown", "balance API unavailable", None, None
-        state = "down" if (low and bal < 20) else ("warn" if low else "ok")
-        return state, f"${bal:.2f} balance" + (" · LOW" if low else ""), None, round(bal, 2)
+        # twilio_status() returns only the raw balance — derive LOW here from the configured threshold
+        # (the old ts.get('low') was never set, so an $11 balance showed 'ok': 2026-08-30 bug).
+        thr = float((_cost._prices(pool) or {}).get("twilio_low_balance") or 50.0)
+        low = bal < thr
+        state = "down" if bal < 20 else ("warn" if low else "ok")
+        return state, f"${bal:.2f} balance" + (f" · LOW (<${thr:.0f}) — TOP UP" if low else ""), None, round(bal, 2)
     tiles.append(_tile("twilio", "Twilio balance (SMS/voice)", "Billing", *guard(_twilio)))
 
     # ---------- DATAFORSEO BALANCE ----------
@@ -290,6 +293,113 @@ def compute(pool, settings) -> dict:
         return state, f"${bal:.2f} balance", None, round(bal, 2)
     tiles.append(_tile("dataforseo", "DataForSEO balance (audits)", "Billing", *guard(_dfs)))
 
+    # ---------- LISA 4 DIALER (own toggle + line set + pool) ----------
+    def _l4_dialer():
+        from . import lisa4 as _l4
+        on = False
+        try:
+            on = _l4.get_lisa4_autodial(pool, settings)
+        except Exception:
+            pass
+        r = _one(pool, f"SELECT count(*) FILTER (WHERE {_l4._L4_PRED} AND created_at>now()-interval '60 min' "
+                       f"AND from_number ~ %s) n60, "
+                       "count(*) n FROM lisa_calls WHERE created_at>now()-interval '24 hours'",
+                 (_l4.L4_LINE_RX, _l4.L4_LINE_RX, _l4.L4_LINE_RX))
+        n60 = _g(r, "n60", 0)
+        pl = _one(pool, "SELECT count(*) n FROM lisa4_pool lp WHERE NOT EXISTS "
+                        "(SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9)")
+        depth = _g(pl, "n", 0)
+        if not on:
+            state = "warn"
+            det = "toggle OFF"
+        elif hrs:
+            state = "ok" if n60 > 0 else "warn"
+            det = f"ON · {n60} dials/hr"
+        else:
+            state = "idle"
+            det = "ON · off-hours"
+        det += f" · pool {depth:,} unworked"
+        if on and depth < 300:
+            state = "warn" if state in ("ok", "idle") else state
+            det += " · LOW"
+        return state, det, None, depth
+    tiles.append(_tile("lisa4_dialer", "Lisa 4 dialer (websites)", "Calling", *guard(_l4_dialer)))
+
+    # ---------- LISA 5 DIALER ----------
+    def _l5_dialer():
+        from . import lisa4 as _l4
+        from . import lisa5 as _l5
+        on = False
+        try:
+            on = _l5.get_lisa5_autodial(pool, settings)
+        except Exception:
+            pass
+        r = _one(pool, f"SELECT count(*) FILTER (WHERE {_l4._L5_PRED} AND created_at>now()-interval '60 min') n60 "
+                       "FROM lisa_calls WHERE created_at>now()-interval '24 hours'",
+                 (_l4.L5_LINE_RX, _l4.L5_LINE_RX))
+        n60 = _g(r, "n60", 0)
+        pl = _one(pool, "SELECT count(*) n FROM lisa5_pool lp WHERE NOT EXISTS "
+                        "(SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9)")
+        depth = _g(pl, "n", 0)
+        if not on:
+            state, det = "warn", "toggle OFF"
+        elif hrs:
+            state = "ok" if n60 > 0 else "warn"
+            det = f"ON · {n60} dials/hr"
+        else:
+            state, det = "idle", "ON · off-hours"
+        det += f" · pool {depth:,} unworked"
+        return state, det, None, depth
+    tiles.append(_tile("lisa5_dialer", "Lisa 5 dialer (D&B growth)", "Calling", *guard(_l5_dialer)))
+
+    # ---------- EMMA SCHEDULER ----------
+    def _emma():
+        q = _one(pool, "SELECT count(*) FILTER (WHERE status='draft') draft, "
+                       "count(*) FILTER (WHERE status='needs-info') ni, "
+                       "count(*) FILTER (WHERE status='scheduled') sched, "
+                       "max(staff_notified_at) last_alert FROM emma_meetings "
+                       "WHERE booked_at > now()-interval '7 days'")
+        draft, ni = _g(q, "draft", 0), _g(q, "ni", 0)
+        last_alert = _mins_since(_g(q, "last_alert"))
+        gc = bool(getattr(settings, "graph_configured", False))
+        state = "ok" if gc else "warn"
+        det = f"{draft} drafts · {ni} needs-info (7d)" + ("" if gc else " · Graph creds missing")
+        return state, det, _fmt_ago(last_alert), draft + ni
+    tiles.append(_tile("emma", "Emma scheduler + staff alerts", "Autopilot", *guard(_emma)))
+
+    # ---------- SMS ENGINE ----------
+    def _sms():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE direction='outbound' AND created_at>now()-interval '24 hours') o24, "
+                       "count(*) FILTER (WHERE direction='inbound' AND created_at>now()-interval '24 hours') i24, "
+                       "max(created_at) last FROM lisa_sms")
+        o24, i24 = _g(r, "o24", 0), _g(r, "i24", 0)
+        last = _mins_since(_g(r, "last"))
+        state = "ok" if (last is not None and last < 60 * 24) else "idle"
+        return state, f"{o24} out / {i24} in (24h)", _fmt_ago(last), o24
+    tiles.append(_tile("sms", "SMS engine (Twilio 2-way)", "Calling", *guard(_sms)))
+
+    # ---------- BOOKING PIPELINE TODAY ----------
+    def _bookings():
+        r = _one(pool, "SELECT count(*) FILTER (WHERE meeting_agreed AND (started_at AT TIME ZONE "
+                       "'Australia/Melbourne')::date=(now() AT TIME ZONE 'Australia/Melbourne')::date) today, "
+                       "count(*) FILTER (WHERE meeting_agreed AND started_at>now()-interval '7 days') week "
+                       "FROM lisa_calls")
+        today, week = _g(r, "today", 0), _g(r, "week", 0)
+        state = "ok" if week else "idle"
+        return state, f"{today} booked today · {week} this week", None, today
+    tiles.append(_tile("bookings", "Booking capture (G1-gated)", "Intelligence", *guard(_bookings)))
+
+    # ---------- DATABASE ----------
+    def _db():
+        r = _one(pool, "SELECT pg_database_size(current_database()) sz, "
+                       "(SELECT count(*) FROM pg_stat_activity WHERE state='active') act")
+        sz = _g(r, "sz", 0)
+        act = _g(r, "act", 0)
+        gb = sz / 1e9
+        state = "ok" if gb < 8 else "warn"
+        return state, f"{gb:.1f} GB · {act} active queries", None, round(gb, 2)
+    tiles.append(_tile("db", "Postgres (Railway)", "Core", *guard(_db)))
+
     order = {"down": 0, "warn": 1, "unknown": 2, "idle": 3, "ok": 4}
     summary = {"down": 0, "warn": 1, "unknown": 2, "idle": 3, "ok": 4}
     counts = {s: 0 for s in summary}
@@ -297,9 +407,31 @@ def compute(pool, settings) -> dict:
         counts[t["state"]] = counts.get(t["state"], 0) + 1
     overall = "down" if counts.get("down") else ("warn" if counts.get("warn") or counts.get("unknown") else "ok")
     tiles.sort(key=lambda t: order.get(t["state"], 5))
+    # ---------- 24h PULSE (hourly activity for the engine-room chart) ----------
+    pulse = []
+    try:
+        rows = _one_all(pool, "SELECT date_trunc('hour', created_at) h, "
+                              "count(*) FILTER (WHERE right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) <> dest9) dials, "
+                              "count(*) FILTER (WHERE right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) inbound "
+                              "FROM lisa_calls WHERE created_at > now()-interval '24 hours' GROUP BY 1 ORDER BY 1")
+        smsrows = {str(r["h"]): r for r in _one_all(pool, "SELECT date_trunc('hour', created_at) h, count(*) n "
+                                                          "FROM lisa_sms WHERE created_at > now()-interval '24 hours' GROUP BY 1")}
+        for r in rows:
+            k = str(r["h"])
+            pulse.append({"hour": k, "dials": int(r.get("dials") or 0), "inbound": int(r.get("inbound") or 0),
+                          "sms": int((smsrows.get(k) or {}).get("n") or 0)})
+    except Exception:
+        pulse = []
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "overall": overall,
         "counts": counts,
         "engines": tiles,
+        "pulse": pulse,
+        "calling_hours": hrs,
     }
+
+
+def _one_all(pool, sql, args=()):
+    from . import lisa as _l
+    return _l._fetch(pool, sql, args) or []
