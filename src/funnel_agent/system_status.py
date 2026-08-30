@@ -504,6 +504,11 @@ _MODULE_REGISTRY = {
     "db/analytics.py":          ("Core", "Analytics DB access", "db"),
     "db/migrate.py":            ("Core", "Schema migration", None),
     "db/source.py":             ("Core", "Source DB access", None),
+    "__main__.py":              ("Core", "Package entrypoint (python -m funnel_agent)", None),
+    "logging.py":               ("Core", "Structured logging setup", None),
+    "shortlink.py":             ("Autopilot", "Short links for SMS'd audit/site URLs (/s/)", None),
+    "qa/audit.py":              ("Intelligence", "QA event audit trail (gate decisions)", None),
+    "threecx/transcripts.py":   ("Calling", "3CX transcript fetcher", None),
     "dashboard/app.py":         ("Surfaces", "FastAPI web app — every console + API", None),
     "system_status.py":         ("Surfaces", "Engine Room signals (this page)", None),
     "system_blueprint.py":      ("Surfaces", "System map nodes+edges", None),
@@ -517,11 +522,61 @@ _MODULE_REGISTRY = {
 }
 
 
+# Every operator console (dashboard/static/*.html) — the SURFACES of the system.
+_PAGE_REGISTRY = {
+    "index.html": "Main funnel dashboard (React) — live floor, funnel, leaderboards",
+    "tv.html": "TV wall mode — the floor on the big screen",
+    "lisa.html": "Outbound Intelligence console — Lisa floor cards + controls",
+    "lisa-crm.html": "Booked CRM — every Lisa booking through to close",
+    "crm-record.html": "Single-prospect CRM record",
+    "lisa-data.html": "Lisa data browser",
+    "meetings.html": "Meetings board",
+    "next-calls.html": "Next-call coaching queue",
+    "calendar.html": "Calendar — bookings + dial schedule",
+    "pipeline.html": "Pipeline v1", "pipeline2.html": "Pipeline v2 (4-pipeline design)",
+    "prospect.html": "One-prospect intelligence page",
+    "database.html": "Prospect database explorer",
+    "coaching.html": "Coaching intelligence",
+    "agency-rpc.html": "Agency & RPC intelligence",
+    "call.html": "Single-call drilldown",
+    "cost.html": "Cost Intelligence (this suite)",
+    "status.html": "Engine Room (this page)",
+    "blueprint.html": "System blueprint graph",
+    "tasks.html": "Tasks / readiness board",
+    "admin.html": "Admin — users, toggles, config",
+    "login.html": "Sign-in",
+}
+
+# Long-running PROCESSES (from docker-entrypoint.sh) + external SERVICES the engines drive.
+_PROCESSES = [
+    {"name": "Web app (uvicorn)", "role": "Serves every console + API + webhooks", "loop": "always-on"},
+    {"name": "Refresh loop", "role": "Ingest → transcribe → classify → aggregate → capture, every 60s", "loop": "60s"},
+    {"name": "Lisa dial loop", "role": "Lisa-1 dial cadence (gated off)", "loop": "25s"},
+    {"name": "Lisa 4+5 autopilot loop", "role": "Pool prep + builds + ONE dial per agent per tick, self-healing reapers", "loop": "25s"},
+    {"name": "init-db migrator", "role": "Schema migration on every deploy (idempotent)", "loop": "on deploy"},
+]
+_EXTERNALS = [
+    {"name": "Retell AI", "role": "Voice AI — Lisa's calls (agents, webhooks)"},
+    {"name": "Twilio", "role": "Telephony trunk + 2-way SMS + numbers"},
+    {"name": "OpenAI", "role": "Classifier (GPT-4o-mini) + Whisper STT"},
+    {"name": "Anthropic Claude", "role": "Site / audit / comparison builders + seeds"},
+    {"name": "DataForSEO", "role": "SERP, keywords, Lighthouse, ads transparency"},
+    {"name": "Google Places", "role": "Business sweeps + GBP photos"},
+    {"name": "Apollo", "role": "Decision-maker enrichment"},
+    {"name": "Aircall", "role": "Human-BDE telephony (Alfred, Ben)"},
+    {"name": "3CX", "role": "Human-BDE PBX + CDR + recordings"},
+    {"name": "Fireflies", "role": "Meeting recording + transcripts"},
+    {"name": "Microsoft Graph", "role": "Emma's mailbox + calendar invites"},
+    {"name": "Railway", "role": "Cloud host + Postgres"},
+]
+
+
 def module_inventory() -> dict:
     """Walk the deployed source tree and return the REAL engine inventory: every .py module with live
     line-counts, mapped to subsystem + role from the curated registry (unknown files still listed).
     Guarded — {} on any error."""
     import os as _os
+    import re as _re
     try:
         base = _os.path.dirname(_os.path.abspath(__file__))
         mods = []
@@ -542,12 +597,29 @@ def module_inventory() -> dict:
                 grp, role, tile = _MODULE_REGISTRY.get(rel, ("Other", "", None))
                 mods.append({"file": rel, "loc": loc, "group": grp, "role": role, "tile": tile})
         mods.sort(key=lambda m: -m["loc"])
-        pages = 0
+        pages = []
         try:
             sd = _os.path.join(base, "dashboard", "static")
-            pages = len([f for f in _os.listdir(sd) if f.endswith(".html")])
+            for f in sorted(_os.listdir(sd)):
+                if f.endswith(".html"):
+                    try:
+                        with open(_os.path.join(sd, f), "rb") as fh:
+                            ploc = sum(1 for _ in fh)
+                    except Exception:
+                        ploc = 0
+                    pages.append({"file": f, "loc": ploc, "role": _PAGE_REGISTRY.get(f, "")})
         except Exception:
             pass
-        return {"modules": mods, "totals": {"files": len(mods), "loc": total_loc, "pages": pages}}
+        # schema: table count from schema.sql (the data layer is part of the engine too)
+        tables = 0
+        try:
+            with open(_os.path.join(base, "db", "schema.sql")) as fh:
+                tables = len(_re.findall(r"CREATE TABLE", fh.read(), _re.I))
+        except Exception:
+            pass
+        return {"modules": mods, "pages": pages, "processes": _PROCESSES, "externals": _EXTERNALS,
+                "totals": {"files": len(mods), "loc": total_loc, "pages": len(pages),
+                           "page_loc": sum(p["loc"] for p in pages), "tables": tables,
+                           "processes": len(_PROCESSES), "externals": len(_EXTERNALS)}}
     except Exception:
         return {}

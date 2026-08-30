@@ -2,26 +2,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Cost Intelligence · Traffic Radius</title>
 <link rel="icon" href="/logo.png"/>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/htm@3/dist/htm.umd.js"></script>
 <style>
-  :root{--bg:#eef1f6;--panel:#fff;--panel2:#f4f7fb;--zebra:#fafbfe;--line:#dde4ef;--line2:#e7ecf4;--txt:#0e1726;--txt-dim:#51617c;--faint:#8493ab;
-    --accent:#3b49d6;--accent-soft:#e9ebfd;--good:#0f9d58;--good-soft:#e7f6ee;--warn:#c9820a;--warn-soft:#fbf1dc;
-    --blue:#1f6feb;--blue-soft:#e6f0fd;--red:#d9483b;--red-soft:#fbeceb;--rail:#0e1424;--head:#f6f8fc;
-    --gold:#a8720a;--gold-soft:#faf3e0;
-    --c-out:#3b49d6;--c-bde:#c9820a;--c-sh:#8493ab;
-    --sh:0 1px 2px rgba(14,23,38,.05),0 14px 34px -22px rgba(14,23,38,.30)}
-  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#080d17;--panel:#111827;--panel2:#161f31;--zebra:#131c2c;--line:#243049;--line2:#1e293e;
-    --txt:#eaf0fb;--txt-dim:#9fb0c9;--faint:#66768f;--accent:#8a83f5;--accent-soft:#20204a;--good:#43d17f;--good-soft:#102a1c;
-    --warn:#e5a53a;--warn-soft:#2a2110;--blue:#5b9bf5;--blue-soft:#12233c;--red:#f4756a;--red-soft:#2c1512;--rail:#05090f;--head:#121b2b;
-    --gold:#e8b64c;--gold-soft:#2a2110;
-    --c-out:#8a83f5;--c-bde:#e5a53a;--c-sh:#66768f;
+  :root{--bg:#eef1f6;--panel:#fff;--panel2:#f4f7fb;--line:#dde4ef;--line2:#e7ecf4;--txt:#0e1726;--dim:#44536e;--faint:#7b8aa3;
+    --accent:#3b49d6;--accent-soft:#e9ebfd;--good:#0f9d58;--good-soft:#e7f6ee;--warn:#b57608;--warn-soft:#fbf1dc;
+    --red:#d9483b;--red-soft:#fbeceb;--rail:#0e1424;--gold:#a8720a;--gold-soft:#faf3e0;
+    --c-out:#4c5ae0;--c-bde:#d78f14;--c-sh:#8493ab;
+    --sh:0 1px 2px rgba(14,23,38,.05),0 14px 34px -22px rgba(14,23,38,.28)}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0a0f1a;--panel:#121a2b;--panel2:#182236;--line:#263450;--line2:#1f2b42;
+    --txt:#eef3fc;--dim:#b6c3da;--faint:#7e8ea9;--accent:#8f88f7;--accent-soft:#232350;--good:#43d17f;--good-soft:#10301f;
+    --warn:#f0b03f;--warn-soft:#2e2412;--red:#ff7a6e;--red-soft:#301713;--rail:#05090f;--gold:#eec05e;--gold-soft:#2e2412;
+    --c-out:#8f88f7;--c-bde:#f0b03f;--c-sh:#7e8ea9;
     --sh:0 1px 2px rgba(0,0,0,.4),0 18px 40px -24px rgba(0,0,0,.7)}}
-  :root[data-theme="dark"]{--bg:#080d17;--panel:#111827;--panel2:#161f31;--zebra:#131c2c;--line:#243049;--line2:#1e293e;--txt:#eaf0fb;--txt-dim:#9fb0c9;
-    --faint:#66768f;--accent:#8a83f5;--accent-soft:#20204a;--good:#43d17f;--good-soft:#102a1c;--warn:#e5a53a;--warn-soft:#2a2110;
-    --blue:#5b9bf5;--blue-soft:#12233c;--red:#f4756a;--red-soft:#2c1512;--rail:#05090f;--head:#121b2b;
-    --gold:#e8b64c;--gold-soft:#2a2110;--c-out:#8a83f5;--c-bde:#e5a53a;--c-sh:#66768f;
+  :root[data-theme="dark"]{--bg:#0a0f1a;--panel:#121a2b;--panel2:#182236;--line:#263450;--line2:#1f2b42;--txt:#eef3fc;--dim:#b6c3da;
+    --faint:#7e8ea9;--accent:#8f88f7;--accent-soft:#232350;--good:#43d17f;--good-soft:#10301f;--warn:#f0b03f;--warn-soft:#2e2412;
+    --red:#ff7a6e;--red-soft:#301713;--rail:#05090f;--gold:#eec05e;--gold-soft:#2e2412;--c-out:#8f88f7;--c-bde:#f0b03f;--c-sh:#7e8ea9;
     --sh:0 1px 2px rgba(0,0,0,.4),0 18px 40px -24px rgba(0,0,0,.7)}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;-webkit-font-smoothing:antialiased}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;-webkit-font-smoothing:antialiased}
   .tr-rail{position:fixed;top:0;left:0;bottom:0;width:66px;background:var(--rail);display:flex;flex-direction:column;padding:12px 0;z-index:40;overflow:hidden;transition:width .16s}
   .tr-rail:hover{width:230px}
   .tr-rail-brand{display:flex;align-items:center;height:44px;margin:0 8px 10px;text-decoration:none;overflow:hidden;white-space:nowrap}
@@ -31,430 +32,376 @@
   .tr-rail-foot{display:flex;flex-direction:column;gap:2px}
   .tr-rail-item,.tr-rail-user{display:flex;align-items:center;height:42px;margin:0 8px;border-radius:10px;color:#93a1ba;text-decoration:none;font-weight:600;font-size:13.5px;overflow:hidden;white-space:nowrap;transition:background .12s,color .12s}
   .tr-rail-item:hover{background:rgba(255,255,255,.06);color:#fff}
-  .tr-rail-item.active{background:var(--accent-soft);color:#fff}
+  .tr-rail-item.active{background:rgba(138,131,245,.28);color:#fff}
   .tr-rail-item .ic,.tr-rail-user .ic{width:42px;flex:none;display:flex;align-items:center;justify-content:center}
   .tr-rail-item .ic svg{width:19px;height:19px} .tr-rail .lbl{opacity:0;transition:opacity .16s} .tr-rail:hover .lbl{opacity:1}
   .tr-rail-user .av{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px}
-  .main{margin-left:66px;padding:24px clamp(14px,3vw,34px) 90px;max-width:1240px}
-  .report-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;border-bottom:2px solid var(--txt);padding-bottom:14px;margin-bottom:18px}
-  .rh-left{display:flex;align-items:center;gap:14px}
-  .rh-mark{width:44px;height:44px;border-radius:11px;background:var(--rail);display:flex;align-items:center;justify-content:center;flex:none}
-  .rh-mark svg{width:26px;height:26px}
-  h1{font-size:22px;font-weight:850;letter-spacing:-.02em;margin:0}
-  .rh-meta{color:var(--txt-dim);font-size:12.5px;margin-top:3px}
-  .rh-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  select,.btn{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:9px;padding:8px 12px;font:inherit;font-size:13px;font-weight:700}
+  .main{margin-left:66px;padding:26px clamp(16px,3vw,38px) 90px;max-width:1280px}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+  h1{font-size:24px;font-weight:850;letter-spacing:-.02em;margin:0}
+  .meta{color:var(--dim);font-size:13.5px;margin-top:3px}
+  .btn{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:10px;padding:9px 14px;font:inherit;font-size:13.5px;font-weight:700}
   .btn:hover{border-color:var(--accent)}
-  /* ---- executive summary band ---- */
-  .exec{background:linear-gradient(135deg,var(--rail) 0%,#182036 60%,#1d2742 100%);border-radius:16px;box-shadow:var(--sh);
-    padding:26px 28px;margin-bottom:18px;color:#eaf0fb;position:relative;overflow:hidden}
-  .exec:before{content:"";position:absolute;right:-120px;top:-140px;width:420px;height:420px;border-radius:50%;
-    background:radial-gradient(circle,rgba(138,131,245,.22),transparent 65%);pointer-events:none}
-  .exec-kicker{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#9fb0c9;margin-bottom:6px}
-  .exec-grid{display:grid;grid-template-columns:minmax(230px,1.3fr) repeat(auto-fit,minmax(150px,1fr));gap:26px;align-items:end}
-  .exec-big b{display:block;font-size:44px;font-weight:850;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
-  .exec-big span{font-size:12.5px;color:#9fb0c9;font-weight:650}
-  .exec-big small{display:block;font-size:12px;color:#66768f;margin-top:5px;font-variant-numeric:tabular-nums}
-  .exec-item b{display:block;font-size:21px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums;line-height:1.15}
-  .exec-item span{font-size:11.5px;color:#9fb0c9;font-weight:650}
-  .exec-item small{display:block;font-size:11px;color:#66768f;margin-top:3px}
-  .exec-foot{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
-  .chip{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);
-    color:#cfd9ea;border-radius:20px;padding:5px 13px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
-  .chip .dot{width:7px;height:7px;border-radius:50%}
-  .chip.ok .dot{background:#43d17f}.chip.low{border-color:#f4756a;color:#ffb3ac}.chip.low .dot{background:#f4756a}
-  /* ---- section + cards ---- */
-  .sec-t{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:24px 2px 10px;display:flex;align-items:center;gap:8px}
-  .sec-t small{font-weight:600;text-transform:none;letter-spacing:0;color:var(--faint)}
-  .grid2{display:grid;grid-template-columns:1.55fr 1fr;gap:14px}
-  @media(max-width:980px){.grid2{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);padding:18px 20px}
-  .card h3{margin:0 0 4px;font-size:14.5px;font-weight:800;letter-spacing:-.01em}
-  .card .sub{color:var(--faint);font-size:12px;margin-bottom:12px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin-bottom:4px}
-  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px 16px;box-shadow:var(--sh);position:relative}
-  .kpi b{display:block;font-size:24px;font-weight:850;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.12}
-  .kpi span{font-size:11.5px;color:var(--txt-dim);font-weight:650}
-  .kpi small{font-size:11px;color:var(--faint);display:block;margin-top:3px;font-variant-numeric:tabular-nums}
-  .kpi .tag{position:absolute;top:10px;right:12px;font-size:9.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint)}
-  /* ---- chart ---- */
-  .chartwrap{position:relative}
-  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;font-weight:700;color:var(--txt-dim);margin-bottom:8px}
-  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
-  .ttip{position:absolute;pointer-events:none;background:var(--rail);color:#eaf0fb;border-radius:9px;padding:8px 11px;font-size:12px;
-    box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:0;transition:opacity .1s;z-index:5;white-space:nowrap;font-variant-numeric:tabular-nums}
-  .ttip b{display:block;font-size:11px;color:#9fb0c9;margin-bottom:3px}
-  /* ---- vendor share ---- */
-  .vrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px}
-  .vrow:last-child{border-bottom:0}
-  .vrow .nm{flex:none;width:158px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .vrow .bar{flex:1;height:9px;border-radius:5px;background:var(--panel2);overflow:hidden}
-  .vrow .bar i{display:block;height:100%;border-radius:5px}
-  .vrow .amt{flex:none;width:82px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
-  .vrow .pct{flex:none;width:40px;text-align:right;color:var(--faint);font-variant-numeric:tabular-nums;font-size:12px}
-  /* ---- funnel ---- */
-  .funnel{display:grid;grid-template-columns:repeat(5,1fr);gap:0;align-items:stretch}
-  @media(max-width:860px){.funnel{grid-template-columns:repeat(2,1fr);gap:10px}}
-  .fstage{position:relative;padding:14px 14px 12px;border-right:1px dashed var(--line)}
-  .fstage:last-child{border-right:0}
-  .fstage .fbar{height:52px;border-radius:8px;background:linear-gradient(180deg,var(--accent-soft),transparent);display:flex;align-items:flex-end;margin-bottom:9px}
-  .fstage .fbar i{display:block;width:100%;border-radius:8px;background:linear-gradient(180deg,var(--c-out),color-mix(in oklab,var(--c-out) 60%,transparent))}
-  .fstage b{display:block;font-size:20px;font-weight:850;font-variant-numeric:tabular-nums;line-height:1.1}
-  .fstage span{font-size:11.5px;color:var(--txt-dim);font-weight:700}
-  .fstage .unit{display:inline-block;margin-top:7px;background:var(--gold-soft);color:var(--gold);border-radius:14px;padding:2px 9px;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
-  .fstage .conv{position:absolute;top:6px;right:-14px;z-index:2;background:var(--panel);border:1px solid var(--line);border-radius:12px;
-    color:var(--faint);font-size:10px;font-weight:800;padding:1px 7px;font-variant-numeric:tabular-nums}
-  @media(max-width:860px){.fstage .conv{display:none}.fstage{border-right:0;border-bottom:1px dashed var(--line)}}
-  /* ---- return ---- */
-  .retgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 22px}
-  .retbar{margin:7px 0 13px}
-  .retbar .lab{display:flex;justify-content:space-between;font-size:12px;font-weight:750;color:var(--txt-dim);margin-bottom:5px}
-  .retbar .lab b{font-variant-numeric:tabular-nums;color:var(--txt)}
-  .retbar .tr{height:14px;border-radius:7px;background:var(--panel2);overflow:hidden}
-  .retbar .tr i{display:block;height:100%;border-radius:7px}
-  .netline{margin-top:8px;padding:12px 15px;border-radius:11px;font-weight:800;font-size:14px;display:flex;justify-content:space-between;align-items:center;font-variant-numeric:tabular-nums}
-  .netline.pos{background:var(--good-soft);color:var(--good)} .netline.neg{background:var(--red-soft);color:var(--red)}
-  /* ---- periods ---- */
-  .periods{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
-  .pcard{background:var(--panel);border:1px solid var(--line);border-radius:13px;box-shadow:var(--sh);padding:15px 17px}
-  .pcard .ph{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
-  .pcard .ph b{font-size:13px;font-weight:800} .pcard .ph span{font-size:11px;color:var(--faint)}
-  .pcard .tot{font-size:23px;font-weight:850;font-variant-numeric:tabular-nums;letter-spacing:-.02em;margin-bottom:9px}
-  .pcard .tot small{font-size:11.5px;color:var(--faint);font-weight:650}
-  .pcard .prow2{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--txt-dim);font-variant-numeric:tabular-nums}
-  .pcard .prow2 i{display:inline-block;width:8px;height:8px;border-radius:2.5px;margin-right:7px}
-  .pcard .prow2 b{color:var(--txt);font-weight:750}
-  /* ---- table ---- */
-  .tablewrap{border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--panel);box-shadow:var(--sh)}
-  table{border-collapse:collapse;width:100%;min-width:600px;font-size:13.5px}
-  thead th{position:sticky;top:0;background:var(--head);text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-dim);padding:11px 14px;border-bottom:1.5px solid var(--line);white-space:nowrap;z-index:1}
-  th.num,td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-  tbody td{padding:10px 14px;border-bottom:1px solid var(--line2)}
-  tbody tr:nth-child(2n) td{background:var(--zebra)}
-  tbody tr.tot td{font-weight:850;border-top:2px solid var(--line);background:var(--panel2)}
+  .chips{display:inline-flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;box-shadow:var(--sh)}
+  .chip{cursor:pointer;border:0;background:transparent;color:var(--dim);border-radius:9px;padding:8px 13px;font:inherit;font-size:13.5px;font-weight:750}
+  .chip:hover{color:var(--txt)} .chip.on{background:var(--accent);color:#fff}
+  .cust{display:inline-flex;align-items:center;gap:5px;padding-left:8px;border-left:1px solid var(--line2)}
+  .cust input{width:58px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:8px;padding:6px 8px;font:inherit;font-size:13px;text-align:center}
+  /* hero */
+  .hero{background:linear-gradient(135deg,var(--rail) 0%,#16203a 55%,#1c2947 100%);border-radius:18px;box-shadow:var(--sh);
+    padding:30px 32px;margin-bottom:20px;color:#f0f4fd;position:relative;overflow:hidden;transition:opacity .15s}
+  .hero.busy{opacity:.45}
+  .hero:before{content:"";position:absolute;right:-110px;top:-150px;width:440px;height:440px;border-radius:50%;background:radial-gradient(circle,rgba(143,136,247,.24),transparent 65%);pointer-events:none}
+  .kick{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#aab8d2;margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .delta{display:inline-block;font-size:12px;font-weight:800;border-radius:11px;padding:2px 10px;text-transform:none;letter-spacing:0}
+  .delta.up{background:rgba(255,122,110,.18);color:#ffa198} .delta.dn{background:rgba(67,209,127,.16);color:#5fe39a}
+  .delta.na{background:rgba(255,255,255,.09);color:#aab8d2}
+  .hgrid{display:grid;grid-template-columns:minmax(250px,1.25fr) repeat(4,minmax(170px,1fr));gap:30px;align-items:end}
+  @media(max-width:1100px){.hgrid{grid-template-columns:1fr 1fr;gap:22px}}
+  @media(max-width:640px){.hgrid{grid-template-columns:1fr}}
+  .hbig b{display:block;font-size:52px;font-weight:850;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+  .hbig .per{font-size:19px;color:#aab8d2;font-weight:700}
+  .hbig span{display:block;font-size:14px;color:#c3cde2;font-weight:650;margin-top:8px;line-height:1.45}
+  .hbig small{display:block;font-size:12.5px;color:#8494b0;margin-top:5px;font-variant-numeric:tabular-nums}
+  .hit b{display:block;font-size:27px;font-weight:850;letter-spacing:-.015em;font-variant-numeric:tabular-nums;line-height:1.1}
+  .hit span{display:block;font-size:13px;color:#c3cde2;font-weight:700;margin-top:5px}
+  .hit small{display:block;font-size:12px;color:#8494b0;margin-top:3px;line-height:1.45}
+  .hfoot{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}
+  .pill{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.13);
+    color:#dbe3f2;border-radius:22px;padding:7px 15px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+  .pill .dot{width:8px;height:8px;border-radius:50%}
+  .pill.ok .dot{background:#43d17f}.pill.low{border-color:#ff7a6e;color:#ffb9b1}.pill.low .dot{background:#ff7a6e}
+  /* sections */
+  .sec{font-size:13px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:28px 2px 12px;display:flex;align-items:baseline;gap:10px}
+  .sec small{font-weight:600;text-transform:none;letter-spacing:0;font-size:12.5px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:15px;box-shadow:var(--sh);padding:20px 22px}
+  .card h3{margin:0 0 3px;font-size:16px;font-weight:800;letter-spacing:-.01em}
+  .card .sub{color:var(--faint);font-size:13px;margin-bottom:12px}
+  .grid2{display:grid;grid-template-columns:1.55fr 1fr;gap:16px}
+  @media(max-width:1020px){.grid2{grid-template-columns:1fr}}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:13px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--sh)}
+  .kpi b{display:block;font-size:27px;font-weight:850;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+  .kpi span{display:block;font-size:13px;color:var(--dim);font-weight:700;margin-top:5px}
+  .kpi small{font-size:12px;color:var(--faint);display:block;margin-top:3px;font-variant-numeric:tabular-nums;line-height:1.45}
+  /* funnel */
+  .funnel{display:grid;grid-template-columns:repeat(5,1fr);gap:0}
+  @media(max-width:880px){.funnel{grid-template-columns:repeat(2,1fr);gap:12px}}
+  .fs{padding:16px 16px 14px;border-right:1px dashed var(--line);position:relative}
+  .fs:last-child{border-right:0}
+  @media(max-width:880px){.fs{border-right:0;border-bottom:1px dashed var(--line)}}
+  .fs .bar{height:54px;display:flex;align-items:flex-end;margin-bottom:10px}
+  .fs .bar i{display:block;width:100%;border-radius:9px;background:linear-gradient(180deg,var(--c-out),color-mix(in oklab,var(--c-out) 55%,transparent))}
+  .fs b{display:block;font-size:23px;font-weight:850;font-variant-numeric:tabular-nums}
+  .fs span{font-size:13px;color:var(--dim);font-weight:700}
+  .fs .u{display:inline-block;margin-top:8px;background:var(--gold-soft);color:var(--gold);border-radius:15px;padding:3px 11px;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums}
+  .fs .cv{position:absolute;top:8px;right:-15px;z-index:2;background:var(--panel);border:1px solid var(--line);border-radius:13px;color:var(--faint);font-size:11px;font-weight:800;padding:2px 8px}
+  @media(max-width:880px){.fs .cv{display:none}}
+  /* periods */
+  .periods{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:13px}
+  .pc{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);padding:16px 18px}
+  .pc .h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+  .pc .h b{font-size:14px;font-weight:800} .pc .h span{font-size:12px;color:var(--faint)}
+  .pc .t{font-size:25px;font-weight:850;font-variant-numeric:tabular-nums;letter-spacing:-.02em;margin-bottom:10px}
+  .pc .t small{font-size:12.5px;color:var(--faint);font-weight:650}
+  .pc .r{display:flex;justify-content:space-between;font-size:13px;padding:3.5px 0;color:var(--dim);font-variant-numeric:tabular-nums}
+  .pc .r i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:8px}
+  .pc .r b{color:var(--txt);font-weight:750}
+  /* table */
+  .twrap{border:1px solid var(--line);border-radius:14px;overflow:auto;background:var(--panel);box-shadow:var(--sh)}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+  thead th{position:sticky;top:0;background:var(--panel2);text-align:left;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding:12px 15px;border-bottom:1.5px solid var(--line);white-space:nowrap;z-index:1}
+  th.n,td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tbody td{padding:11px 15px;border-bottom:1px solid var(--line2)}
+  tbody tr.z td{background:var(--panel2)}
+  tr.grp td{background:var(--panel2);font-weight:800;border-top:1px solid var(--line);font-size:14px}
+  tr.tot td{font-weight:850;border-top:2px solid var(--line);background:var(--panel2)}
   .tool{font-weight:750}
-  .badge{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.03em}
-  .badge.usage{background:var(--good-soft);color:var(--good)} .badge.fixed{background:var(--blue-soft);color:var(--blue)}
+  .badge{display:inline-block;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:.03em}
+  .badge.usage{background:var(--good-soft);color:var(--good)} .badge.fixed{background:var(--accent-soft);color:var(--accent)}
   .badge.estimate{background:var(--warn-soft);color:var(--warn)} .badge.live{background:var(--good-soft);color:var(--good)}
-  tbody tr.grp td{background:var(--panel2);font-weight:800;color:var(--txt);border-top:1px solid var(--line)}
-  .detail{color:var(--txt-dim);font-size:12.5px}
-  tr.proofable{cursor:pointer} tr.proofable:hover td{background:var(--accent-soft)!important}
-  .pf-btn{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;
-    border:1.4px solid var(--faint);color:var(--faint);font-size:10.5px;font-weight:800;margin-left:7px;vertical-align:-3px}
-  tr.proof td{background:var(--panel2)!important;border-left:3px solid var(--accent);padding:12px 16px}
-  .pf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 22px;font-size:12.5px}
-  .pf-grid b{display:block;font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:3px}
-  .pf-grid span{color:var(--txt-dim);line-height:1.5}
-  .usegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px}
-  .use{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 14px;box-shadow:var(--sh)}
-  .use b{display:block;font-size:18px;font-weight:850;font-variant-numeric:tabular-nums}
-  .use span{font-size:11.5px;color:var(--txt-dim)}
-  /* ---- method / assumptions ---- */
-  .method{background:var(--panel);border:1px solid var(--line);border-radius:13px;box-shadow:var(--sh);padding:18px 20px;font-size:13px;color:var(--txt-dim)}
-  .method h3{margin:0 0 8px;font-size:14px;font-weight:800;color:var(--txt)}
-  .method ul{margin:6px 0 0;padding-left:18px} .method li{margin:5px 0}
-  .method b{color:var(--txt)}
-  .prices{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:16px;margin-top:12px;display:none}
-  .prices.on{display:block}
-  .prow{display:grid;grid-template-columns:1fr 120px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line2)}
-  .prow label{font-size:13px;color:var(--txt-dim)} .prow input{border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
-  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--txt);color:var(--bg);padding:11px 18px;border-radius:10px;font-size:13.5px;font-weight:700;opacity:0;pointer-events:none;transition:.2s;z-index:60}
-  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-  .empty{color:var(--faint);text-align:center;padding:48px}
+  .det{color:var(--dim);font-size:13px}
+  tr.pfrow{cursor:pointer} tr.pfrow:hover td{background:var(--accent-soft)}
+  .pfi{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--faint);color:var(--faint);font-size:11px;font-weight:800;margin-left:8px;vertical-align:-3px}
+  tr.proof td{background:var(--panel2);border-left:3px solid var(--accent);padding:14px 18px}
+  .pfg{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px 24px;font-size:13.5px}
+  .pfg b{display:block;font-size:11px;font-weight:850;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
+  .pfg span{color:var(--dim);line-height:1.55}
+  /* usage + method */
+  .ugrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:11px}
+  .use{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px;box-shadow:var(--sh)}
+  .use b{display:block;font-size:20px;font-weight:850;font-variant-numeric:tabular-nums}
+  .use span{font-size:12.5px;color:var(--dim);font-weight:650}
+  .method{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);padding:20px 22px;font-size:14px;color:var(--dim)}
+  .method h3{margin:0 0 9px;font-size:15px;font-weight:800;color:var(--txt)}
+  .method ul{margin:6px 0 0;padding-left:19px} .method li{margin:6px 0;line-height:1.55} .method b{color:var(--txt)}
+  .prices{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);padding:18px;margin-top:14px}
+  .prow{display:grid;grid-template-columns:1fr 130px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line2)}
+  .prow label{font-size:13.5px;color:var(--dim)} .prow input{border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:9px;padding:8px 11px;font:inherit;font-size:13.5px;text-align:right;font-variant-numeric:tabular-nums}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--txt);color:var(--bg);padding:12px 20px;border-radius:11px;font-size:14px;font-weight:700;opacity:0;pointer-events:none;transition:.2s;z-index:60}
+  .toast.on{opacity:1}
+  .empty{color:var(--faint);text-align:center;padding:52px;font-size:15px}
   .tr-theme-btn{position:fixed;right:16px;bottom:16px;width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-size:16px;z-index:50}
-  /* ---- print: boardroom handout ---- */
   @media print{
-    .tr-rail,.rh-actions,.tr-theme-btn,.prices,.toast{display:none!important}
-    .main{margin:0;max-width:none;padding:0 8mm}
-    body{background:#fff;color:#111}
-    .card,.kpi,.pcard,.use,.tablewrap,.method{box-shadow:none;border-color:#ccc;break-inside:avoid}
-    .exec{background:#0e1424!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    .grid2{grid-template-columns:1fr 1fr}
+    .tr-rail,.rh-actions,.tr-theme-btn,.prices,.toast,.chips,.btn{display:none!important}
+    .main{margin:0;max-width:none;padding:0 8mm} body{background:#fff;color:#111}
+    .card,.kpi,.pc,.use,.twrap,.method{box-shadow:none;border-color:#ccc;break-inside:avoid}
+    .hero{background:#0e1424!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   }
 </style></head><body>
 <nav class="tr-rail" id="trRail" aria-label="Primary navigation"></nav>
-<div class="main">
-  <div class="report-head">
-    <div class="rh-left">
-      <div class="rh-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="#fff" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg></div>
-      <div><h1>Cost Intelligence</h1><div class="rh-meta" id="meta">The complete cost of running the system — live, itemised, and management-ready.</div></div>
-    </div>
-    <div class="rh-actions">
-      <select id="days" onchange="load()"><option value="1">Today (24h)</option><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option></select>
-      <button class="btn" onclick="window.print()">Print / PDF</button>
-      <button class="btn" onclick="document.getElementById('prices').classList.toggle('on')">Adjust prices</button>
-    </div>
-  </div>
-
-  <div class="exec" id="exec"></div>
-
-  <div class="sec-t">Unit economics <small>· what each outcome costs the AI outbound system (its own + shared infra cost)</small></div>
-  <div class="kpis" id="unitkpis"></div>
-
-  <div class="grid2" style="margin-top:18px">
-    <div class="card">
-      <h3>Daily spend</h3><div class="sub" id="chartsub">Per-day cost by system — real usage × unit prices</div>
-      <div class="legend"><span><i style="background:var(--c-out)"></i>Outbound Intelligence (Lisa AI)</span><span><i style="background:var(--c-bde)"></i>Human-BDE analytics</span><span><i style="background:var(--c-sh)"></i>Shared infra</span></div>
-      <div class="chartwrap"><svg id="chart" width="100%" height="230" role="img" aria-label="Daily spend chart"></svg><div class="ttip" id="ttip"></div></div>
-    </div>
-    <div class="card">
-      <h3>Where the money goes</h3><div class="sub">Vendor share of total spend in this window</div>
-      <div style="display:flex;gap:18px;align-items:center;margin-bottom:10px">
-        <svg id="donut" width="132" height="132" viewBox="0 0 132 132"></svg>
-        <div id="donutmid" style="font-size:12.5px;color:var(--txt-dim);font-weight:650"></div>
-      </div>
-      <div id="vendors"></div>
-    </div>
-  </div>
-
-  <div class="sec-t">Funnel economics <small>· the cost of each stage of the AI outbound funnel</small></div>
-  <div class="card"><div class="funnel" id="funnel"></div></div>
-
-  <div class="grid2" style="margin-top:18px">
-    <div class="card">
-      <h3>Return on the system</h3><div class="sub" id="retsub"></div>
-      <div id="return"></div>
-    </div>
-    <div class="card">
-      <h3>Run cost by period</h3><div class="sub">Auto-computed from real usage — quote any of these to management</div>
-      <div class="periods" id="periods"></div>
-    </div>
-  </div>
-
-  <div class="sec-t">Line-item breakdown <small>· every vendor, how it's counted, and whether the figure is live, metered or estimated</small></div>
-  <div class="tablewrap"><table><thead><tr><th>Vendor / tool</th><th>Basis</th><th>How it's counted</th><th class="num">AUD</th><th class="num">USD</th><th class="num">Share</th></tr></thead><tbody id="rows"></tbody></table></div>
-
-  <div class="prices" id="prices">
-    <div class="sec-t" style="margin-top:0">Unit prices — tune any figure and the whole report recomputes</div>
-    <div id="priceRows"></div>
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="savePrices()">Save &amp; recompute</button></div>
-  </div>
-
-  <div class="sec-t">Activity this period <small>· the real usage the costs are computed from</small></div>
-  <div class="usegrid" id="usage"></div>
-
-  <div class="sec-t">Method &amp; assumptions <small>· read this before quoting figures</small></div>
-  <div class="method" id="method"></div>
-</div>
+<div class="main"><div id="app"><div class="empty">Loading cost intelligence…</div></div></div>
 <div class="toast" id="toast"></div>
-<button class="tr-theme-btn" title="Toggle light / dark" onclick="var e=document.documentElement,n=e.getAttribute('data-theme')==='light'?'dark':'light';e.setAttribute('data-theme',n);try{localStorage.setItem('tr-theme-v2',n)}catch(x){};this.textContent=n==='light'?'\u{1F319}':'☀️'">🌙</button>
+<button class="tr-theme-btn" title="Toggle light / dark" onclick="var e=document.documentElement,n=e.getAttribute('data-theme')==='light'?'dark':'light';e.setAttribute('data-theme',n);try{localStorage.setItem('tr-theme-v2',n)}catch(x){};location.reload()">🌙</button>
 <script>
 (function(){try{var t=localStorage.getItem('tr-theme-v2');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
-function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+var h=htm.bind(React.createElement), useState=React.useState, useEffect=React.useEffect, useRef=React.useRef;
 var toastEl=document.getElementById('toast'),tT;
 function toast(m){toastEl.textContent=m;toastEl.classList.add('on');clearTimeout(tT);tT=setTimeout(function(){toastEl.classList.remove('on')},2200);}
-function api(u,o){return fetch(u,o).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();});}
+var PRICE_LABELS={retell_per_min:'Retell AI — per connected minute (USD)',twilio_sms_au:'Twilio — SMS to AU mobile (USD)',twilio_number_month:'Twilio — AU number / month (USD)',opus_in_per_mtok:'Claude Opus — $/1M input tokens',opus_out_per_mtok:'Claude Opus — $/1M output tokens',gpt4omini_in_per_mtok:'GPT-4o-mini — $/1M input',gpt4omini_out_per_mtok:'GPT-4o-mini — $/1M output',whisper_per_min:'Whisper STT — per minute (USD)',dataforseo_audit:'DataForSEO — per audit (USD)',places_per_1k:'Google Places — per 1,000 (USD)',apollo_month:'Apollo — / month (USD)',aircall_seat_month:'Aircall — per seat / month (USD)',aircall_seats:'Aircall — seats',railway_month:'Railway — / month (USD)',fireflies_month:'Fireflies — / month (USD)',threecx_month:'3CX — / month (USD, 0 = off)',places_requests_month:'Google Places — requests / month (est.)',caller_numbers:'Twilio — AU numbers rented',avg_deal_value:'Average value per WON deal (AUD)',fx_usd_aud:'FX — USD → AUD rate'};
+var GN={outbound:'🤖 Outbound Intelligence (Lisa AI)',human_bde:'👤 Human-BDE Analytics (3CX / Aircall)',shared:'☁️ Shared infrastructure'};
 var FX=1.52;
 function aud(u,dp){if(u==null)return '—';return 'A$'+Number(u*FX).toLocaleString(undefined,{maximumFractionDigits:dp==null?0:dp,minimumFractionDigits:dp==null?0:dp});}
 function usd(u,dp){if(u==null)return '—';return '$'+Number(u).toLocaleString(undefined,{maximumFractionDigits:dp==null?0:dp});}
-function audRaw(a,dp){if(a==null)return '—';return 'A$'+Number(a).toLocaleString(undefined,{maximumFractionDigits:dp==null?0:dp});}
-var DATA=null;
-var PRICE_LABELS={retell_per_min:'Retell AI — per connected minute (USD)',twilio_sms_au:'Twilio — SMS to AU mobile (USD)',twilio_number_month:'Twilio — AU number / month (USD)',opus_in_per_mtok:'Claude Opus — $/1M input tokens',opus_out_per_mtok:'Claude Opus — $/1M output tokens',gpt4omini_in_per_mtok:'GPT-4o-mini — $/1M input',gpt4omini_out_per_mtok:'GPT-4o-mini — $/1M output',whisper_per_min:'Whisper STT — per minute (USD)',dataforseo_audit:'DataForSEO — per audit (USD)',places_per_1k:'Google Places — per 1,000 (USD)',apollo_month:'Apollo — / month (USD)',aircall_seat_month:'Aircall — per seat / month (USD)',aircall_seats:'Aircall — seats',railway_month:'Railway — / month (USD)',fireflies_month:'Fireflies — / month (USD)',threecx_month:'3CX — / month (USD, 0 = not counted)',places_requests_month:'Google Places — requests / month (est.)',caller_numbers:'Twilio — AU numbers rented',avg_deal_value:'Average value per WON deal (AUD)',fx_usd_aud:'FX — USD → AUD rate'};
-var TOOL_COLORS=['var(--c-out)','#2fb9e6','#83c43a','var(--c-bde)','#e06aa2','#7a6ff0','#4cc9b0','#e5a53a','#f4756a','#66768f','#9aa6bd','#b98add'];
+function audR(a,dp){if(a==null)return '—';return 'A$'+Number(a).toLocaleString(undefined,{maximumFractionDigits:dp==null?0:dp});}
+function pct(a,b){return b?Math.round((a||0)/b*100):0;}
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
 
-function render(d){
-  DATA=d;
-  FX=(d.prices&&d.prices.fx_usd_aud)||1.52;
-  var g=d.groups||{}, u=d.usage||{};
-  var runRate=d.total*(30/Math.max(1,d.days));       // normalised monthly run-rate (USD)
-  var revenueAUD=(d.won||0)*(d.avg_deal_value||0);   // deal values are AUD
-  var costAUD=d.total*FX;
-  var netAUD=revenueAUD-costAUD;
-  // ---------- executive summary ----------
-  var tw=d.twilio, twChip='';
-  if(tw&&tw.balance!=null){
-    twChip='<span class="chip '+(tw.low?'low':'ok')+'"><span class="dot"></span>Twilio balance '+usd(tw.balance,2)+(tw.low?' — LOW, top up':'')+'</span>';
+function EChart(props){
+  var ref=useRef(null);
+  useEffect(function(){
+    if(!ref.current)return;
+    var c=echarts.init(ref.current,null,{renderer:'canvas'});
+    c.setOption(props.option);
+    var onR=function(){c.resize();};
+    window.addEventListener('resize',onR);
+    return function(){window.removeEventListener('resize',onR);c.dispose();};
+  },[JSON.stringify(props.option)]);
+  return h`<div ref=${ref} style=${{width:'100%',height:(props.height||280)+'px'}}></div>`;
+}
+
+function App(){
+  var st=useState(null), d=st[0], setD=st[1];
+  var bs=useState(false), busy=bs[0], setBusy=bs[1];
+  var ds=useState(30), days=ds[0], setDaysS=ds[1];
+  var os=useState({}), open=os[0], setOpen=os[1];
+  var ps=useState(false), showPrices=ps[0], setShowPrices=ps[1];
+  function fetchD(nd){
+    setBusy(true);
+    fetch('/api/cost?days='+nd,{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
+      .then(function(x){FX=(x.prices&&x.prices.fx_usd_aud)||1.52;setD(x);setBusy(false);})
+      .catch(function(e){setBusy(false);toast('Load failed: '+e.message);});
   }
-  document.getElementById('exec').innerHTML=
-    '<div class="exec-kicker">Executive summary · cost of running the entire system</div>'+
-    '<div class="exec-grid">'+
-      '<div class="exec-big"><b>'+aud(runRate)+'<span style="font-size:17px;color:#9fb0c9;font-weight:700"> /month</span></b>'+
-        '<span>Total monthly run-rate — everything: AI calling, SMS, AI builds, analytics, subscriptions</span>'+
-        '<small>'+usd(runRate)+' USD · based on the last '+d.days+' day'+(d.days>1?'s':'')+' of real usage</small></div>'+
-      '<div class="exec-item"><b style="color:#a5b6f7">'+aud(g.outbound)+'</b><span>Outbound Intelligence — total cost</span><small>'+usd(g.outbound)+' USD · '+pct(g.outbound,d.total)+'% of all spend</small></div>'+
-      '<div class="exec-item"><b style="color:#e8b64c">'+aud(d.cost_per_booking)+'</b><span>Cost per MEETING BOOKED</span><small>'+(d.ai_booked||0)+' meetings booked ('+d.days+'d) · AI system cost ÷ bookings</small></div>'+
-      '<div class="exec-item"><b style="color:#e8b64c">'+aud(d.cost_per_seen_meeting)+'</b><span>Cost per MEETING HELD</span><small>'+(d.seen_meetings||0)+' actually held — verified via closer calls + Fireflies recordings</small></div>'+
-      '<div class="exec-item"><b>'+aud(d.total)+'</b><span>All-systems spend · '+d.days+'d</span><small>incl. Human-BDE '+aud(g.human_bde)+' + shared '+aud(g.shared)+'</small></div>'+
-      '<div class="exec-item"><b style="color:'+(netAUD>=0?'#43d17f':'#f4756a')+'">'+audRaw(netAUD)+'</b><span>Net position (revenue − cost)</span><small>'+(d.won||0)+' won × '+audRaw(d.avg_deal_value)+'</small></div>'+
-    '</div>'+
-    '<div class="exec-foot">'+twChip+
-      '<span class="chip"><span class="dot" style="background:#5b9bf5"></span>'+(u.ai_calls||0).toLocaleString()+' AI calls · '+Math.round(u.ai_minutes||0).toLocaleString()+' min</span>'+
-      '<span class="chip"><span class="dot" style="background:#e8b64c"></span>'+(d.ai_booked||0)+' meetings booked · '+(d.seen_meetings||0)+' held</span>'+
-      '<span class="chip"><span class="dot" style="background:#83c43a"></span>'+((u.sites||0)+(u.audits||0)+(u.comparisons||0))+' AI assets built</span>'+
-    '</div>';
-  // ---------- unit economics ----------
+  useEffect(function(){fetchD(days);var iv=setInterval(function(){
+    var a=document.activeElement; if(showPrices||(a&&a.tagName==='INPUT'))return; fetchD(days);
+  },45000);return function(){clearInterval(iv);};},[days,showPrices]);
+  function setDays(n){n=parseInt(n,10);if(!n||n<1)return;n=Math.min(365,n);setDaysS(n);}
+  if(!d)return h`<div class="empty">Loading cost intelligence…</div>`;
+  var g=d.groups||{}, u=d.usage||{};
+  var runRate=d.total*(30/Math.max(1,d.days));
+  var revenueAUD=(d.won||0)*(d.avg_deal_value||0), costAUD=d.total*FX, netAUD=revenueAUD-costAUD;
+  // vs previous period
+  var dser=d.daily||[], deltaPct=null;
+  if(dser.length>=d.days*2){
+    var cw=dser.slice(-d.days).reduce(function(a,x){return a+(x.total||0)},0);
+    var pw=dser.slice(-d.days*2,-d.days).reduce(function(a,x){return a+(x.total||0)},0);
+    if(pw>0)deltaPct=Math.round((cw-pw)/pw*100);
+  }
+  var tw=d.twilio;
   var perCall=u.ai_calls?d.ai_meeting_cost/u.ai_calls:null;
   var perConvo=u.ai_convos?d.ai_meeting_cost/u.ai_convos:null;
   var perMin=u.ai_minutes?g.outbound/u.ai_minutes:null;
-  var assets=(u.sites||0)+(u.audits||0)+(u.comparisons||0);
-  document.getElementById('unitkpis').innerHTML=[
-    [aud(d.cost_per_booking),'Cost per booked meeting',(d.ai_booked||0)+' bookings · system cost '+aud(d.ai_meeting_cost),'CORE'],
-    [aud(d.cost_per_seen_meeting),'Cost per held meeting',(d.seen_meetings||0)+' reveals actually held','CORE'],
-    [aud(perCall,2),'Cost per AI call',(u.ai_calls||0).toLocaleString()+' calls placed',''],
-    [aud(perConvo,2),'Cost per conversation',(u.ai_convos||0).toLocaleString()+' real convos (≥20s)',''],
-    [aud(perMin,2),'Cost per AI minute',Math.round(u.ai_minutes||0).toLocaleString()+' connected minutes',''],
-    [d.cost_per_acquisition?aud(d.cost_per_acquisition):'—','Cost per acquisition',(d.won||0)+' deals won (whole-company cost)',''],
-    [assets?aud((d.total&&assets)?(auxAssetCost(d)/assets):null):'—','Cost per AI asset',assets+' sites / audits / comparisons','']
-  ].map(function(k){return '<div class="kpi">'+(k[3]?'<span class="tag">'+k[3]+'</span>':'')+'<b>'+k[0]+'</b><span>'+k[1]+'</span><small>'+esc(k[2])+'</small></div>';}).join('');
-  // ---------- daily chart ----------
-  drawChart(d.daily||[]);
-  document.getElementById('chartsub').textContent='Per-day cost by system · last '+Math.min(d.days,60)+' days · AUD';
-  // ---------- vendor share ----------
-  drawVendors(d);
-  // ---------- funnel ----------
+  // charts
+  var cur=dser.slice(-d.days);
+  var axis=cur.map(function(x){return x.date.slice(5);});
+  var mk=function(k){return cur.map(function(x){return +( (x[k]||0)*FX ).toFixed(2);});};
+  var txt=cssVar('--dim')||'#666', faint=cssVar('--faint')||'#999', line=cssVar('--line2')||'#eee';
+  var chartOpt={
+    grid:{left:52,right:12,top:30,bottom:26},
+    tooltip:{trigger:'axis',valueFormatter:function(v){return 'A$'+Number(v).toLocaleString();}},
+    legend:{data:['Outbound (Lisa AI)','Human-BDE','Shared'],top:0,textStyle:{color:txt,fontSize:12.5}},
+    xAxis:{type:'category',data:axis,axisLabel:{color:faint,fontSize:11.5},axisLine:{lineStyle:{color:line}}},
+    yAxis:{type:'value',axisLabel:{color:faint,fontSize:11.5,formatter:function(v){return 'A$'+v;}},splitLine:{lineStyle:{color:line}}},
+    series:[
+      {name:'Outbound (Lisa AI)',type:'bar',stack:'t',data:mk('outbound'),itemStyle:{color:cssVar('--c-out'),borderRadius:[0,0,0,0]}},
+      {name:'Human-BDE',type:'bar',stack:'t',data:mk('human_bde'),itemStyle:{color:cssVar('--c-bde')}},
+      {name:'Shared',type:'bar',stack:'t',data:mk('shared'),itemStyle:{color:cssVar('--c-sh'),borderRadius:[3,3,0,0]}}
+    ]};
+  var lines=(d.lines||[]);
+  var donutOpt={
+    tooltip:{trigger:'item',valueFormatter:function(v){return 'A$'+Number(v).toLocaleString();}},
+    series:[{type:'pie',radius:['58%','86%'],center:['50%','50%'],avoidLabelOverlap:true,
+      label:{show:false},itemStyle:{borderColor:cssVar('--panel'),borderWidth:2},
+      data:lines.map(function(l){return {name:l.tool,value:+(l.usd*FX).toFixed(2)};})}]};
   var stages=[
     ['Calls placed',u.ai_calls||0,perCall,null],
-    ['Conversations',u.ai_convos||0,perConvo,convPct(u.ai_convos,u.ai_calls)],
-    ['Meetings booked',d.ai_booked||0,d.cost_per_booking,convPct(d.ai_booked,u.ai_convos)],
-    ['Meetings held',d.seen_meetings||0,d.cost_per_seen_meeting,convPct(d.seen_meetings,d.ai_booked)],
-    ['Deals won',d.won||0,d.won?d.total/d.won:null,convPct(d.won,d.seen_meetings)]
-  ];
+    ['Conversations',u.ai_convos||0,perConvo,pct(u.ai_convos,u.ai_calls)],
+    ['Meetings booked',d.ai_booked||0,d.cost_per_booking,pct(d.ai_booked,u.ai_convos)],
+    ['Meetings held',d.seen_meetings||0,d.cost_per_seen_meeting,pct(d.seen_meetings,d.ai_booked)],
+    ['Deals won',d.won||0,d.won?d.total/d.won:null,pct(d.won,d.seen_meetings)]];
   var maxN=Math.max.apply(null,stages.map(function(s){return s[1]||0}).concat([1]));
-  document.getElementById('funnel').innerHTML=stages.map(function(s,i){
-    var h=Math.max(6,Math.round((s[1]/maxN)*52));
-    return '<div class="fstage">'+(s[3]!=null?'<span class="conv">'+s[3]+'%</span>':'')+
-      '<div class="fbar"><i style="height:'+h+'px;opacity:'+(1-i*0.12)+'"></i></div>'+
-      '<b>'+Number(s[1]).toLocaleString()+'</b><span>'+s[0]+'</span><br/>'+
-      '<span class="unit">'+(s[2]!=null?aud(s[2],s[2]*FX<20?2:0)+' each':'—')+'</span></div>';
-  }).join('');
-  // ---------- return ----------
-  document.getElementById('retsub').textContent='Won deals at '+audRaw(d.avg_deal_value)+' each (AUD) vs the full system cost, last '+d.days+'d';
-  var maxR=Math.max(revenueAUD,costAUD,1);
-  document.getElementById('return').innerHTML=
-    bar('Revenue from won deals',revenueAUD,maxR,'var(--good)')+
-    bar('Total system cost',costAUD,maxR,'var(--red)')+
-    '<div class="netline '+(netAUD>=0?'pos':'neg')+'"><span>'+(netAUD>=0?'▲ System is net-positive':'▼ System is net-negative')+' this window</span><b>'+audRaw(netAUD)+'</b></div>'+
-    '<div style="margin-top:10px;font-size:12.5px;color:var(--faint)">Pipeline upside: '+(d.leads||0)+' bookings × 30% close × '+audRaw(d.avg_deal_value)+' = <b style="color:var(--txt)">'+audRaw((d.leads||0)*0.3*(d.avg_deal_value||0))+'</b> projected</div>';
-  // ---------- periods ----------
   var pd=d.periods||{};
-  document.getElementById('periods').innerHTML=[['daily','Per day','last 24h'],['weekly','Per week','last 7 days'],['monthly','Per month','last 30 days']].map(function(pp){
-    var r=pd[pp[0]]||{};
-    return '<div class="pcard"><div class="ph"><b>'+pp[1]+'</b><span>'+pp[2]+'</span></div>'+
-      '<div class="tot">'+aud(r.total)+' <small>'+usd(r.total)+' USD</small></div>'+
-      '<div class="prow2"><span><i style="background:var(--c-out)"></i>Outbound (Lisa AI)</span><b>'+aud(r.outbound)+'</b></div>'+
-      '<div class="prow2"><span><i style="background:var(--c-bde)"></i>Human-BDE analytics</span><b>'+aud(r.human_bde)+'</b></div>'+
-      '<div class="prow2"><span><i style="background:var(--c-sh)"></i>Shared infra</span><b>'+aud(r.shared)+'</b></div></div>';
-  }).join('');
-  // ---------- line items ----------
-  var tot=d.total||1;
-  var GN={outbound:'🤖 Outbound Intelligence (Lisa AI)',human_bde:'👤 Human-BDE Analytics (3CX / Aircall)',shared:'☁ Shared infrastructure'};
-  var html='';
-  ['outbound','human_bde','shared'].forEach(function(gk){
-    var gl=(d.lines||[]).filter(function(l){return (l.group||'outbound')===gk;});
-    if(!gl.length)return;
-    var sub=gl.reduce(function(a,l){return a+(l.usd||0);},0);
-    html+='<tr class="grp"><td colspan="3">'+GN[gk]+'</td><td class="num"><b>'+aud(sub)+'</b></td><td class="num">'+usd(sub)+'</td><td class="num">'+pct(sub,tot)+'%</td></tr>';
-    html+=gl.map(function(l,li){
-      var pid=gk+'_'+li, pf=l.proof;
-      var row='<tr'+(pf?' class="proofable" onclick="var p=document.getElementById(\''+pid+'\');p.style.display=p.style.display===\'none\'?\'\':\'none\'" title="Click for proof / source of this figure"':'')+'>'+
-        '<td class="tool">'+esc(l.tool)+(pf?'<span class="pf-btn">i</span>':'')+'</td><td><span class="badge '+l.kind+'">'+(l.kind==='live'?'live ✓':l.kind)+'</span></td>'+
-        '<td class="detail">'+esc(l.detail)+'</td><td class="num"><b>'+aud(l.usd)+'</b></td><td class="num">'+usd(l.usd)+'</td><td class="num">'+pct(l.usd,tot)+'%</td></tr>';
-      if(pf){row+='<tr class="proof" id="'+pid+'" style="display:none"><td colspan="6"><div class="pf-grid">'+
-        '<div><b>Where the number comes from</b><span>'+esc(pf.data)+'</span></div>'+
-        '<div><b>Where the price comes from</b><span>'+esc(pf.price)+'</span></div>'+
-        '<div><b>Cross-check it yourself</b><span>'+esc(pf.verify)+'</span></div>'+
-        '<div><b>Computation</b><span>'+esc(l.detail)+' = '+usd(l.usd,2)+' → × '+FX+' = '+aud(l.usd,2)+'</span></div></div></td></tr>';}
-      return row;}).join('');
-  });
-  html+='<tr class="tot"><td>Total</td><td></td><td class="detail">last '+d.days+' days</td><td class="num">'+aud(d.total)+'</td><td class="num">'+usd(d.total)+'</td><td class="num">100%</td></tr>';
-  document.getElementById('rows').innerHTML=html;
-  // ---------- usage ----------
-  document.getElementById('usage').innerHTML=[
-    [(u.ai_calls||0).toLocaleString(),'AI calls placed'],[Math.round(u.ai_minutes||0).toLocaleString(),'AI minutes'],
-    [(u.ai_convos||0).toLocaleString(),'conversations'],[(u.sms_out||0).toLocaleString(),'SMS sent'],
-    [(u.sites||0),'sites built'],[(u.audits||0),'audits built'],[(u.comparisons||0),'comparisons'],
-    [(u.classified||0).toLocaleString(),'AI calls classified'],[(u.bde_calls||0).toLocaleString(),'human-BDE calls'],
-    [Math.round(u.bde_tx_minutes||0).toLocaleString(),'BDE min transcribed'],[(d.ai_booked||0),'meetings booked'],[(d.seen_meetings||0),'meetings held'],[(u.won||0),'deals won']
-  ].map(function(x){return '<div class="use"><b>'+x[0]+'</b><span>'+x[1]+'</span></div>';}).join('');
-  // ---------- method ----------
-  var live=(d.lines||[]).filter(function(l){return l.kind==='live'}).length;
-  document.getElementById('method').innerHTML='<h3>How these figures are produced</h3><ul>'+
-    '<li><b>Metered lines</b> are computed from the system\'s own database — every AI call minute, SMS, site, audit and classification is logged and multiplied by the vendor\'s unit price.</li>'+
-    '<li><b>Live lines</b> ('+live+' this load) come straight from the vendor\'s API — the Twilio figure is actual billed spend, not an estimate.</li>'+
-    '<li><b>Estimated lines</b> use per-asset token / request-volume estimates where exact counts aren\'t logged (Claude builds, classifier tokens, Places sweeps). Every unit price is editable under <b>Adjust prices</b> and the entire report recomputes.</li>'+
-    '<li><b>Currency:</b> vendor prices are USD; the report shows <b>AUD-first</b> at '+FX+' (editable). Deal values are AUD, so revenue-vs-cost compares like-for-like.</li>'+
-    '<li><b>Attribution:</b> per-meeting economics use only the AI outbound system + shared infra — the human-BDE floor\'s cost is never blended into Lisa\'s cost-per-meeting.</li>'+
-    '<li><b>Fixed subscriptions</b> (Apollo, Aircall, Railway, Fireflies, numbers) are prorated to the selected window; the monthly run-rate normalises everything back to 30 days.</li>'+
-    '<li><b>Proof per line:</b> click any row in the breakdown above — it expands to show exactly where the usage number comes from, where the unit price comes from, and where to cross-check it in the vendor\'s own console.</li></ul>'+
-    (d.usage_sources?'<h3 style="margin-top:16px">System of record for every count</h3><ul>'+Object.keys(d.usage_sources).map(function(k){return '<li><b>'+esc(k)+'</b> — '+esc(d.usage_sources[k])+'</li>';}).join('')+'</ul>':'');
-  // ---------- price editor ----------
-  var p=d.prices||{};
-  document.getElementById('priceRows').innerHTML=Object.keys(PRICE_LABELS).filter(function(k){return k in p;}).map(function(k){
-    return '<div class="prow"><label>'+esc(PRICE_LABELS[k])+'</label><input id="p_'+k+'" type="number" step="any" value="'+p[k]+'"/></div>';
-  }).join('');
-  document.getElementById('meta').textContent='AUD-first at '+FX+' USD→AUD · Twilio balance is live · auto-refreshes every 45s · updated '+new Date().toLocaleTimeString();
+  var maxR=Math.max(revenueAUD,costAUD,1);
+  var order=['outbound','human_bde','shared'];
+  var live=lines.filter(function(l){return l.kind==='live'}).length;
+  return h`<div>
+    <div class="head">
+      <div><h1>Cost Intelligence</h1>
+        <div class="meta">AUD-first at ${FX} USD→AUD · Twilio balance is live · updated ${new Date().toLocaleTimeString()}</div></div>
+      <div style=${{display:'flex',gap:'9px',flexWrap:'wrap',alignItems:'center'}}>
+        <div class="chips">
+          ${[1,7,30,60,90,180].map(function(n){return h`<button key=${n} class=${'chip'+(days===n?' on':'')} onClick=${function(){setDays(n);}}>${n===1?'Today':n+'d'}</button>`;})}
+          <span class="cust"><input id="cd" type="number" min="1" max="365" placeholder="days"
+            onKeyDown=${function(e){if(e.key==='Enter')setDays(e.target.value);}}/><button class="chip" onClick=${function(){setDays(document.getElementById('cd').value);}}>Go</button></span>
+        </div>
+        <button class="btn" onClick=${function(){window.print();}}>Print / PDF</button>
+        <button class="btn" onClick=${function(){setShowPrices(!showPrices);}}>Adjust prices</button>
+      </div>
+    </div>
+
+    <div class=${'hero'+(busy?' busy':'')}>
+      <div class="kick">Executive summary · cost of running the entire system · last ${d.days} day${d.days>1?'s':''}
+        ${deltaPct==null?h`<span class="delta na">no prior-period data</span>`
+          :h`<span class=${'delta '+(deltaPct>0?'up':'dn')}>${deltaPct>0?'▲':'▼'} ${Math.abs(deltaPct)}% vs previous ${d.days}d</span>`}
+      </div>
+      <div class="hgrid">
+        <div class="hbig"><b>${aud(runRate)}<span class="per"> /month</span></b>
+          <span>Total monthly run-rate — AI calling, SMS, AI builds, analytics, subscriptions</span>
+          <small>${usd(runRate)} USD · from the last ${d.days}d of real usage</small></div>
+        <div class="hit"><b style=${{color:'#b3bdfa'}}>${aud(g.outbound)}</b><span>Outbound Intelligence — total</span>
+          <small>${usd(g.outbound)} USD · ${pct(g.outbound,d.total)}% of all spend</small></div>
+        <div class="hit"><b style=${{color:'#eec05e'}}>${aud(d.cost_per_booking)}</b><span>Cost per meeting BOOKED</span>
+          <small>${d.ai_booked||0} booked (${d.days}d) · AI-system cost ÷ bookings</small></div>
+        <div class="hit"><b style=${{color:'#eec05e'}}>${aud(d.cost_per_seen_meeting)}</b><span>Cost per meeting HELD</span>
+          <small>${d.seen_meetings||0} held — verified via closer calls + Fireflies</small></div>
+        <div class="hit"><b style=${{color:netAUD>=0?'#5fe39a':'#ffa198'}}>${audR(netAUD)}</b><span>Net (revenue − cost)</span>
+          <small>${d.won||0} won × ${audR(d.avg_deal_value)} · all-systems spend ${aud(d.total)}</small></div>
+      </div>
+      <div class="hfoot">
+        ${tw&&tw.balance!=null?h`<span class=${'pill '+(tw.low?'low':'ok')}><span class="dot"></span>Twilio balance ${usd(tw.balance,2)}${tw.low?' — LOW, top up':''}</span>`:null}
+        <span class="pill"><span class="dot" style=${{background:'#7f9df5'}}></span>${(u.ai_calls||0).toLocaleString()} AI calls · ${Math.round(u.ai_minutes||0).toLocaleString()} min</span>
+        <span class="pill"><span class="dot" style=${{background:'#eec05e'}}></span>${d.ai_booked||0} booked · ${d.seen_meetings||0} held</span>
+        <span class="pill"><span class="dot" style=${{background:'#83c43a'}}></span>${(u.sites||0)+(u.audits||0)+(u.comparisons||0)} AI assets built</span>
+      </div>
+    </div>
+
+    <div class="sec">Unit economics <small>· what each outcome costs the AI outbound system</small></div>
+    <div class="kpis">
+      ${[[aud(perCall,2),'Cost per AI call',(u.ai_calls||0).toLocaleString()+' calls placed'],
+         [aud(perConvo,2),'Cost per conversation',(u.ai_convos||0).toLocaleString()+' real convos (≥20s)'],
+         [aud(perMin,2),'Cost per AI minute',Math.round(u.ai_minutes||0).toLocaleString()+' connected minutes'],
+         [d.cost_per_acquisition?aud(d.cost_per_acquisition):'—','Cost per acquisition',(d.won||0)+' deals won'],
+         [aud(d.cost_per_lead),'Cost per lead',(d.leads||0)+' leads (whole-company basis)']
+        ].map(function(k,i){return h`<div class="kpi" key=${i}><b>${k[0]}</b><span>${k[1]}</span><small>${k[2]}</small></div>`;})}
+    </div>
+
+    <div class="grid2" style=${{marginTop:'18px'}}>
+      <div class="card"><h3>Daily spend</h3><div class="sub">Per-day cost by system · last ${d.days} days · AUD · hover for exact figures</div>
+        <${EChart} option=${chartOpt} height=${290}/></div>
+      <div class="card"><h3>Where the money goes</h3><div class="sub">Vendor share of spend · hover the ring</div>
+        <${EChart} option=${donutOpt} height=${180}/>
+        <div>${lines.slice(0,7).map(function(l,i){return h`<div key=${i} style=${{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid var(--line2)',fontSize:'13.5px'}}>
+          <span style=${{fontWeight:700}}>${l.tool}</span><span style=${{fontVariantNumeric:'tabular-nums',color:'var(--dim)'}}><b style=${{color:'var(--txt)'}}>${aud(l.usd)}</b> · ${pct(l.usd,d.total)}%</span></div>`;})}</div>
+      </div>
+    </div>
+
+    <div class="sec">Funnel economics <small>· the cost of each stage, with stage-to-stage conversion</small></div>
+    <div class="card"><div class="funnel">
+      ${stages.map(function(s,i){return h`<div class="fs" key=${i}>
+        ${s[3]!=null?h`<span class="cv">${s[3]}%</span>`:null}
+        <div class="bar"><i style=${{height:Math.max(7,Math.round((s[1]/maxN)*54))+'px',opacity:1-i*0.12}}></i></div>
+        <b>${Number(s[1]).toLocaleString()}</b><span>${s[0]}</span><br/>
+        <span class="u">${s[2]!=null?aud(s[2],(s[2]*FX)<20?2:0)+' each':'—'}</span></div>`;})}
+    </div></div>
+
+    <div class="grid2" style=${{marginTop:'18px'}}>
+      <div class="card"><h3>Return on the system</h3>
+        <div class="sub">Won deals at ${audR(d.avg_deal_value)} (AUD) vs full system cost · last ${d.days}d</div>
+        ${[['Revenue from won deals',revenueAUD,'var(--good)'],['Total system cost',costAUD,'var(--red)']].map(function(b,i){
+          return h`<div key=${i} style=${{margin:'9px 0 14px'}}>
+            <div style=${{display:'flex',justifyContent:'space-between',fontSize:'13.5px',fontWeight:750,color:'var(--dim)',marginBottom:'6px'}}>
+              <span>${b[0]}</span><b style=${{color:'var(--txt)',fontVariantNumeric:'tabular-nums'}}>${audR(b[1])}</b></div>
+            <div style=${{height:'15px',borderRadius:'8px',background:'var(--panel2)',overflow:'hidden'}}>
+              <i style=${{display:'block',height:'100%',width:Math.max(1,Math.round(b[1]/maxR*100))+'%',background:b[2],borderRadius:'8px'}}></i></div></div>`;})}
+        <div style=${{padding:'13px 16px',borderRadius:'12px',fontWeight:800,fontSize:'15px',display:'flex',justifyContent:'space-between',
+          background:netAUD>=0?'var(--good-soft)':'var(--red-soft)',color:netAUD>=0?'var(--good)':'var(--red)'}}>
+          <span>${netAUD>=0?'▲ Net-positive this window':'▼ Net-negative this window'}</span><b>${audR(netAUD)}</b></div>
+        <div style=${{marginTop:'11px',fontSize:'13px',color:'var(--faint)'}}>Pipeline upside: ${d.leads||0} bookings × 30% close × ${audR(d.avg_deal_value)} = <b style=${{color:'var(--txt)'}}>${audR((d.leads||0)*0.3*(d.avg_deal_value||0))}</b> projected</div>
+      </div>
+      <div class="card"><h3>Run cost by period</h3><div class="sub">Quote any of these to management — auto-computed from real usage</div>
+        <div class="periods">
+          ${[['daily','Per day','last 24h'],['weekly','Per week','7 days'],['monthly','Per month','30 days']].map(function(pp,i){
+            var r=pd[pp[0]]||{};
+            return h`<div class="pc" key=${i}><div class="h"><b>${pp[1]}</b><span>${pp[2]}</span></div>
+              <div class="t">${aud(r.total)} <small>${usd(r.total)} USD</small></div>
+              <div class="r"><span><i style=${{background:'var(--c-out)'}}></i>Outbound (Lisa AI)</span><b>${aud(r.outbound)}</b></div>
+              <div class="r"><span><i style=${{background:'var(--c-bde)'}}></i>Human-BDE</span><b>${aud(r.human_bde)}</b></div>
+              <div class="r"><span><i style=${{background:'var(--c-sh)'}}></i>Shared infra</span><b>${aud(r.shared)}</b></div></div>`;})}
+        </div>
+      </div>
+    </div>
+
+    <div class="sec">Line-item breakdown <small>· click any row for PROOF — data source, price source, and how to cross-check it</small></div>
+    <div class="twrap"><table><thead><tr><th>Vendor / tool</th><th>Basis</th><th>How it's counted</th><th class="n">AUD</th><th class="n">USD</th><th class="n">Share</th></tr></thead><tbody>
+      ${order.map(function(gk){
+        var gl=lines.filter(function(l){return (l.group||'outbound')===gk;});
+        if(!gl.length)return null;
+        var sub=gl.reduce(function(a,l){return a+(l.usd||0);},0);
+        return h`<${React.Fragment} key=${gk}>
+          <tr class="grp"><td colSpan="3">${GN[gk]}</td><td class="n"><b>${aud(sub)}</b></td><td class="n">${usd(sub)}</td><td class="n">${pct(sub,d.total)}%</td></tr>
+          ${gl.map(function(l,li){
+            var pid=gk+'_'+li, pf=l.proof, isOpen=!!open[pid];
+            return h`<${React.Fragment} key=${pid}>
+              <tr class=${pf?'pfrow':''} onClick=${pf?function(){var o=Object.assign({},open);o[pid]=!isOpen;setOpen(o);}:null} title=${pf?'Click for proof / source of this figure':''}>
+                <td class="tool">${l.tool}${pf?h`<span class="pfi">i</span>`:null}</td>
+                <td><span class=${'badge '+l.kind}>${l.kind==='live'?'live ✓':l.kind}</span></td>
+                <td class="det">${l.detail}</td><td class="n"><b>${aud(l.usd)}</b></td><td class="n">${usd(l.usd)}</td><td class="n">${pct(l.usd,d.total)}%</td></tr>
+              ${pf&&isOpen?h`<tr class="proof"><td colSpan="6"><div class="pfg">
+                <div><b>Where the number comes from</b><span>${pf.data}</span></div>
+                <div><b>Where the price comes from</b><span>${pf.price}</span></div>
+                <div><b>Cross-check it yourself</b><span>${pf.verify}</span></div>
+                <div><b>Computation</b><span>${l.detail} = ${usd(l.usd,2)} → × ${FX} = ${aud(l.usd,2)}</span></div></div></td></tr>`:null}
+            </${React.Fragment}>`;})}
+        </${React.Fragment}>`;})}
+      <tr class="tot"><td>Total</td><td></td><td class="det">last ${d.days} days</td><td class="n">${aud(d.total)}</td><td class="n">${usd(d.total)}</td><td class="n">100%</td></tr>
+    </tbody></table></div>
+
+    ${showPrices?h`<div class="prices">
+      <div class="sec" style=${{marginTop:0}}>Unit prices — tune any figure and the report recomputes</div>
+      ${Object.keys(PRICE_LABELS).filter(function(k){return k in (d.prices||{});}).map(function(k){
+        return h`<div class="prow" key=${k}><label>${PRICE_LABELS[k]}</label><input id=${'p_'+k} type="number" step="any" defaultValue=${d.prices[k]}/></div>`;})}
+      <div style=${{marginTop:'13px'}}><button class="btn" style=${{background:'var(--accent)',color:'#fff',borderColor:'var(--accent)'}}
+        onClick=${function(){var over={};Object.keys(PRICE_LABELS).forEach(function(k){var el=document.getElementById('p_'+k);if(el&&el.value!=='')over[k]=parseFloat(el.value);});
+          fetch('/api/cost/prices',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(over)})
+            .then(function(r){if(!r.ok)throw new Error(r.status);return r.json();})
+            .then(function(){toast('Saved — recomputing');setShowPrices(false);fetchD(days);})
+            .catch(function(e){toast('Failed: '+e.message);});}}>Save & recompute</button></div>
+    </div>`:null}
+
+    <div class="sec">Activity this period <small>· the real usage the costs are computed from</small></div>
+    <div class="ugrid">
+      ${[[(u.ai_calls||0).toLocaleString(),'AI calls placed'],[Math.round(u.ai_minutes||0).toLocaleString(),'AI minutes'],
+         [(u.ai_convos||0).toLocaleString(),'conversations'],[(u.sms_out||0).toLocaleString(),'SMS sent'],
+         [(u.sites||0),'sites built'],[(u.audits||0),'audits built'],[(u.comparisons||0),'comparisons'],
+         [(u.classified||0).toLocaleString(),'AI calls classified'],[(u.bde_calls||0).toLocaleString(),'human-BDE calls'],
+         [(d.ai_booked||0),'meetings booked'],[(d.seen_meetings||0),'meetings held'],[(u.won||0),'deals won']
+        ].map(function(x,i){return h`<div class="use" key=${i}><b>${x[0]}</b><span>${x[1]}</span></div>`;})}
+    </div>
+
+    <div class="sec">Method & assumptions <small>· read this before quoting figures</small></div>
+    <div class="method"><h3>How these figures are produced</h3><ul>
+      <li><b>Metered lines</b> come from the system's own database — every AI call minute, SMS, site, audit and classification is logged and multiplied by the vendor's unit price.</li>
+      <li><b>Live lines</b> (${live} this load) come straight from the vendor's API — the Twilio figure is actual billed spend, not an estimate.</li>
+      <li><b>Estimated lines</b> use per-asset token / request-volume estimates where exact counts aren't logged. Every unit price is editable under <b>Adjust prices</b>.</li>
+      <li><b>Currency:</b> vendor prices are USD; the report shows <b>AUD-first</b> at ${FX} (editable). Deal values are AUD, so revenue-vs-cost compares like-for-like.</li>
+      <li><b>Attribution:</b> per-meeting economics use only the AI outbound system + shared infra — the human-BDE floor's cost is never blended into Lisa's cost-per-meeting.</li>
+      <li><b>Proof per line:</b> click any row in the breakdown — it expands with the data source, price source, and where to cross-check it in the vendor's console.</li></ul>
+      ${d.usage_sources?h`<h3 style=${{marginTop:'16px'}}>System of record for every count</h3><ul>
+        ${Object.keys(d.usage_sources).map(function(k){return h`<li key=${k}><b>${k}</b> — ${d.usage_sources[k]}</li>`;})}</ul>`:null}
+    </div>
+  </div>`;
 }
-function pct(a,b){return b?Math.round((a||0)/b*100):0;}
-function convPct(a,b){return (b&&a!=null)?Math.round(a/b*100):null;}
-function auxAssetCost(d){var l=(d.lines||[]).filter(function(x){return x.tool==='Anthropic Opus'||x.tool==='DataForSEO'});return l.reduce(function(a,x){return a+(x.usd||0)},0);}
-function bar(lab,v,max,color){var w=Math.max(1,Math.round(v/max*100));
-  return '<div class="retbar"><div class="lab"><span>'+lab+'</span><b>'+audRaw(v)+'</b></div><div class="tr"><i style="width:'+w+'%;background:'+color+'"></i></div></div>';}
-// ---------- stacked daily chart (pure SVG) ----------
-function drawChart(series){
-  var svg=document.getElementById('chart'), tip=document.getElementById('ttip');
-  if(!series.length){svg.innerHTML='<text x="50%" y="50%" fill="var(--faint)" text-anchor="middle" font-size="13">no daily data</text>';return;}
-  var W=svg.clientWidth||800, H=230, padL=46, padB=22, padT=8;
-  svg.setAttribute('viewBox','0 0 '+W+' '+H);
-  var max=Math.max.apply(null,series.map(function(s){return s.total})); max=max*1.15||1;
-  var iw=(W-padL-6)/series.length, bw=Math.max(3,Math.min(26,iw*0.66));
-  var y=function(v){return padT+(H-padB-padT)*(1-v/max);}, h0=H-padB;
-  var out='';
-  // gridlines + y labels (AUD)
-  for(var gi=0;gi<=3;gi++){var gv=max*gi/3, gy=y(gv);
-    out+='<line x1="'+padL+'" y1="'+gy+'" x2="'+W+'" y2="'+gy+'" stroke="var(--line2)" stroke-width="1"/>';
-    out+='<text x="'+(padL-7)+'" y="'+(gy+4)+'" fill="var(--faint)" font-size="10.5" text-anchor="end" font-family="inherit">A$'+Math.round(gv*FX)+'</text>';}
-  var cols={outbound:'var(--c-out)',human_bde:'var(--c-bde)',shared:'var(--c-sh)'};
-  series.forEach(function(s,i){
-    var x=padL+i*iw+(iw-bw)/2, acc=0;
-    ['shared','human_bde','outbound'].forEach(function(k){
-      var v=s[k]||0; if(v<=0)return;
-      var y1=y(acc+v), hh=y(acc)-y1;
-      out+='<rect x="'+x+'" y="'+y1+'" width="'+bw+'" height="'+Math.max(0.5,hh)+'" rx="2" fill="'+cols[k]+'" opacity="0.92" data-i="'+i+'"/>';
-      acc+=v;});
-    out+='<rect x="'+(padL+i*iw)+'" y="0" width="'+iw+'" height="'+h0+'" fill="transparent" data-hover="'+i+'"/>';
-    if(series.length<=31&&(i%Math.ceil(series.length/8)===0||i===series.length-1)){
-      out+='<text x="'+(x+bw/2)+'" y="'+(H-7)+'" fill="var(--faint)" font-size="10" text-anchor="middle">'+s.date.slice(5)+'</text>';}
-  });
-  svg.innerHTML=out;
-  svg.onmousemove=function(ev){
-    var t=ev.target.getAttribute('data-hover')||ev.target.getAttribute('data-i'); if(t==null){tip.style.opacity=0;return;}
-    var s=series[+t]; if(!s)return;
-    var r=svg.getBoundingClientRect();
-    tip.innerHTML='<b>'+s.date+'</b>Total <b style="display:inline;color:#fff">'+aud(s.total,2)+'</b><br/>Lisa AI '+aud(s.outbound,2)+' · BDE '+aud(s.human_bde,2)+' · shared '+aud(s.shared,2);
-    tip.style.left=Math.min(r.width-190,Math.max(0,ev.clientX-r.left-60))+'px';
-    tip.style.top=(ev.clientY-r.top-70)+'px'; tip.style.opacity=1;};
-  svg.onmouseleave=function(){tip.style.opacity=0;};
-}
-// ---------- vendor donut + ranked bars ----------
-function drawVendors(d){
-  var lines=(d.lines||[]).slice().sort(function(a,b){return b.usd-a.usd});
-  var tot=d.total||1, R=56, C=2*Math.PI*R, off=0, svg='';
-  svg+='<circle cx="66" cy="66" r="'+R+'" fill="none" stroke="var(--panel2)" stroke-width="16"/>';
-  lines.forEach(function(l,i){
-    var f=l.usd/tot; if(f<=0)return;
-    var col=TOOL_COLORS[i%TOOL_COLORS.length];
-    svg+='<circle cx="66" cy="66" r="'+R+'" fill="none" stroke="'+col+'" stroke-width="16" stroke-dasharray="'+(f*C)+' '+C+'" stroke-dashoffset="'+(-off*C)+'" transform="rotate(-90 66 66)" stroke-linecap="butt"/>';
-    off+=f;});
-  document.getElementById('donut').innerHTML=svg;
-  var top=lines[0];
-  document.getElementById('donutmid').innerHTML=top?('Biggest line:<br/><b style="color:var(--txt);font-size:14px">'+esc(top.tool)+'</b><br/>'+aud(top.usd)+' · '+pct(top.usd,tot)+'% of spend'):'';
-  document.getElementById('vendors').innerHTML=lines.slice(0,9).map(function(l,i){
-    var col=TOOL_COLORS[i%TOOL_COLORS.length];
-    return '<div class="vrow"><span class="nm">'+esc(l.tool)+'</span><span class="bar"><i style="width:'+Math.max(2,pct(l.usd,tot))+'%;background:'+col+'"></i></span><span class="amt">'+aud(l.usd)+'</span><span class="pct">'+pct(l.usd,tot)+'%</span></div>';
-  }).join('');
-}
-function load(){var days=document.getElementById('days').value;api('/api/cost?days='+days).then(render).catch(function(e){document.getElementById('rows').innerHTML='<tr><td colspan="6"><div class="empty">Couldn\'t load ('+e.message+')</div></td></tr>';});}
-function savePrices(){if(!DATA)return;var over={};Object.keys(PRICE_LABELS).forEach(function(k){var el=document.getElementById('p_'+k);if(el&&el.value!=='')over[k]=parseFloat(el.value);});
-  fetch('/api/cost/prices',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(over)}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}).then(function(){toast('Saved — recomputing');load();}).catch(function(e){toast('Failed: '+e.message);});}
-window.load=load;window.savePrices=savePrices;
-load();
-setInterval(function(){
-  var pe=document.getElementById('prices'); if(pe&&pe.classList.contains('on'))return;
-  var a=document.activeElement; if(a&&(a.tagName==='INPUT'||a.tagName==='SELECT'))return;
-  load();
-},45000);
-document.addEventListener('visibilitychange',function(){if(!document.hidden)load();});
-window.addEventListener('resize',function(){if(DATA)drawChart(DATA.daily||[]);});
+ReactDOM.createRoot(document.getElementById('app')).render(h`<${App}/>`);
 </script>
 <script>(function(){
   var P=location.pathname, S='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">';
@@ -464,7 +411,7 @@ window.addEventListener('resize',function(){if(DATA)drawChart(DATA.daily||[]);})
     ['/lisa','/lisa','Outbound Intelligence','<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',1],
     ['/tasks','/tasks','Tasks','<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l1.5 1.5L13 11"/><path d="M9 17h5"/>',3],
     ['/cost','/cost','Cost','<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',3],
-    ['/status','/status','Engine Status','<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',1],
+    ['/status','/status','Engine Room','<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',1],
     ['/admin','/admin','Admin','<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.11a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.11a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.11a1.6 1.6 0 0 0-1.47.97z"/>',1]
   ];
   var BARS='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.4" y="13" width="4.3" height="7.6" rx="1.2" fill="currentColor" opacity=".92"/><rect x="9.85" y="8.2" width="4.3" height="12.4" rx="1.2" fill="#2fb9e6"/><rect x="16.3" y="3.6" width="4.3" height="17" rx="1.2" fill="#83c43a"/></svg>';
