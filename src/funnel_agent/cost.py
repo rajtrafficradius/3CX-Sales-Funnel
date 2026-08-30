@@ -36,6 +36,12 @@ _DEFAULT_PRICES = {
     "fireflies_month": 10.0,           # Fireflies Pro per user/mo
     "threecx_month": 0.0,              # 3CX human-dialer subscription (set your plan; 0 = not counted)
     "twilio_low_balance": 50.0,        # alert on the cost page when the live Twilio balance drops below this
+    # AUTO-RECHARGE (Vysakh, 2026-08-31): Twilio auto top-up is ON, so a low balance is NORMAL operation,
+    # not a failure — the account refills itself. Set 0 to go back to treating a low balance as an alarm.
+    # With it on we only alarm BELOW twilio_critical_balance, which would mean the recharge itself failed
+    # (declined card / suspended account) — the only case that actually stops the floor.
+    "twilio_auto_recharge": 1.0,
+    "twilio_critical_balance": 3.0,
     # per-asset token ESTIMATES (exact tokens aren't logged) — tune to taste
     "opus_tokens_site_out": 60000, "opus_tokens_site_in": 6000,
     "opus_tokens_audit_out": 6000, "opus_tokens_audit_in": 8000,
@@ -362,10 +368,15 @@ def compute(pool, settings=None, days: int = 30) -> dict:
         l["proof"] = _PROOF.get(l["tool"])
     twilio = None
     if tw:
-        low = tw.get("balance") is not None and tw["balance"] < p["twilio_low_balance"]
-        twilio = {"balance": tw.get("balance"), "currency": tw.get("currency", "USD"),
+        _bal = tw.get("balance")
+        _auto = bool(p.get("twilio_auto_recharge"))
+        # with auto top-up ON a low balance is normal; only a CRITICAL balance (recharge failing) is an alarm
+        low = _bal is not None and (_bal < p["twilio_critical_balance"] if _auto
+                                    else _bal < p["twilio_low_balance"])
+        twilio = {"balance": _bal, "currency": tw.get("currency", "USD"),
                   "window_spend": tw.get("window_spend"), "low": bool(low),
-                  "threshold": p["twilio_low_balance"]}
+                  "auto_recharge": _auto,
+                  "threshold": p["twilio_critical_balance"] if _auto else p["twilio_low_balance"]}
     return {
         "days": days, "usage": u, "prices": p, "lines": lines, "total": total, "groups": groups,
         "cost_per_lead": cpl, "cost_per_acquisition": cpa, "leads": leads, "won": u["won"],

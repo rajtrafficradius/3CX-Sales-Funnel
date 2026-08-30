@@ -78,6 +78,14 @@
   .pb{padding:16px 20px}
   .row2{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;margin-bottom:16px}
   @media(max-width:1300px){.row2{grid-template-columns:1fr}}
+  /* pulse totals strip */
+  .ptot{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+  .pt-i{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:5px 10px;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--txt)}
+  .pt-i i{width:8px;height:8px;border-radius:2.5px;flex:none}
+  .pt-i em{font-style:normal;font-weight:650;color:var(--faint);font-size:11.5px}
+  .quiet{margin-top:10px;padding:11px 15px;border-radius:10px;background:var(--panel2);border:1px dashed var(--line);
+    color:var(--faint);font-size:12.5px;font-weight:650;text-align:center}
   /* legend */
   .leg{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;font-weight:750;color:var(--dim);font-family:var(--mono)}
   .leg i{display:inline-block;width:9px;height:9px;border-radius:2.5px;margin-right:6px;vertical-align:-1px}
@@ -142,6 +150,11 @@ var C={void:'#05080f',panel:'#0b111d',panel2:'#111a2b',line:'#1c2942',txt:'#eaf1
   indigo:'#7c6cf7',cyan:'#35d6e8',mint:'#3ddc84',amber:'#f5b83d',coral:'#ff6b5e',violet:'#b98add',idle:'#4a5c7d'};
 var SC={ok:C.mint,warn:C.amber,down:C.coral,idle:C.idle,unknown:C.violet};
 var SL={ok:'Running',warn:'Attention',down:'Down',idle:'Idle',unknown:'Unknown'};
+// an IDLE dialer outside the AU calling window is armed-and-waiting, not a fault — say so plainly
+function stateLabel(e,hrs){
+  if(e.state==='idle'&&!hrs&&/dialer|dial loop/i.test(e.name||''))return 'Standby';
+  return SL[e.state]||e.state;
+}
 var GORDER=['Calling','Intelligence','Builders','Autopilot','Core','Billing'];
 var GICON={Calling:'📞',Intelligence:'🧠',Builders:'🏗️',Autopilot:'🤖',Core:'⚙️',Billing:'💳'};
 var SUBCOL={Calling:C.cyan,Intelligence:C.indigo,Builders:C.mint,Autopilot:C.amber,Enrichment:C.violet,Core:'#5b8dd6',Surfaces:'#e06aa2',Other:C.idle};
@@ -224,21 +237,28 @@ function App(){
   }
   // ---------- 24h pulse ----------
   var pulse=d.pulse||[], slots=[];
+  var STREAMS=[['dials','Outbound dials',C.indigo],['inbound','Inbound calls',C.mint],['sms','SMS',C.amber],
+               ['classified','Classifications',C.cyan],['builds','AI builds','#e06aa2'],
+               ['enriched','Enrichment',C.violet],['bookings','Bookings','#5fe39a']];
   var byh={}; pulse.forEach(function(x){byh[String(x.hour).slice(0,13).replace(' ','T')]=x;});
+  var ptot={};
   for(var i=23;i>=0;i--){var t=new Date(Date.now()-i*3600e3);
-    var k=t.toISOString().slice(0,13), x=byh[k]||{dials:0,inbound:0,sms:0};
-    slots.push({lab:String(t.getHours()).padStart(2,'0')+':00',d:x.dials,i:x.inbound,s:x.sms});}
+    var k=t.toISOString().slice(0,13), x=byh[k]||{};
+    var slot={lab:String(t.getHours()).padStart(2,'0')+':00'};
+    STREAMS.forEach(function(s){slot[s[0]]=x[s[0]]||0;ptot[s[0]]=(ptot[s[0]]||0)+(x[s[0]]||0);});
+    slots.push(slot);}
+  var pulseTotal=Object.keys(ptot).reduce(function(a,k){return a+ptot[k];},0);
   // stacked BARS — hourly counts are discrete events; bars stay legible when activity is sparse
-  var pulseOpt={backgroundColor:'transparent',grid:{left:46,right:16,top:34,bottom:30},
+  var pulseOpt={backgroundColor:'transparent',grid:{left:46,right:16,top:52,bottom:30},
     tooltip:{trigger:'axis',axisPointer:{type:'shadow'},backgroundColor:'rgba(8,13,24,.96)',borderColor:C.line,textStyle:{color:C.txt,fontSize:12.5}},
-    legend:{data:['Outbound dials','Inbound calls','SMS'],top:0,left:0,textStyle:{color:C.faint,fontSize:11},itemWidth:10,itemHeight:9,icon:'roundRect'},
+    legend:{data:STREAMS.map(function(s){return s[1];}),top:0,left:0,textStyle:{color:C.faint,fontSize:11},
+      itemWidth:10,itemHeight:9,icon:'roundRect',itemGap:12},
     xAxis:{type:'category',data:slots.map(function(x){return x.lab;}),
       axisLabel:{color:C.faint,fontSize:10.5,interval:2},axisLine:{lineStyle:{color:C.line}},axisTick:{show:false}},
     yAxis:{type:'value',minInterval:1,axisLabel:{color:C.faint,fontSize:10.5},splitLine:{lineStyle:{color:'#16223a'}}},
-    series:[
-      {name:'Outbound dials',type:'bar',stack:'p',barWidth:'62%',data:slots.map(function(x){return x.d;}),itemStyle:{color:C.indigo}},
-      {name:'Inbound calls',type:'bar',stack:'p',data:slots.map(function(x){return x.i;}),itemStyle:{color:C.mint}},
-      {name:'SMS',type:'bar',stack:'p',data:slots.map(function(x){return x.s;}),itemStyle:{color:C.amber,borderRadius:[3,3,0,0]}}]};
+    series:STREAMS.map(function(s,si){
+      return {name:s[1],type:'bar',stack:'p',barWidth:'64%',itemStyle:{color:s[2],
+        borderRadius:si===STREAMS.length-1?[3,3,0,0]:0},data:slots.map(function(x){return x[s[0]];})};})};
   // ---------- subsystem health bars ----------
   var subs={};
   eng.forEach(function(x){var g=x.group||'Other';subs[g]=subs[g]||{ok:0,warn:0,down:0,idle:0,unknown:0};subs[g][x.state]=(subs[g][x.state]||0)+1;});
@@ -300,7 +320,7 @@ function App(){
 
     ${alerts.length?h`<div class="alerts">${alerts.slice(0,6).map(function(x,i){
       return h`<div class=${'alert '+x.state} key=${i}><span>${x.state==='down'?'⛔':'⚠️'}</span>
-        <span><b>${x.name}</b> — ${x.detail}</span><span class="ax">${SL[x.state].toUpperCase()}</span></div>`;})}</div>`:null}
+        <span><b>${x.name}</b> — ${x.detail}</span><span class="ax">${stateLabel(x,d.calling_hours).toUpperCase()}</span></div>`;})}</div>`:null}
 
     <div class="panel" style=${{marginBottom:'16px'}}>
       <div class="ph"><span class="pt">Topology</span><h2>Live system map</h2>
@@ -312,8 +332,13 @@ function App(){
 
     <div class="row2">
       <div class="panel"><div class="ph"><span class="pt">Throughput</span><h2>24-hour system pulse</h2>
-        <span class="psub">hourly floor activity</span></div>
-        <div class="pb"><${EChart} option=${pulseOpt} height=${240}/></div></div>
+        <span class="psub">${n(pulseTotal)} events · every engine stream</span></div>
+        <div class="pb">
+          <div class="ptot">${STREAMS.map(function(s){
+            return h`<span key=${s[0]} class="pt-i"><i style=${{background:s[2]}}></i>${n(ptot[s[0]]||0)} <em>${s[1]}</em></span>`;})}</div>
+          <${EChart} option=${pulseOpt} height=${232}/>
+          ${!pulseTotal?h`<div class="quiet">Floor is quiet — no engine activity in the last 24h${d.calling_hours?'':' (outside the AU calling window)'}.</div>`:null}
+        </div></div>
       <div class="panel"><div class="ph"><span class="pt">Health</span><h2>Subsystem status</h2>
         <span class="psub">${tot} live signals</span></div>
         <div class="pb"><${EChart} option=${healthOpt} height=${240}/></div></div>
@@ -328,7 +353,7 @@ function App(){
           return h`<div class=${'eng '+x.state} key=${x.key} style=${{animationDelay:(i*0.04)+'s'}}>
             <div class="top"><span class="led"></span><b>${x.name}</b></div>
             <div class="det">${x.detail}</div>
-            <div class="ft"><span class="last">${x.last?'last '+x.last:''}</span><span class="st">${SL[x.state]}</span></div>
+            <div class="ft"><span class="last">${x.last?'last '+x.last:''}</span><span class="st">${stateLabel(x,d.calling_hours)}</span></div>
           </div>`;})}</div>
       </div>`;})}
 

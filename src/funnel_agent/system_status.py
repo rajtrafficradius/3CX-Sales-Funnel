@@ -265,12 +265,19 @@ def compute(pool, settings) -> dict:
         bal = ts.get("balance")
         if bal is None:
             return "unknown", "balance API unavailable", None, None
-        # twilio_status() returns only the raw balance — derive LOW here from the configured threshold
-        # (the old ts.get('low') was never set, so an $11 balance showed 'ok': 2026-08-30 bug).
-        thr = float((_cost._prices(pool) or {}).get("twilio_low_balance") or 50.0)
-        low = bal < thr
-        state = "down" if bal < 20 else ("warn" if low else "ok")
-        return state, f"${bal:.2f} balance" + (f" · LOW (<${thr:.0f}) — TOP UP" if low else ""), None, round(bal, 2)
+        _p = _cost._prices(pool) or {}
+        auto = bool(_p.get("twilio_auto_recharge"))
+        crit = float(_p.get("twilio_critical_balance") or 3.0)
+        thr = float(_p.get("twilio_low_balance") or 50.0)
+        if auto:
+            # auto top-up ON → a low balance is NORMAL. Only a critical balance means the RECHARGE itself
+            # is failing (declined card / suspended account), which is the only case that stops the floor.
+            state = "down" if bal < crit else "ok"
+            det = f"${bal:.2f} · auto top-up ON" + (f" — RECHARGE FAILING (<${crit:.0f})" if bal < crit else "")
+        else:
+            state = "down" if bal < 20 else ("warn" if bal < thr else "ok")
+            det = f"${bal:.2f} balance" + (f" · LOW (<${thr:.0f}) — TOP UP" if bal < thr else "")
+        return state, det, None, round(bal, 2)
     tiles.append(_tile("twilio", "Twilio balance (SMS/voice)", "Billing", *guard(_twilio)))
 
     # ---------- DATAFORSEO BALANCE ----------
@@ -408,26 +415,68 @@ def compute(pool, settings) -> dict:
     overall = "down" if counts.get("down") else ("warn" if counts.get("warn") or counts.get("unknown") else "ok")
     tiles.sort(key=lambda t: order.get(t["state"], 5))
     # ---------- 24h PULSE (hourly activity for the engine-room chart) ----------
+    # EVERY activity stream the machine produces, per hour — so the pulse shows real work even when the
+    # dialer is outside calling hours (builders, classifier, enrichment and Emma all run around the clock).
     pulse = []
     try:
-        rows = _one_all(pool, "SELECT date_trunc('hour', created_at) h, "
-                              "count(*) FILTER (WHERE right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) <> dest9) dials, "
-                              "count(*) FILTER (WHERE right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) inbound "
-                              "FROM lisa_calls WHERE created_at > now()-interval '24 hours' GROUP BY 1 ORDER BY 1")
-        smsrows = {str(r["h"]): r for r in _one_all(pool, "SELECT date_trunc('hour', created_at) h, count(*) n "
-                                                          "FROM lisa_sms WHERE created_at > now()-interval '24 hours' GROUP BY 1")}
-        for r in rows:
-            k = str(r["h"])
-            pulse.append({"hour": k, "dials": int(r.get("dials") or 0), "inbound": int(r.get("inbound") or 0),
-                          "sms": int((smsrows.get(k) or {}).get("n") or 0)})
+        WIN = "now() - interval '24 hours'"
+        streams = {
+            "dials":    f"SELECT date_trunc('hour', created_at) h, count(*) n FROM lisa_calls WHERE created_at > {WIN} "
+                        f"AND right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) <> dest9 GROUP BY 1",
+            "inbound":  f"SELECT date_trunc('hour', created_at) h, count(*) n FROM lisa_calls WHERE created_at > {WIN} "
+                        f"AND right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9 GROUP BY 1",
+            "sms":      f"SELECT date_trunc('hour', created_at) h, count(*) n FROM lisa_sms WHERE created_at > {WIN} GROUP BY 1",
+            "classified": f"SELECT date_trunc('hour', updated_at) h, count(*) n FROM lisa_calls "
+                          f"WHERE updated_at > {WIN} AND status='analyzed' GROUP BY 1",
+            "builds":   f"SELECT date_trunc('hour', built_at) h, count(*) n FROM lisa4_sites "
+                        f"WHERE built_at > {WIN} AND status='built' GROUP BY 1",
+            "enriched": f"SELECT date_trunc('hour', updated_at) h, count(*) n FROM enrichment WHERE updated_at > {WIN} GROUP BY 1",
+            "bookings": f"SELECT date_trunc('hour', created_at) h, count(*) n FROM lisa_calls "
+                        f"WHERE created_at > {WIN} AND meeting_agreed GROUP BY 1",
+        }
+        buckets = {}
+        for key, sql in streams.items():
+            try:
+                for r in _one_all(pool, sql):
+                    k = str(r["h"])
+                    buckets.setdefault(k, {})[key] = int(r.get("n") or 0)
+            except Exception:
+                continue
+        for k in sorted(buckets):
+            row = {"hour": k}
+            for key in streams:
+                row[key] = int(buckets[k].get(key) or 0)
+            pulse.append(row)
     except Exception:
         pulse = []
+    # ---------- LIVE PIPELINE FLOW (what the machine actually produced today) ----------
+    flow = {}
+    try:
+        TZ = "Australia/Melbourne"
+        today = f"(started_at AT TIME ZONE '{TZ}')::date=(now() AT TIME ZONE '{TZ}')::date"
+        r = _one(pool, f"SELECT count(*) dials, "
+                       f"count(*) FILTER (WHERE COALESCE(duration_ms,0)/1000>=20 OR meeting_agreed) convos, "
+                       f"count(*) FILTER (WHERE meeting_agreed) booked FROM lisa_calls WHERE {today}")
+        p4 = _one(pool, "SELECT count(*) n FROM lisa4_pool lp WHERE NOT EXISTS "
+                        "(SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9)")
+        p5 = _one(pool, "SELECT count(*) n FROM lisa5_pool lp WHERE NOT EXISTS "
+                        "(SELECT 1 FROM lisa_calls lc WHERE lc.dest9=lp.dest9)")
+        up = _one(pool, f"SELECT count(*) n FROM calendar_events WHERE type IN ('meeting','reveal') "
+                        f"AND status='pending' AND start_at > now()")
+        wk = _one(pool, "SELECT count(*) n FROM lisa_calls WHERE meeting_agreed "
+                        "AND started_at > now()-interval '7 days'")
+        flow = {"ready": _g(p4, "n", 0) + _g(p5, "n", 0), "dials": _g(r, "dials", 0),
+                "convos": _g(r, "convos", 0), "booked": _g(r, "booked", 0),
+                "upcoming": _g(up, "n", 0), "booked_week": _g(wk, "n", 0)}
+    except Exception:
+        flow = {}
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "overall": overall,
         "counts": counts,
         "engines": tiles,
         "pulse": pulse,
+        "flow": flow,
         "calling_hours": hrs,
     }
 

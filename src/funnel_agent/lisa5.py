@@ -60,9 +60,29 @@ def _speakable_issue(issue: str | None) -> str:
     return "" if s.lower() in _INTERNAL_ISSUES else s
 
 
-def ensure_lisa5_tables(pool: ConnectionPool) -> None:
+_L5_TABLES_READY = False
+
+
+def ensure_lisa5_tables(pool: ConnectionPool, force: bool = False) -> None:
     """Lisa-5's OWN prospect pool. Mirrors lisa4_pool's columns so build_brief_lisa5 works identically;
-    fed externally (this module never sources it). Isolated from Lisa-1 / Lisa-4 tables."""
+    fed externally (this module never sources it). Isolated from Lisa-1 / Lisa-4 tables.
+
+    Runs its DDL ONCE per process behind a cheap sentinel probe — the same lock-convoy fix applied to
+    ensure_lisa4_tables (2026-08-31): a repeated `ALTER TABLE` queues for an AccessExclusiveLock and, when
+    it lands behind one slow reader, parks every later reader behind it and stalls the table."""
+    global _L5_TABLES_READY
+    if _L5_TABLES_READY and not force:
+        return
+    if not force:
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM information_schema.columns "
+                            "WHERE table_name='lisa5_pool' AND column_name='sms_sent'")
+                if cur.fetchone() is not None:
+                    _L5_TABLES_READY = True
+                    return
+        except Exception:
+            pass
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS lisa5_pool ("
@@ -73,6 +93,7 @@ def ensure_lisa5_tables(pool: ConnectionPool) -> None:
         cur.execute("ALTER TABLE lisa5_pool ADD COLUMN IF NOT EXISTS email text")
         cur.execute("ALTER TABLE lisa5_pool ADD COLUMN IF NOT EXISTS sms_sent boolean DEFAULT false")
         conn.commit()
+    _L5_TABLES_READY = True
 
 
 # --------------------------------------------------------------------------- #

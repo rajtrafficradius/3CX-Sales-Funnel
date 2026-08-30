@@ -278,7 +278,7 @@ function App(){
           <small>${d.won||0} won × ${audR(d.avg_deal_value)} · all-systems spend ${aud(d.total)}</small></div>
       </div>
       <div class="hfoot">
-        ${tw&&tw.balance!=null?h`<span class=${'pill '+(tw.low?'low':'ok')}><span class="dot"></span>Twilio balance ${usd(tw.balance,2)}${tw.low?' — LOW, top up':''}</span>`:null}
+        ${tw&&tw.balance!=null?h`<span class=${'pill '+(tw.low?'low':'ok')}><span class="dot"></span>Twilio ${usd(tw.balance,2)}${tw.low?' — RECHARGE FAILING':(tw.auto_recharge?' · auto top-up on':'')}</span>`:null}
         <span class="pill"><span class="dot" style=${{background:'#7f9df5'}}></span>${(u.ai_calls||0).toLocaleString()} AI calls · ${Math.round(u.ai_minutes||0).toLocaleString()} min</span>
         <span class="pill"><span class="dot" style=${{background:'#eec05e'}}></span>${d.ai_booked||0} booked · ${d.seen_meetings||0} held</span>
         <span class="pill"><span class="dot" style=${{background:'#83c43a'}}></span>${(u.sites||0)+(u.audits||0)+(u.comparisons||0)} AI assets built</span>

@@ -399,7 +399,31 @@ def lisa4_pool_quality_report(pool: ConnectionPool) -> dict:
     return {"pool": len(rows), "excluded_total": sum(counts.values()), "counts": counts, "examples": examples}
 
 
-def ensure_lisa4_tables(pool: ConnectionPool) -> None:
+_L4_TABLES_READY = False
+
+
+def ensure_lisa4_tables(pool: ConnectionPool, force: bool = False) -> None:
+    """Create/patch Lisa-4's tables ONCE per process.
+
+    LOCK-CONVOY FIX (2026-08-31): this ran its full DDL on EVERY call — and reserve/schedule/build/dial all
+    call it, so `ALTER TABLE lisa4_pool …` fired many times a minute. Each ALTER queues for an
+    AccessExclusiveLock; when it lands behind one slow reader, Postgres parks EVERY later reader behind the
+    pending exclusive lock and the whole table stalls (observed live: a 444s blocked ALTER froze the pool
+    count, Emma's booking query and the dialer's own reads). Same pattern already solved in
+    ensure_emma_tables: probe a cheap sentinel column first and skip the DDL entirely once present."""
+    global _L4_TABLES_READY
+    if _L4_TABLES_READY and not force:
+        return
+    if not force:
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM information_schema.columns "
+                            "WHERE table_name='lisa4_pool' AND column_name='sms_sent'")
+                if cur.fetchone() is not None:
+                    _L4_TABLES_READY = True
+                    return
+        except Exception:
+            pass
     with pool.connection() as conn, conn.cursor() as cur:
         cur.execute(
             "CREATE TABLE IF NOT EXISTS lisa4_pool ("
@@ -421,6 +445,7 @@ def ensure_lisa4_tables(pool: ConnectionPool) -> None:
         cur.execute("ALTER TABLE lisa4_sites ADD COLUMN IF NOT EXISTS build_attempts integer DEFAULT 0")
         cur.execute("ALTER TABLE lisa4_sites ADD COLUMN IF NOT EXISTS building_at timestamptz")
         conn.commit()
+    _L4_TABLES_READY = True
 
 
 def reserve_lisa4_pool(pool: ConnectionPool, settings: Settings, scan_batch: int = 60) -> dict:
@@ -473,6 +498,13 @@ def reserve_lisa4_pool(pool: ConnectionPool, settings: Settings, scan_batch: int
             "  AND NOT EXISTS (SELECT 1 FROM lisa_pool lp WHERE lp.dest9=right(regexp_replace(co.phone,'[^0-9]','','g'),9)) "
             "  AND NOT EXISTS (SELECT 1 FROM lisa_calls lc WHERE lc.dest9=right(regexp_replace(co.phone,'[^0-9]','','g'),9)) "
             "  AND NOT EXISTS (SELECT 1 FROM calls hc WHERE right(regexp_replace(COALESCE(hc.dest_number,''),'[^0-9]','','g'),9)=right(regexp_replace(co.phone,'[^0-9]','','g'),9)) "
+            # DOMAIN CHANNEL GUARD, MOVED INTO SQL (2026-08-31): a gmaps row whose DOMAIN also exists in the
+            # D&B (raghav) set is Lisa-1/human territory and gets dropped after scanning. Because this batch
+            # is ORDER BY co.id LIMIT n, those same rows were re-fetched and re-dropped EVERY pass — the pool
+            # STALLED at 2,845/6,000 with 6k stock available and Lisa-4 ran dry (only 6 fresh calls queued for
+            # Mon 31 Aug). Excluding them here lets the LIMIT pull genuinely usable candidates instead.
+            "  AND NOT (NULLIF(co.domain,'') IS NOT NULL AND EXISTS ("
+            "        SELECT 1 FROM companies dnb WHERE dnb.source='raghav' AND dnb.domain = co.domain)) "
             "ORDER BY co.id LIMIT %s", (*_L4X_SQL_PARAMS, min(need, scan_batch * 2)))
         # owner's standing exclusion — the shared helper is the authority (adds franchise-substring
         # + portal/directory checks the SQL pre-filter can't do)
