@@ -76,24 +76,21 @@ def ensure_crm_tables(pool) -> None:
 
 
 # ---------- read: the enriched booked list ----------
-LIST_SQL = """
+# Line->agent attribution is interpolated from lisa4.line_sql — the SINGLE source of truth. Do NOT paste the
+# digit lists back in here: the 468091513 hand-off (Lisa-4 until 2026-08-17, Lisa-5 from 2026-08-18) has to
+# stay in lockstep with the booking-ASSET builder below, and it did not (see ensure_booking_assets).
+def _list_sql() -> str:
+    from . import lisa4 as _l4mod
+    return LIST_SQL_TMPL.format(is_lisa4=_l4mod.line_sql("lisa4"), is_lisa5=_l4mod.line_sql("lisa5"))
+
+
+LIST_SQL_TMPL = """
 WITH booked AS (
   SELECT DISTINCT ON (dest9) dest9, call_id, company_name, prospect_name, prospect_email,
          agreed_day_time, created_at AS booked_at,
          (right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) AS inbound,
-         -- Canonical agent lines per Retell. Lisa4 = 030256 + 266405 + 044526.
-         -- Lisa5 = 096730 + 008827 + 091513.
-         -- 091513 CHANGED HANDS: it was Lisa-4's rotation until 2026-08-17 and became Lisa-5's from
-         -- 2026-08-18 (confirmed from the dialed pool: 149-150 D&B calls/day since). This clause was a
-         -- hardcoded copy that still called it a Lisa-4 line, so Lisa-5 bookings on it were labelled
-         -- "Website" in the CRM (C J Costa, 2026-08-31) and the Growth count read low. Date-aware now —
-         -- same rule as lisa4._L4_PRED / _L5_PRED and emma's is_lisa4.
-         ((from_number ~ '(468030256|489266405|495044526)' OR to_number ~ '(468030256|489266405|495044526)')
-           OR ((from_number ~ '468091513' OR to_number ~ '468091513')
-               AND created_at < '2026-08-18 00:00:00+10')) AS is_lisa4,
-         ((from_number ~ '(468096730|468008827)' OR to_number ~ '(468096730|468008827)')
-           OR ((from_number ~ '468091513' OR to_number ~ '468091513')
-               AND created_at >= '2026-08-18 00:00:00+10')) AS is_lisa5
+         {is_lisa4} AS is_lisa4,
+         {is_lisa5} AS is_lisa5
   FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
   ORDER BY dest9, created_at ASC)
 SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
@@ -255,7 +252,7 @@ def gbp_url(agent, place_id, company):
 
 
 def crm_rows(q, closers: list[str]) -> list[dict]:
-    rows = q(LIST_SQL, {"closers": closers or ["__none__"]})
+    rows = q(_list_sql(), {"closers": closers or ["__none__"]})
     for r in rows:
         r["stage"] = _derived_stage(r)
         r["stage_reason"] = _stage_reason(r)
@@ -272,7 +269,7 @@ def _first(rows) -> dict:
 
 def crm_record(q, dest9: str, closers: list[str]) -> dict:
     d9 = re.sub(r"[^0-9]", "", dest9 or "")[-9:]
-    base = q(LIST_SQL + "\n", {"closers": closers or ["__none__"]})
+    base = q(_list_sql() + "\n", {"closers": closers or ["__none__"]})
     rec = next((r for r in base if r["dest9"] == d9), None)
     if not rec:
         return {}
@@ -650,11 +647,17 @@ def run_booking_docs_autopilot(pool, settings, heavy_budget: int = 2) -> dict:
     out = {"audit": 0, "comparison": 0, "site_queued": 0, "seen": 0}
     try:
         ensure_crm_tables(pool)
-        rows = _l._fetch(pool, """
+        from . import lisa4 as _l4mod
+        # Line→agent attribution comes from the ONE shared rule (lisa4.line_sql). This query used to carry
+        # its own hand-copied digit list WITHOUT the 468091513 date cutoff, so Lisa-5 bookings on that line
+        # were seen here as Lisa-4 and got a WEBSITE queued instead of the growth AUDIT their closer needs —
+        # while the CRM label (which was date-aware) said 'Lisa 5'. That disagreement is what showed up as a
+        # booking marked BOTH agents (Vysakh, 2026-08-31).
+        rows = _l._fetch(pool, f"""
           WITH booked AS (
             SELECT DISTINCT ON (dest9) dest9, company_name, created_at,
-              (from_number ~ '(468030256|489266405|495044526|468091513)' OR to_number ~ '(468030256|489266405|495044526|468091513)') AS is_lisa4,
-              (from_number ~ '(468096730|468008827)' OR to_number ~ '(468096730|468008827)') AS is_lisa5
+              {_l4mod.line_sql('lisa4')} AS is_lisa4,
+              {_l4mod.line_sql('lisa5')} AS is_lisa5
             FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
             ORDER BY dest9, created_at ASC)
           SELECT b.dest9, b.is_lisa4, b.is_lisa5,

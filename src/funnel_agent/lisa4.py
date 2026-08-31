@@ -2569,6 +2569,36 @@ _L5_PRED = ("((COALESCE(from_number,'') ~ %s "
             "OR COALESCE(to_number,'') ~ %s) "
             f"OR ({_ON_091513} AND created_at >= {_N091513_SWITCH}))")
 
+# Lines that were ONLY ever Lisa-4's (091513 excluded — it changed hands, see above).
+_L4_OWN_RX = "(" + "|".join(d for d in L4_LINE_DIGITS_ALL if d != "468091513") + ")"
+
+
+def line_sql(agent: str, *, frm: str = "from_number", to: str = "to_number",
+             created: str = "created_at") -> str:
+    """The ONE line→agent attribution rule, as literal parameter-free SQL any module can drop into a query.
+
+    WHY THIS EXISTS: the rule is subtle — 468091513 was Lisa-4's rotation until 2026-08-17 and Lisa-5's
+    from 2026-08-18 — and it had been hand-copied into several modules. One copy (crm.py's booking-ASSET
+    builder) never got the date cutoff, so a Lisa-5 booking on that line was routed to Lisa-4's deliverable:
+    the CRM correctly LABELLED it 'Lisa 5' while the builder queued a WEBSITE instead of the growth AUDIT,
+    and the prospect page showed both at once (Vysakh: HILLSYDE NOMINEES, 2026-08-31 — 5 bookings affected,
+    each left without the audit its closer needed). Never re-type the digits; import this.
+
+    `frm`/`to`/`created` let a caller pass table-qualified columns (e.g. frm='c.from_number').
+    """
+    f, t, c = frm, to, created
+    on13 = f"(COALESCE({f},'') ~ '468091513' OR COALESCE({t},'') ~ '468091513')"
+    if agent == "lisa4":
+        return (f"((COALESCE({f},'') ~ '{_L4_OWN_RX}' OR COALESCE({t},'') ~ '{_L4_OWN_RX}')"
+                f" OR ({on13} AND {c} < {_N091513_SWITCH}))")
+    if agent == "lisa5":
+        return (f"((COALESCE({f},'') ~ '{L5_LINE_RX}' OR COALESCE({t},'') ~ '{L5_LINE_RX}')"
+                f" OR ({on13} AND {c} >= {_N091513_SWITCH}))")
+    if agent == "lisa1":                      # Lisa-1 = everything that is neither
+        return f"(NOT {line_sql('lisa4', frm=f, to=t, created=c)} "\
+               f"AND NOT {line_sql('lisa5', frm=f, to=t, created=c)})"
+    raise ValueError(f"unknown agent {agent!r}")
+
 
 def _agent_today(pool: ConnectionPool, tz: str, *, lisa4: bool, out_numbers: list[str],
                  start: str | None = None, end: str | None = None) -> dict:
