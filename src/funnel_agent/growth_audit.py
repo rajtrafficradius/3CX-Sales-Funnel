@@ -2105,9 +2105,104 @@ def audit_qa_gate(audit_model: dict, html: str = "") -> dict:
                 issues.append("hero_number_not_in_html")
             if html.count('class="srccap"') + html.count("class='srccap'") < 3:
                 issues.append("missing_source_labels")
-        return {"ok": not issues, "issues": issues, "thin": thin, "signals": signals}
+        hard = _audit_hard_failures(m, html)
+        return {"ok": not issues and not hard, "issues": issues + hard, "hard": hard,
+                "thin": thin, "signals": signals}
     except Exception as exc:   # a gate crash must not sink the audit — report it as an issue
-        return {"ok": False, "issues": [f"qa_gate_error:{str(exc)[:80]}"], "thin": False, "signals": {}}
+        return {"ok": False, "issues": [f"qa_gate_error:{str(exc)[:80]}"], "hard": [],
+                "thin": False, "signals": {}}
+
+
+# Bare nouns that carry huge encyclopedic search volume and are NEVER what a paying local customer types.
+# A universe that collapses to one of these is the "animal" defect: 60,500/mo of Wikipedia traffic driving a
+# six-figure loss claim. Extend when a new one is caught rather than widening the rule.
+_GENERIC_ONE_WORD = {
+    "animal", "animals", "building", "construction", "transport", "food", "health", "medical", "care",
+    "education", "training", "engineering", "manufacturing", "energy", "mining", "farming", "agriculture",
+    "fitness", "beauty", "travel", "finance", "insurance", "property", "retail", "cleaning", "design",
+    "marketing", "software", "technology", "law", "legal", "music", "sport", "sports", "garden", "water",
+}
+# A monthly "you are losing" figure above this is not credible to an Australian SMB owner and reads as a
+# scare number, whatever the arithmetic says. A$40k/mo = A$480k/yr of NEW work from search alone.
+_MAX_CREDIBLE_MONTHLY = 40_000.0
+
+
+def _audit_hard_failures(m: dict, html: str = "") -> list:
+    """BLOCKING defects — the four classes that actually reached closers and cost us credibility
+    (Vysakh, 2026-08-31: Prendergast, Hillsyde). Unlike the advisory issues above, ANY of these means the
+    report must not ship: it is not "thin but honest", it is WRONG. Pure + guarded.
+
+    The standing rule this enforces: no audit is far better than a wrong audit in a closer's hands.
+    """
+    out = []
+    try:
+        biz = m.get("business") or {}
+        tech = m.get("tech") or {}
+        rev = m.get("revenue") or {}
+
+        # 1) ORIGIN NEVER SERVED US ANYTHING. Prendergast's site TCP-connects then hangs (0 bytes) and
+        #    Hillsyde's domain is a parked "for sale" page -- yet both audits reported a ~100/100 speed
+        #    score and congratulated them on it, because Lighthouse grades an empty document as perfect.
+        #    An empty final_url means the page fetcher never got a document at all.
+        if not (tech.get("final_url") or "").strip():
+            out.append("origin_unreachable:no_page_was_ever_fetched")
+        else:
+            ps = m.get("pagespeed") or {}
+            perf = ((ps.get("mobile") or {}).get("performance"))
+            geo_score = (m.get("geo_aeo") or {}).get("score")
+            # Perfect speed + almost nothing readable on the page = an empty/parked document, not a fast site.
+            if (perf is not None and geo_score is not None
+                    and float(perf) >= 90 and float(geo_score) <= 40):
+                out.append(f"origin_empty_or_parked:speed={perf}_but_readability={geo_score}")
+
+        # 2) DEGENERATE KEYWORD UNIVERSE. The existing gate only catches a TOTALLY empty universe; the
+        #    Prendergast failure was ONE surviving keyword ("animal"), which is worse than empty because
+        #    every headline number is then derived from it and looks authoritative.
+        kws = []
+        for rows in ((m.get("keyword_gap") or []), (m.get("outranked") or []),
+                     ((m.get("seo") or {}).get("money_keywords") or [])):
+            for r in rows:
+                k = ((r.get("keyword") if isinstance(r, dict) else str(r)) or "").strip().lower()
+                if k:
+                    kws.append(k)
+        uniq = sorted(set(kws))
+        if uniq and len(uniq) <= 2:
+            out.append(f"degenerate_keyword_universe:only_{len(uniq)}_terms:{','.join(uniq)[:60]}")
+        for k in uniq:
+            if k in _GENERIC_ONE_WORD:
+                out.append(f"generic_one_word_keyword:{k}")
+
+        # 3) NAMESAKE "COMPETITOR". prendergast.com.au (an unrelated earthmoving firm, est. 1972) was named
+        #    "your strongest organic competitor" purely on a shared surname, and the report then wrote prose
+        #    about "your family name". A rival sharing the prospect's OWN distinctive token is a name
+        #    collision until proven otherwise -- never assert it.
+        own = set()
+        for src in (biz.get("name"), m.get("domain"), biz.get("company")):
+            for w in _re.findall(r"[a-z]{5,}", (src or "").lower()):
+                if w not in ("group", "trust", "trustee", "australia", "services", "holdings", "nominees"):
+                    own.add(w)
+        for cmp_ in (m.get("competitors") or [])[:6]:
+            blob = ((cmp_.get("domain") or "") + " " + (cmp_.get("name") or "")).lower()
+            hit = [w for w in own if w in blob]
+            if hit:
+                out.append(f"namesake_competitor:{(cmp_.get('domain') or cmp_.get('name'))[:40]}"
+                           f"_shares_{hit[0]}")
+
+        # 4) IMPLAUSIBLE MONEY. Two independent tests: an absolute ceiling, and consistency with the
+        #    report's OWN evidence table -- Prendergast's cover said A$192,844/mo over a table totalling
+        #    A$1,543, and the report explicitly invites the reader to check that.
+        monthly = float(rev.get("monthly") or 0)
+        if monthly > _MAX_CREDIBLE_MONTHLY:
+            out.append(f"revenue_claim_implausible:{monthly:.0f}/mo")
+        evidence = 0.0
+        for rows in ((m.get("keyword_gap") or []), (m.get("outranked") or [])):
+            for r in rows:
+                evidence += float(r.get("cap_value") or r.get("money_value") or 0)
+        if monthly and evidence and monthly > evidence * 10:
+            out.append(f"revenue_exceeds_own_evidence:{monthly:.0f}_vs_table_{evidence:.0f}")
+    except Exception as exc:
+        out.append(f"hard_gate_error:{str(exc)[:60]}")
+    return out
 
 
 # --------------------------------------------------------------------------- entry point ---

@@ -1191,6 +1191,78 @@ def _recompress_embedded_images(html: str) -> str:
         return html
 
 
+# Visible-text admissions that we did not have the client's real content. Matched against the page's
+# VISIBLE TEXT ONLY — never raw HTML, because "placeholder" is a legitimate CSS pseudo-element
+# (::placeholder) and input attribute that appears on perfectly good sites.
+_PLACEHOLDER_MARKERS = (
+    "example testimonial", "illustrated", "drawn example", "sample image",
+    "photo coming", "photos are collected", "more photos from the run",
+    "image to come", "lorem ipsum", "placeholder image", "stock placeholder",
+)
+
+
+def _visible_text(html: str) -> str:
+    """Just the words a prospect actually reads — styles, scripts and every attribute stripped."""
+    h = _re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html or "", flags=_re.S | _re.I)
+    h = _re.sub(r"<[^>]+>", " ", h)
+    return _re.sub(r"\s+", " ", _html.unescape(h)).lower()
+
+
+def _reveal_image_problems(html: str, real_logo, images_used: int) -> list:
+    """Defects that make a reveal embarrassing on the screen-share. Returns [] when the page is fine.
+
+    NOT a defect: shipping zero photographs. A design-led, type-and-colour site is a legitimate art
+    direction — Gully Rigging ships that way and is in Vysakh's own approved reference set.
+
+    IS a defect (both shipped on M & G Prendergast, Vysakh 2026-08-31):
+      * the LOGO reused inside a photo frame — their 639x222 gold-on-blue wordmark sat in the hero
+        <figure> under alt="...livestock transport working in the Victorian...", a logo posing as a
+        photograph of their trucks;
+      * ADMITTED placeholders in the visible copy — 21 tiles stamped "Illustrated" beneath the note
+        "drawn examples while more photos from the run are collected", plus invented quotes labelled
+        "Example testimonial". Telling the owner we had none of their content destroys the reveal.
+    """
+    probs = []
+    try:
+        text = _visible_text(html)
+        for mark in _PLACEHOLDER_MARKERS:
+            if mark in text:
+                probs.append(f"placeholder_text_shipped:{mark}")
+        uri = (real_logo or {}).get("data_uri") if isinstance(real_logo, dict) else None
+        if uri:
+            head = uri[:96]
+            for tag in _re.findall(r"<img[^>]*>", html or "", _re.I):
+                if head and head in tag:
+                    m = _re.search(r"""alt\s*=\s*["']([^"']*)""", tag, _re.I)
+                    alt = (m.group(1) if m else "").lower().strip()
+                    # A logo image SHOULD carry a short brand alt — alt="DeltaCert" or "Feature Fencing"
+                    # is correct and must not be flagged. What is wrong is a SCENIC alt: the Prendergast
+                    # hero read "MG Prendergast livestock transport working in the Victorian countryside"
+                    # over a 639x222 wordmark. A description that long is claiming to be a photograph.
+                    if (alt and len(alt.split()) >= 5
+                            and not any(w in alt for w in ("logo", "wordmark", "brand", "mark"))):
+                        probs.append(f"logo_used_as_photo:alt={alt[:52]}")
+        # ONE IMAGE POSING AS SEVERAL DIFFERENT PHOTOS. The strongest signal of all, and it needs no
+        # knowledge of which asset is the logo: if the SAME data URI is rendered under two or more
+        # DIFFERENT scenic alt texts ("coaching a client through a strength session" / "spotting a client
+        # during a heavy set"), the page is presenting one picture as a portfolio.
+        seen = {}
+        for tag in _re.findall(r"<img[^>]*>", html or "", _re.I):
+            u = _re.search(r"""src\s*=\s*["'](data:image/[^"']{40,})""", tag, _re.I)
+            a = _re.search(r"""alt\s*=\s*["']([^"']*)""", tag, _re.I)
+            if not u:
+                continue
+            alt = (a.group(1) if a else "").lower().strip()
+            if len(alt.split()) >= 4:
+                seen.setdefault(u.group(1)[:96], set()).add(alt)
+        for uri, alts in seen.items():
+            if len(alts) >= 2:
+                probs.append(f"one_image_many_scenes:{len(alts)}_alts:{sorted(alts)[0][:44]}")
+    except Exception as exc:
+        probs.append(f"image_gate_error:{str(exc)[:50]}")
+    return probs
+
+
 def _logo_mark_ok(data_uri: str) -> bool:
     """Validation gate for an EXTRACTED site logo: accept SVG marks and transparent rasters outright; an
     opaque raster must read as a brand card (flat, uniform border) and a sane logo aspect — never a
@@ -1672,6 +1744,17 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
                 _pos = _low.rfind("</html>")
             html = (html[:_pos] + _gallery + html[_pos:]) if _pos != -1 else (html + _gallery)
         _images_used = sum(1 for _u in real_images if _u and (_u in html))
+        # REVEAL IMAGE GATE — a reveal is shown to the owner as "your new website". Two things are
+        # indefensible in that moment and both shipped on M & G Prendergast (Vysakh, 2026-08-31):
+        # their LOGO stretched into the hero PHOTO frame with alt text claiming it was a photo of their
+        # trucks, and a gallery of 21 CSS-drawn tiles each stamped "Illustrated" under a note reading
+        # "drawn examples while more photos are collected", plus invented "Example testimonial" quotes.
+        # A photo-less but design-led site is fine (Gully Rigging shipped that way and was approved) —
+        # ADMITTED PLACEHOLDERS and a logo posing as a photograph are not.
+        _img_problems = _reveal_image_problems(html, real_logo, _images_used)
+        if _img_problems:
+            log.warning("lisa4_site_image_gate", dest9=dest9, company=p.get("company"),
+                        problems=_img_problems[:6], images_used=_images_used)
         # self-heal bare-text data URIs (a token outside <img>/url() renders as visible base64 text)
         html = _wrap_bare_image_uris(html)
         # keep the page a few MB: sharp 2000px embeds re-encoded to progressive JPEG (Pathway 22MB case)
@@ -1695,8 +1778,11 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
             try:
                 with pool.connection() as conn, conn.cursor() as cur:
                     cur.execute("UPDATE lisa4_sites SET html=%s, status='built', built_at=now(), "
-                                "share_token=COALESCE(share_token,%s), kind=COALESCE(kind,'reveal') WHERE id=%s",
-                                (html, _tok, site_id))
+                                "share_token=COALESCE(share_token,%s), kind=COALESCE(kind,'reveal'), "
+                                "qa_passed=%s, qa_notes=%s, qa_at=now() WHERE id=%s",
+                                (html, _tok, not _img_problems,
+                                 ("image gate: " + "; ".join(_img_problems))[:600] if _img_problems else None,
+                                 site_id))
                     conn.commit()
                 break
             except Exception as _exc:

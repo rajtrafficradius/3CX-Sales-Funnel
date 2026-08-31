@@ -546,16 +546,36 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
         html = _ga.gen_growth_audit(key, model, audit_model, avg_ticket=avg_ticket, company=company or "")
         if not html:
             return None
-        # ACCURACY / THIN-DATA GATE — catch a defective or near-empty audit BEFORE it ships. We still
-        # persist it (a limited-data audit is a legitimate, honestly-labelled deliverable), but we LOG the
-        # issues so a thin/violating report is flagged for review rather than silently going out.
+        # ACCURACY GATE — two tiers. ADVISORY issues (thin data, a missing source label) still ship: a
+        # limited-data audit is a legitimate, honestly-labelled deliverable. HARD failures do NOT ship.
+        #
+        # This used to be log-only, and that is exactly how three wrong audits reached Alfred on 2026-08-31:
+        # Prendergast (whole report built on the single word "animal", an unrelated same-surname firm named
+        # as the competitor, A$192,844/mo against its own A$1,543 evidence table, and a 100/100 speed score
+        # for a site that serves nothing) and Hillsyde (a parked for-sale domain turned into a gym report).
+        # The standing rule is that NO audit beats a WRONG audit in a closer's hands, so a hard failure now
+        # aborts: no token is linked, and the reason is recorded for review.
         try:
+            from .logging import get_logger as _gl
             qa = _ga.audit_qa_gate(audit_model, html)
+            _hard = qa.get("hard") or []
             if not qa.get("ok"):
-                from .logging import get_logger as _gl
                 _gl("funnel_agent.crm").warning("growth_audit_review",
                                                 domain=dom, dest9=d9, company=company or "",
-                                                thin=qa.get("thin"), issues=(qa.get("issues") or [])[:12])
+                                                thin=qa.get("thin"), hard=_hard[:8],
+                                                issues=(qa.get("issues") or [])[:12])
+            if _hard:
+                _reason = "; ".join(_hard)[:600]
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO lisa4_sites (dest9, domain, company, kind, status, html, qa_passed, "
+                        "qa_notes, qa_at, created_at) "
+                        "VALUES (%s,%s,%s,'audit','blocked',%s,false,%s,now(),now())",
+                        (d9, dom, company or "", html, "BLOCKED by accuracy gate: " + _reason))
+                    conn.commit()
+                _gl("funnel_agent.crm").error("growth_audit_blocked", domain=dom, dest9=d9,
+                                              company=company or "", reasons=_hard[:8])
+                return None
         except Exception:
             pass
         slug = _re.sub(r"[^a-z0-9]+", "-", (company or "growth").lower()).strip("-")[:24] or "growth"
