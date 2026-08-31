@@ -81,12 +81,19 @@ WITH booked AS (
   SELECT DISTINCT ON (dest9) dest9, call_id, company_name, prospect_name, prospect_email,
          agreed_day_time, created_at AS booked_at,
          (right(regexp_replace(COALESCE(from_number,''),'[^0-9]','','g'),9) = dest9) AS inbound,
-         -- Canonical agent lines per Retell (nicknames "Lisa4/Lisa5 rotation") + call behaviour:
-         -- Lisa4 = 030256 (unlabelled but does website reveals) + 266405 + 044526 + 091513;
-         -- Lisa5 = 096730 + 008827. Was wrong: 091513 (a Lisa4 line) sat in Lisa5, causing the
-         -- /lisa-vs-/lisa-crm count mismatch. Keep this in sync with settings.lisa4/5_numbers.
-         (from_number ~ '(468030256|489266405|495044526|468091513)' OR to_number ~ '(468030256|489266405|495044526|468091513)') AS is_lisa4,
-         (from_number ~ '(468096730|468008827)' OR to_number ~ '(468096730|468008827)') AS is_lisa5
+         -- Canonical agent lines per Retell. Lisa4 = 030256 + 266405 + 044526.
+         -- Lisa5 = 096730 + 008827 + 091513.
+         -- 091513 CHANGED HANDS: it was Lisa-4's rotation until 2026-08-17 and became Lisa-5's from
+         -- 2026-08-18 (confirmed from the dialed pool: 149-150 D&B calls/day since). This clause was a
+         -- hardcoded copy that still called it a Lisa-4 line, so Lisa-5 bookings on it were labelled
+         -- "Website" in the CRM (C J Costa, 2026-08-31) and the Growth count read low. Date-aware now —
+         -- same rule as lisa4._L4_PRED / _L5_PRED and emma's is_lisa4.
+         ((from_number ~ '(468030256|489266405|495044526)' OR to_number ~ '(468030256|489266405|495044526)')
+           OR ((from_number ~ '468091513' OR to_number ~ '468091513')
+               AND created_at < '2026-08-18 00:00:00+10')) AS is_lisa4,
+         ((from_number ~ '(468096730|468008827)' OR to_number ~ '(468096730|468008827)')
+           OR ((from_number ~ '468091513' OR to_number ~ '468091513')
+               AND created_at >= '2026-08-18 00:00:00+10')) AS is_lisa5
   FROM lisa_calls WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
   ORDER BY dest9, created_at ASC)
 SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,

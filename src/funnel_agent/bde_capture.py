@@ -665,6 +665,27 @@ def _capture_aircall_comments(pool, settings, oai, model: str, closers: list[str
 # --------------------------------------------------------------------------- #
 # Fireflies path — additive, reuses the ALREADY-matched fireflies_meetings rows
 # --------------------------------------------------------------------------- #
+# A Fireflies row is a REAL meeting (a held Teams/Zoom reveal) — not one of Alfred's recorded phone
+# calls. Phone recordings are titled "<name> [+61 4xx xxx xxx] <> +61 4xx xxx xxx" and run 0.3-5 min;
+# a genuine reveal is "Teams Meeting: Traffic Radius with <Company> Team" at 10-30 min. Shared by the
+# CRM stage-advance and the cost engine's held-meeting count so both tell the SAME truth.
+FF_PHONE_TITLE_SQL = "(COALESCE(title,'') ~ '<>' AND COALESCE(title,'') ~ '\\+61')"
+FF_REAL_MEETING_SQL = (f"(NOT {FF_PHONE_TITLE_SQL} AND COALESCE(duration_min,0) >= 5 "
+                       "AND meeting_date <= now())")
+_FF_MIN_MEETING_MIN = 5.0
+
+
+def _is_real_meeting(row) -> bool:
+    """Python mirror of FF_REAL_MEETING_SQL for a single fireflies_meetings row."""
+    try:
+        t = (row.get("title") or "")
+        if "<>" in t and "+61" in t:
+            return False                      # a recorded phone call, not a meeting
+        return float(row.get("duration_min") or 0) >= _FF_MIN_MEETING_MIN
+    except Exception:
+        return False
+
+
 def _capture_fireflies(pool, oai, model: str, limit: int, out: dict) -> None:
     """Map already-matched Fireflies meeting transcripts onto booked_crm with the SAME fill-blank/append
     merge. We READ the fireflies_meetings table (populated by the fully-isolated run_fireflies_watch — we
@@ -676,7 +697,7 @@ def _capture_fireflies(pool, oai, model: str, limit: int, out: dict) -> None:
             return
         from .crm import crm_update
         rows = _fetch(pool, """
-          SELECT fm.id, fm.dest9, fm.title, fm.summary, fm.transcript,
+          SELECT fm.id, fm.dest9, fm.title, fm.summary, fm.transcript, fm.duration_min, fm.meeting_date,
                  bc.contact_name AS bc_name, bc.contact_email AS bc_email,
                  bc.next_action AS bc_next, bc.outcome AS bc_outcome,
                  (SELECT company_name FROM lisa_calls WHERE dest9=fm.dest9 AND company_name IS NOT NULL
@@ -719,8 +740,15 @@ def _capture_fireflies(pool, oai, model: str, limit: int, out: dict) -> None:
                     _log_warn("bde_capture_ff_update_failed", id=str(r.get("id")), error=str(exc))
             _append_note(pool, d9, "Fireflies meeting captured", "fireflies-capture",
                          _clean(res.get("summary")), outcome, mdt, {"fireflies_id": r.get("id")})
-            # A recorded reveal MEETING happened → advance to 'revealed' (never regressing a later stage).
-            if _advance_stage(pool, d9, "revealed", "fireflies-capture"):
+            # ONLY a real MEETING advances the stage to 'revealed'.
+            # Fireflies also records Alfred's CONFIRMATION PHONE CALLS (461 of 480 rows: titled
+            # "Alfred Marion [+61 4xx] <> +61 4xx", 0.3-5 min). Treating those as the reveal marked
+            # prospects 'revealed' whose meeting hadn't happened yet — RB Tile's reveal was still a day
+            # away — and re-applied itself every pass, so a human's manual stage edit bounced straight
+            # back (Vysakh, 2026-08-31). A genuine reveal is a TEAMS meeting: no "<> +61" phone pattern
+            # and a real duration. Phone-call transcripts still enrich the CRM fields + notes above —
+            # they just never claim the meeting happened.
+            if _is_real_meeting(r) and _advance_stage(pool, d9, "revealed", "fireflies-capture"):
                 out["updated"] += 1
             _mark_seen(pool, key, d9)
             out["captured"] += 1

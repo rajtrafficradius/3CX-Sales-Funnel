@@ -220,19 +220,45 @@ def usage(pool, days: int = 30) -> dict:
     # calls, unrelated prospects) — it is NOT a reveal, so the Fireflies leg is RESTRICTED to meetings that
     # MATCH an actual booking (dest9 ∈ booked_crm). Without the match the raw table over-counts reveals
     # ~6x. DISTINCT trailing-9 identity never double-counts a prospect seen on more than one leg.
+    # HELD = a REAL Teams meeting that actually ran, matched to a booking. Nothing else counts.
+    # Why this is strict (Vysakh, 2026-08-31): the old rule counted booked_crm 'revealed' — but that flag
+    # was being set by Fireflies recordings of Alfred's CONFIRMATION PHONE CALLS (461 of 480 Fireflies rows
+    # are "Alfred Marion [+61 4xx] <> +61 4xx", 0.3-5 min), so prospects whose reveal hadn't happened yet
+    # (RB Tile's was a day away) counted as held. That inflated cost-per-held-meeting's divisor ~22x
+    # (66 claimed vs 3 real over 45 days). A genuine reveal is a TEAMS meeting: no "<> +61" phone pattern,
+    # >=5 min, already in the past. Teams rows carry the COMPANY in the title (dest9 is usually NULL), so
+    # they're matched by normalised company name against the booked prospect.
     _n9 = "right(regexp_replace(COALESCE(dest9,''),'[^0-9]','','g'),9)"
-    _bk9 = "SELECT right(regexp_replace(COALESCE(dest9,''),'[^0-9]','','g'),9) FROM booked_crm"
-    seen_parts = [f"SELECT {_n9} d9 FROM booked_crm "
-                  f"WHERE (stage='revealed' OR status='revealed') AND updated_at > {win}"]
+    seen = 0
     try:
         reg = _l._fetch(pool, "SELECT to_regclass('public.fireflies_meetings') AS t")
         if reg and (reg[0].get("t")):
-            seen_parts.append(f"SELECT {_n9} d9 FROM fireflies_meetings "
-                              f"WHERE meeting_date > {win} AND {_n9} IN ({_bk9})")
+            _norm = "lower(regexp_replace({}, '[^a-zA-Z0-9]', '', 'g'))"
+            rows = _l._fetch(pool, f"""
+                WITH bk AS (
+                  SELECT bc.dest9 d9,
+                         (SELECT lc.company_name FROM lisa_calls lc WHERE lc.dest9=bc.dest9
+                            AND COALESCE(lc.company_name,'')<>'' ORDER BY lc.started_at DESC LIMIT 1) co
+                  FROM booked_crm bc),
+                mt AS (
+                  SELECT id, {_n9} d9,
+                         regexp_replace(regexp_replace(COALESCE(title,''), '^.*?with\\s+', '', 'i'),
+                                        '\\s+Team.*$', '', 'i') frag
+                  FROM fireflies_meetings
+                  WHERE meeting_date <= now() AND meeting_date > {win}
+                    AND NOT (COALESCE(title,'') ~ '<>' AND COALESCE(title,'') ~ '\\+61')
+                    AND COALESCE(duration_min,0) >= 5)
+                SELECT count(DISTINCT COALESCE(NULLIF(mt.d9,''), bk.d9)) n
+                FROM mt LEFT JOIN bk ON (
+                     (NULLIF(mt.d9,'') IS NOT NULL AND bk.d9 = mt.d9)
+                  OR (bk.co IS NOT NULL AND length({_norm.format('mt.frag')}) >= 6
+                      AND ({_norm.format('bk.co')} LIKE '%%'||{_norm.format('mt.frag')}||'%%'
+                        OR {_norm.format('mt.frag')} LIKE '%%'||{_norm.format('bk.co')}||'%%')))
+                WHERE COALESCE(NULLIF(mt.d9,''), bk.d9) IS NOT NULL""")
+            seen = int((rows[0] or {}).get("n") or 0) if rows else 0
     except Exception:
-        pass
-    sm = one("SELECT count(DISTINCT d9) seen FROM (" + " UNION ALL ".join(seen_parts) + ") q WHERE d9 <> ''")
-    u["seen_meetings"] = int(sm.get("seen") or 0)
+        seen = 0
+    u["seen_meetings"] = seen
     u["days"] = int(days)
     return u
 
