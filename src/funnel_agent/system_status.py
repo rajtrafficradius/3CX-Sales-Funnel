@@ -300,6 +300,40 @@ def compute(pool, settings) -> dict:
         return state, f"${bal:.2f} balance", None, round(bal, 2)
     tiles.append(_tile("dataforseo", "DataForSEO balance (audits)", "Billing", *guard(_dfs)))
 
+    # ---------- GOOGLE PLACES (Lisa 4's entire prospect supply) ----------
+    def _gmaps():
+        """A REAL probe, not a placeholder. Vysakh saw Google Maps flagged on the engine page
+        (2026-08-31) — the externals grid only had live states for Twilio/DataForSEO/Retell/Aircall/
+        Fireflies and defaulted every other vendor to a fake 'Idle' chip, which reads as a fault.
+        Places feeds every Lisa-4 sweep, so a dead key silently starves the pool: worth a real check."""
+        import json as _j
+        import urllib.request as _u
+        key = (getattr(settings, "google_places_api_key", "") or "").strip()
+        if not key:
+            return "down", "no GOOGLE_PLACES_API_KEY configured", None, None
+        try:
+            req = _u.Request(
+                "https://places.googleapis.com/v1/places:searchText",
+                data=_j.dumps({"textQuery": "plumber in Geelong VIC", "maxResultCount": 1}).encode(),
+                headers={"Content-Type": "application/json", "X-Goog-Api-Key": key,
+                         "X-Goog-FieldMask": "places.displayName"})
+            with _u.urlopen(req, timeout=12) as r:
+                got = len((_j.loads(r.read()) or {}).get("places") or [])
+            if not got:
+                return "warn", "API answered but returned no places", None, 0
+            # how much supply has it actually delivered lately?
+            rows = _one_all(pool, "SELECT count(*) n FROM lisa4_pool WHERE reserved_at > now()-interval '24 h'", ())
+            fresh = (rows[0].get("n") if rows else 0) or 0
+            return "ok", f"Places API live · {fresh} prospects dialled from the pool in 24h", None, fresh
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if code in (401, 403):
+                return "down", f"Places API rejected the key (HTTP {code}) — Lisa 4 supply will starve", None, None
+            if code == 429:
+                return "warn", "Places API quota exceeded (HTTP 429)", None, None
+            return "unknown", f"probe failed: {str(exc)[:60]}", None, None
+    tiles.append(_tile("gmaps", "Google Places (Lisa 4 supply)", "Enrichment", *guard(_gmaps)))
+
     # ---------- LISA 4 DIALER (own toggle + line set + pool) ----------
     def _l4_dialer():
         from . import lisa4 as _l4

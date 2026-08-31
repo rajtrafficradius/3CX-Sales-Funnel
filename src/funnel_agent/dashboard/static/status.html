@@ -111,6 +111,9 @@
   .eng.warn .led{background:var(--amber);box-shadow:0 0 8px rgba(245,184,61,.8);animation:led 1.5s ease-out infinite}
   .eng.down .led{background:var(--coral);box-shadow:0 0 10px rgba(255,107,94,.9);animation:led .95s ease-out infinite}
   .eng.idle .led{background:var(--idle)} .eng.unknown .led{background:var(--violet)}
+  .eng.nomon .led{background:var(--idle);opacity:.55;box-shadow:none}
+  .eng.nomon .st{background:rgba(74,92,125,.16);color:#7d8ba6}
+  .eng.nomon:after{background:linear-gradient(90deg,var(--idle),transparent);opacity:.4}
   @keyframes led{0%{transform:scale(1);opacity:1}60%{transform:scale(1.5);opacity:.45}100%{transform:scale(1);opacity:1}}
   .eng b{font-size:13.5px;font-weight:800;letter-spacing:-.01em;line-height:1.3}
   .eng .det{font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.5;font-variant-numeric:tabular-nums}
@@ -148,8 +151,8 @@
 var h=htm.bind(React.createElement), useState=React.useState, useEffect=React.useEffect, useRef=React.useRef;
 var C={void:'#05080f',panel:'#0b111d',panel2:'#111a2b',line:'#1c2942',txt:'#eaf1fd',dim:'#9fb2ce',faint:'#66799a',
   indigo:'#7c6cf7',cyan:'#35d6e8',mint:'#3ddc84',amber:'#f5b83d',coral:'#ff6b5e',violet:'#b98add',idle:'#4a5c7d'};
-var SC={ok:C.mint,warn:C.amber,down:C.coral,idle:C.idle,unknown:C.violet};
-var SL={ok:'Running',warn:'Attention',down:'Down',idle:'Idle',unknown:'Unknown'};
+var SC={ok:C.mint,warn:C.amber,down:C.coral,idle:C.idle,unknown:C.violet,nomon:C.idle};
+var SL={ok:'Running',warn:'Attention',down:'Down',idle:'Idle',unknown:'Unknown',nomon:'Not monitored'};
 // an IDLE dialer outside the AU calling window is armed-and-waiting, not a fault — say so plainly
 function stateLabel(e,hrs){
   if(e.state==='idle'&&!hrs&&/dialer|dial loop/i.test(e.name||''))return 'Standby';
@@ -364,8 +367,13 @@ function App(){
 
     <div class="sec"><h3>🔌 External services</h3><span class="ln"></span><span class="ct">${(inv.externals||[]).length} vendors</span></div>
     <div class="egrid">${(inv.externals||[]).map(function(x,i){
-      var m={'Twilio':ES.twilio,'DataForSEO':ES.dataforseo,'Retell AI':ES.retell_webhook,'Aircall':ES.aircall,'Fireflies':ES.fireflies};
-      var st=m[x.name]||'idle';
+      // Only vendors with a REAL probe get a state. Everything else must read "Not monitored" —
+      // it previously defaulted to an 'Idle' chip, which looks like a fault on a healthy service
+      // (Vysakh flagged Google Maps this way, 2026-08-31, while the Places API was answering fine).
+      var m={'Twilio':ES.twilio,'DataForSEO':ES.dataforseo,'Retell AI':ES.retell_webhook,
+             'Aircall':ES.aircall,'Fireflies':ES.fireflies,'Google Places':ES.gmaps,
+             'Microsoft Graph':ES.emma,'OpenAI':ES.classifier,'Railway':ES.db};
+      var st=m[x.name]||'nomon';
       return h`<div class=${'eng '+st} key=${i} style=${{animationDelay:(i*0.03)+'s'}}><div class="top"><span class="led"></span><b>${x.name}</b></div>
         <div class="det">${x.role}</div><div class="ft"><span class="last"></span><span class="st">${SL[st]}</span></div></div>`;})}</div>
 
