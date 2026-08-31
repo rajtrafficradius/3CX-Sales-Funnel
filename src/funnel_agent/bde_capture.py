@@ -581,7 +581,7 @@ def _capture_aircall_comments(pool, settings, oai, model: str, closers: list[str
         SELECT b.dest9, b.company_name, b.prospect_name, b.prospect_email,
                m.call_id, m.comments, m.tags,
                m.contact_name AS m_name, m.contact_email AS m_email, m.contact_company AS m_company,
-               c.started_at, c.answered,
+               c.started_at, c.answered, c.is_voicemail, c.talk_seconds,
                bc.contact_name AS bc_name, bc.contact_email AS bc_email,
                bc.next_action AS bc_next, bc.next_action_at AS bc_next_at, bc.outcome AS bc_outcome,
                row_number() OVER (PARTITION BY b.dest9 ORDER BY c.started_at DESC) AS rn
@@ -652,8 +652,15 @@ def _capture_aircall_comments(pool, settings, oai, model: str, closers: list[str
         elif tags:
             _append_note(pool, d9, "Alfred tagged the call", "aircall-capture",
                          ", ".join(tags), outcome, mdt, {"call_id": cid, "tags": tags})
-        # Stage: an ANSWERED confirmation call and/or a confirm/reveal/won tag — take the later of the two.
-        target = "confirmed" if r.get("answered") else None
+        # Stage: a call where the closer actually SPOKE TO THEM, and/or a confirm/reveal/won tag.
+        # 'answered' alone is NOT enough — a voicemail pickup is 'answered' too, so a prospect Alfred only
+        # left a message for was landing on 'Confirmed' (RB Tile, Vysakh 2026-08-31). Same rule the CRM's
+        # closer_status column already uses: not a voicemail AND >=30s of talk (observed voicemails ~15s,
+        # real confirmations 40s+). Below that it's an ATTEMPT -> 'confirming', never 'confirmed'.
+        target = None
+        if r.get("answered"):
+            target = ("confirming" if (r.get("is_voicemail") or float(r.get("talk_seconds") or 0) < 30)
+                      else "confirmed")
         if tstage and _STAGE_RANK.get(tstage, -1) > _STAGE_RANK.get(target or "", -1):
             target = tstage
         if _advance_stage(pool, d9, target, "aircall-capture"):
@@ -809,7 +816,7 @@ def run_bde_call_capture(pool, settings, limit: int = 6) -> dict:
             ORDER BY dest9, created_at ASC),
           cand AS (
             SELECT b.dest9, b.company_name, b.prospect_name, b.prospect_email,
-                   c.call_id, c.started_at, c.bde_name, c.answered, t.text AS transcript,
+                   c.call_id, c.started_at, c.bde_name, c.answered, c.is_voicemail, c.talk_seconds, t.text AS transcript,
                    bc.contact_name AS bc_name, bc.contact_email AS bc_email,
                    bc.next_action AS bc_next, bc.next_action_at AS bc_next_at, bc.outcome AS bc_outcome,
                    row_number() OVER (PARTITION BY b.dest9 ORDER BY c.started_at DESC) AS rn
@@ -854,9 +861,13 @@ def run_bde_call_capture(pool, settings, limit: int = 6) -> dict:
                               booked_at=r.get("started_at"), who="aircall-capture", out=out)
             _append_note(pool, d9, "Alfred call captured", "aircall-capture",
                          _clean(res.get("summary")), outcome, mdt, {"call_id": cid})
-            # An ANSWERED closer call is a confirmation → advance to 'confirmed' (never regressing).
-            if r.get("answered") and _advance_stage(pool, d9, "confirmed", "aircall-capture"):
-                out["updated"] += 1
+            # Only a call the closer actually SPOKE on confirms; a voicemail pickup is an ATTEMPT.
+            # (Same rule as the notes path + the CRM's closer_status: not voicemail AND >=30s talk.)
+            if r.get("answered"):
+                _tgt = ("confirming" if (r.get("is_voicemail") or float(r.get("talk_seconds") or 0) < 30)
+                        else "confirmed")
+                if _advance_stage(pool, d9, _tgt, "aircall-capture"):
+                    out["updated"] += 1
             _mark_seen(pool, cid, d9)                           # processed exactly once
             out["captured"] += 1
         # 3) FIREFLIES — matched reveal-meeting transcripts (same fill-blank/append + stage 'revealed').
