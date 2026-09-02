@@ -1560,22 +1560,48 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
     # before (CSS-art fallback). These are design-concept images for the REVEAL, not claimed as the client's own.
     # TOP-UP (2026-08-27): a sparse real set (1-4 photos) also reads thin/repetitive — supplement up to ~6 with
     # clearly-labelled on-trade design-concept imagery so galleries and photo bands feel rich, never stretched.
+    # known_industry is the prospect's VERIFIED trade category — pass it in. Without it the query builder
+    # had to guess from the company name alone and produced junk for names that aren't self-describing:
+    # "ABSOLUTE FIX-N-FINISH PTY. LTD." -> 'ABSOLUTE business'. Their own category is exactly the
+    # "build from the info we DO have" input the no-website rule calls for.
+    _niche_hint = known_industry or (p.get("issue") or "")
     if real_images and len(real_images) < 5:
         try:
-            _iq = _niche_image_queries(settings, disp or p.get("company") or "", "")
+            _iq = _niche_image_queries(settings, disp or p.get("company") or "", _niche_hint)
             for _uri in _fetch_niche_images(_iq, want=6 - len(real_images)):
                 real_images.append(_uri)
                 real_image_descs.append("representative on-trade photo of this kind of business (design-concept image)")
         except Exception:
             pass
     if not real_images:
+        # This is the LAST line of defence for a no-website prospect: ARM Accountants shipped on
+        # 2026-09-02 with images_provided=0 and a dead <img src="">, because this was one shot wrapped
+        # in a silent except. A transient Openverse failure must not put an imageless page in front of
+        # a prospect — retry, then widen to the plainest trade phrase we can form.
+        _tries = []
         try:
-            _iq = _niche_image_queries(settings, disp or p.get("company") or "", "")
-            for _uri in _fetch_niche_images(_iq, want=6):
-                real_images.append(_uri)
-                real_image_descs.append("representative on-trade photo of this kind of business (design-concept image)")
+            _tries.append(_niche_image_queries(settings, disp or p.get("company") or "", _niche_hint))
         except Exception:
             pass
+        _plain = [q for q in ((known_industry or "").split("/")[0].strip().lower(),
+                              "australian small business office") if q]
+        _tries.append(_plain)
+        for _qs in _tries:
+            if real_images or not _qs:
+                continue
+            for _attempt in (1, 2):
+                try:
+                    for _uri in _fetch_niche_images(_qs, want=6):
+                        real_images.append(_uri)
+                        real_image_descs.append("representative on-trade photo of this kind of business "
+                                                "(design-concept image)")
+                except Exception:
+                    pass
+                if real_images:
+                    break
+        if not real_images:
+            log.warning("lisa4_no_images_available", dest9=dest9,
+                        company=str(p.get("company"))[:80], industry=_niche_hint[:60])
     # A verified Google category is their real trade too (has-site OR no-site) — enough to forbid guessing.
     if known_industry:
         have_real_trade = True
@@ -1729,6 +1755,16 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
         # Any token the model INVENTED beyond our real set has no photo behind it — strip those cleanly so
         # no raw {{IMG_n}} placeholder text ever ships.
         html = _re.sub(r"\{\{IMG_\d+\}\}", "", html)
+        # ...but stripping the token out of `<img src="{{IMG_7}}">` leaves `<img src="">`, which renders as
+        # a broken-image box on the prospect's screen-share. THIS is what shipped Bodyoncall's dead hero and
+        # ARM Accountants' imageless page (2026-09-02). Drop any <img> left with an empty/# src, and clear
+        # the same case in inline background-image:url() so no empty frame is left behind either.
+        _dead = len(_re.findall(r"""<img\b[^>]*\bsrc\s*=\s*["'](?:\s*|#)["'][^>]*>""", html, _re.I))
+        if _dead:
+            html = _re.sub(r"""<img\b[^>]*\bsrc\s*=\s*["'](?:\s*|#)["'][^>]*>""", "", html, flags=_re.I)
+            html = _re.sub(r"""background(-image)?\s*:\s*url\(\s*["']?\s*["']?\s*\)\s*;?""", "", html, flags=_re.I)
+            log.warning("lisa4_dead_img_stripped", dest9=dest9, count=_dead,
+                        company=str(p.get("company"))[:80])
         # GUARANTEE no real photo is lost: append any unplaced photos as a genuine <img> gallery. Self-
         # contained inline styles so it renders regardless of the site's CSS; injected just before </body>.
         if _unused_imgs:
