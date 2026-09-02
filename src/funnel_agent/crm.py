@@ -488,6 +488,113 @@ def ensure_reveal_guide(pool, settings, dest9: str, company: str, domain: str,
         return None
 
 
+def _no_website_growth_audit(pool, settings, d9: str, company: str,
+                             avg_ticket: float | None = None, force: bool = False):
+    """Growth audit for a prospect with NO WEBSITE — the missing-opportunity report.
+
+    ensure_growth_audit used to return None the moment a domain was absent, so the prospects with the
+    single biggest opportunity got nothing at all (ABSOLUTE FIX-N-FINISH, booked for 2026-09-03 14:00,
+    is the case that forced this). There is no domain to measure, so the report is built from what we
+    genuinely hold: their own trade + location -> service keywords -> REAL DataForSEO volumes -> theme
+    clusters. gen_growth_audit's existing thin-data path then makes the seed-cluster strategy the
+    centrepiece, which is exactly the shape this prospect needs.
+
+    Every number is a real DataForSEO volume; nothing about a site is invented, because there isn't one.
+    Guarded end-to-end — returns None rather than shipping a half-built report.
+    """
+    import secrets
+    from psycopg.rows import dict_row
+    try:
+        ensure_crm_tables(pool)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT audit_token FROM booked_crm WHERE dest9=%s", (d9,))
+            r = cur.fetchone()
+            if r and (r.get("audit_token") or "") and not force:
+                return r["audit_token"]
+        # their OWN firmographics — the only trade signal we have without a site
+        industry = sub_industry = location = None
+        c0: dict = {}
+        try:
+            with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT industry, sub_industry, suburb, state FROM companies "
+                            "WHERE right(COALESCE(phone_norm,''),9)=%s "
+                            "ORDER BY revenue_musd DESC NULLS LAST LIMIT 1", (d9,))
+                c0 = cur.fetchone() or {}
+            industry, sub_industry = c0.get("industry"), c0.get("sub_industry")
+            location = ", ".join([x for x in (c0.get("suburb"), c0.get("state")) if x]) or None
+        except Exception:
+            pass
+
+        from . import growth_audit as _ga
+        seeds = _ga.service_seeds(settings, company or "", industry, sub_industry) or []
+        if not seeds:
+            _log_no_site(d9, company, "no service seeds could be derived")
+            return None
+
+        rows, clusters = [], []
+        try:
+            from .enrichment.dataforseo import DataForSEOClient, cluster_keywords
+            cl = DataForSEOClient(settings)
+            res = cl.keyword_clusters(seeds, location_code=getattr(settings, "dataforseo_location_code", None),
+                                      per_seed=30, max_seeds=min(6, max(3, len(seeds))))
+            rows = (res or {}).get("keywords") or []
+            clusters = (res or {}).get("clusters") or (cluster_keywords(rows) if rows else [])
+        except Exception as exc:
+            _log_no_site(d9, company, f"keyword demand lookup failed: {str(exc)[:120]}")
+        if not clusters:
+            _log_no_site(d9, company, "no keyword demand found for their trade")
+            return None
+
+        if not avg_ticket:
+            avg_ticket, _b, _e = _ga.estimate_avg_ticket(settings, company, industry, sub_industry)
+        model = {
+            "domain": "", "name": company or "your business", "generated": "",
+            "no_website": True,
+            "business": {"industry": industry, "sub_industry": sub_industry, "location": location,
+                         "revenue_musd": (c0 or {}).get("revenue_musd"),
+                         "employees": (c0 or {}).get("employees"), "website": None},
+            # they rank for nothing because there is nothing to rank — these zeros are FACTS, not gaps
+            "opportunity": {"est_org_traffic": 0, "est_org_value": 0, "quickwin_traffic": 0,
+                            "quickwin_value": 0, "gap_value": 0, "gap_capturable": 0,
+                            "outranked_value": 0, "org_keywords": 0, "paid_keywords": 0},
+            "health": {}, "sov": {},
+            "seed_clusters": clusters, "discovered_kw": rows,
+            "revenue": {"avg_ticket": avg_ticket, "avg_ticket_estimated": True},
+        }
+        with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT k, v FROM crm_config WHERE k IN ('lisa4_designer_model','anthropic_api_key')")
+            cfg = {x["k"]: x["v"] for x in cur.fetchall()}
+        mdl = cfg.get("lisa4_designer_model") or "claude-opus-5"
+        key = cfg.get("anthropic_api_key") or getattr(settings, "anthropic_api_key", "") or ""
+        html = _ga.gen_growth_audit(key, mdl, model, avg_ticket=avg_ticket, company=company or "")
+        if not html:
+            _log_no_site(d9, company, "generator returned nothing")
+            return None
+        slug = _re.sub(r"[^a-z0-9]+", "-", (company or "audit").lower()).strip("-")[:24] or "audit"
+        tok = f"{slug}-audit-" + secrets.token_urlsafe(8)
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, kind, status, html, share_token, "
+                        "built_at, created_at) VALUES (%s,NULL,%s,'audit','built',%s,%s,now(),now())",
+                        (d9, company or "", html, tok))
+            cur.execute("INSERT INTO booked_crm (dest9, audit_token, updated_by, updated_at) "
+                        "VALUES (%s,%s,'no-website-audit',now()) ON CONFLICT (dest9) DO UPDATE SET "
+                        "audit_token=EXCLUDED.audit_token, updated_at=now()", (d9, tok))
+            conn.commit()
+        return tok
+    except Exception as exc:
+        _log_no_site(d9, company, f"guarded failure: {type(exc).__name__} {str(exc)[:120]}")
+        return None
+
+
+def _log_no_site(d9, company, why):
+    try:
+        from .logging import get_logger as _gl
+        _gl("funnel_agent.crm").warning("no_website_audit_skipped", dest9=d9,
+                                        company=str(company)[:80], reason=str(why)[:200])
+    except Exception:
+        pass
+
+
 def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
                         avg_ticket: float | None = None, force: bool = False):
     """Generate a PLAIN-LANGUAGE growth audit (Opus-5, on top of audit.assemble_audit) for a prospect whose
@@ -497,8 +604,14 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
     import re as _re, secrets, random
     d9 = _re.sub(r"[^0-9]", "", dest9 or "")[-9:]
     dom = (domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
-    if not d9 or not dom:
+    if not d9:
         return None
+    if not dom:
+        # NO WEBSITE is not a reason to have no audit — it IS the finding (Vysakh, standing rule).
+        # A prospect with no site ranks for nothing, so the report is built around the demand they are
+        # invisible for: their own service keywords -> real DataForSEO volumes -> theme clusters ->
+        # the 30/60/90 strategy. Nothing about a domain is invented, because there is no domain.
+        return _no_website_growth_audit(pool, settings, d9, company, avg_ticket=avg_ticket, force=force)
     try:
         ensure_crm_tables(pool)
         with pool.connection() as conn, conn.cursor() as cur:
