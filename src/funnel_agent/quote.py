@@ -23,13 +23,50 @@ def _breakdown(total: int):
         raw[i] = (raw[i][0], raw[i][1] + diff, raw[i][2])
     return raw
 
+
+def normalise_items(items) -> list[tuple[str, int, str]]:
+    """Coerce a closer-edited line-item list into the (name, amount, description) rows the quote
+    renders. Alfred prices per prospect, so his numbers are AUTHORITATIVE — they are never rescaled
+    to some expected total, and the quote total becomes whatever his lines add up to.
+
+    Accepts [{name, amount, desc}] or [[name, amount, desc]]. Rows with no name AND no amount are
+    dropped (the UI ships one empty row for adding). Returns [] when nothing usable is left, so the
+    caller can fall back to the weighted default breakdown.
+    """
+    out: list[tuple[str, int, str]] = []
+    for it in (items or []):
+        if isinstance(it, dict):
+            name, amount, desc = it.get("name"), it.get("amount"), it.get("desc")
+        elif isinstance(it, (list, tuple)) and len(it) >= 2:
+            name, amount, desc = it[0], it[1], (it[2] if len(it) > 2 else "")
+        else:
+            continue
+        name = str(name or "").strip()[:120]
+        desc = str(desc or "").strip()[:400]
+        try:
+            amount = int(round(float(amount or 0)))
+        except (TypeError, ValueError):
+            amount = 0
+        if not name and amount == 0:
+            continue
+        out.append((name or "Line item", max(0, amount), desc))
+    return out
+
 def _money(n): return f"A${n:,.0f}"
 
 def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int = 100,
-                   attn: str = "", issued=None) -> str:
+                   attn: str = "", issued=None, items=None) -> str:
+    """items: optional closer-edited line items (see normalise_items). When supplied they REPLACE the
+    weighted default breakdown and their sum becomes the total — Alfred prices each prospect himself,
+    so his figures win over the ratio model."""
     c = _h.escape(company or "your business"); d = _h.escape(domain or ""); at = _h.escape(attn or "")
-    total = int(total)
-    rows = _breakdown(total)
+    custom = normalise_items(items)
+    if custom:
+        rows = custom
+        total = sum(p for _, p, _ in rows)
+    else:
+        total = int(total)
+        rows = _breakdown(total)
     gst = round(total * 0.10); grand = total + gst
     host_yr = hosting_mo * 10  # two months free
     try:

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>No-show Recovery · 3CX Funnel</title><link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♻️</text></svg>">
+<style>
+  :root{
+    --bg:#080a14; --bg-2:#0a0d1a; --panel:#0e1220; --panel-2:#121729; --panel-3:#161d33;
+    --line:#1c2440; --line-2:#28324f; --hair:rgba(255,255,255,.05);
+    --txt:#eef1fb; --txt-2:#c3cbe2; --muted:#8792b2; --faint:#5a6485;
+    --vio:#7c6cff; --vio-2:#a493ff; --cyan:#28dbef; --teal:#2dd4bf;
+    --good:#34d399; --good-d:#0f2f28; --warn:#fbbf24; --warn-d:#33270a; --bad:#fb7185; --bad-d:#331420;
+    --accent:var(--vio); --accent-soft:rgba(124,108,255,.14);
+    --r1:10px; --r2:14px; --r3:20px; --r-pill:999px;
+    --elev:inset 0 1px 0 rgba(255,255,255,.04), 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.7);
+  }
+  :root[data-theme=light]{
+    --bg:#f3f5fc; --bg-2:#eaeef8; --panel:#ffffff; --panel-2:#f6f8fe; --panel-3:#eef2fb;
+    --line:#e3e8f4; --line-2:#d2daee; --hair:rgba(20,30,55,.05);
+    --txt:#111730; --txt-2:#3a4463; --muted:#67728f; --faint:#8b95b1;
+    --good-d:#e7f7f0; --warn-d:#fdf4dd; --bad-d:#fdeaee; --accent-soft:rgba(124,108,255,.1);
+    --elev:inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(20,30,50,.06), 0 10px 26px -18px rgba(20,30,50,.18);
+  }
+  @media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+    --bg:#f3f5fc; --bg-2:#eaeef8; --panel:#ffffff; --panel-2:#f6f8fe; --panel-3:#eef2fb;
+    --line:#e3e8f4; --line-2:#d2daee; --hair:rgba(20,30,55,.05);
+    --txt:#111730; --txt-2:#3a4463; --muted:#67728f; --faint:#8b95b1;
+    --good-d:#e7f7f0; --warn-d:#fdf4dd; --bad-d:#fdeaee; --accent-soft:rgba(124,108,255,.1);
+    --elev:inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(20,30,50,.06), 0 10px 26px -18px rgba(20,30,50,.18);
+  }}
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--txt);min-height:100vh;
+    font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
+    font-variant-numeric:tabular-nums slashed-zero;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(1100px 560px at 82% -12%, rgba(124,108,255,.16), transparent 58%), var(--bg);}
+  a{color:var(--vio-2)}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+  header{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+  .over{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);font-weight:750}
+  h1{margin:2px 0 0;font-size:26px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:13px;margin-top:4px;max-width:70ch}
+  .spacer{margin-left:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:var(--r-pill);
+    border:1px solid var(--line-2);background:var(--panel-2);font-size:11.5px;font-weight:700}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
+  .dot.off{background:var(--bad)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-bottom:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:14px 16px;box-shadow:var(--elev)}
+  .k{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:750}
+  .n{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:5px;line-height:1.1}
+  .n.bad{color:var(--bad)} .n.good{color:var(--good)} .n.warn{color:var(--warn)}
+  .foot{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r3);padding:18px 20px;box-shadow:var(--elev);margin-bottom:16px}
+  .sec{font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint);font-weight:750;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+    font-weight:750;padding:0 10px 8px;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px solid var(--hair);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-flex;padding:3px 9px;border-radius:var(--r-pill);font-size:10px;font-weight:750;
+    text-transform:uppercase;letter-spacing:.05em;border:1px solid}
+  .p-sent{color:var(--muted);background:var(--panel-3);border-color:var(--line-2)}
+  .p-replied{color:var(--warn);background:var(--warn-d);border-color:rgba(251,191,36,.4)}
+  .p-rebooked{color:var(--good);background:var(--good-d);border-color:rgba(52,211,153,.4)}
+  .bars{display:flex;align-items:flex-end;gap:6px;height:110px;padding-top:8px}
+  .bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px;min-width:0}
+  .bar .col{width:100%;background:linear-gradient(180deg,var(--vio),rgba(124,108,255,.35));border-radius:5px 5px 0 0;min-height:3px}
+  .bar .col.rb{background:linear-gradient(180deg,var(--good),rgba(52,211,153,.35))}
+  .bar .lb{font-size:9.5px;color:var(--faint);white-space:nowrap}
+  .diag{border-left:3px solid var(--bad);background:var(--bad-d);border-radius:0 var(--r1) var(--r1) 0;padding:12px 14px;margin-bottom:10px}
+  .diag.warn{border-left-color:var(--warn);background:var(--warn-d)}
+  .diag h4{margin:0 0 4px;font-size:13px}
+  .diag p{margin:0;font-size:12.5px;color:var(--txt-2)}
+  .dim{color:var(--muted)}
+  .empty{color:var(--muted);text-align:center;padding:26px 0;font-size:13px}
+  @media(max-width:640px){.wrap{padding:18px 13px 44px}h1{font-size:21px}.n{font-size:25px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="over">Lisa · Campaign</div>
+      <h1>No-show Recovery</h1>
+      <div class="sub">Every booked prospect who didn't show gets chased automatically — SMS first, email as
+        reinforcement. This page is the campaign's scoreboard: who we chased, who answered, and who rebooked.</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="chip" id="engine"><span class="dot" id="engdot"></span><span id="engtxt">…</span></span>
+    <span class="chip"><a href="/lisa-crm" style="text-decoration:none;color:inherit">Booked CRM ↗</a></span>
+  </header>
+
+  <div class="grid" id="tiles"></div>
+  <div id="diagnostics"></div>
+
+  <div class="panel">
+    <div class="sec">Sends per day <span class="dim" style="text-transform:none;letter-spacing:0">· violet = chased · green = rebooked</span></div>
+    <div class="bars" id="bars"></div>
+  </div>
+
+  <div class="panel">
+    <div class="sec">Every prospect chased</div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Company</th><th>Chased</th><th>Channel</th><th>Status</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = n => (n==null?'—':Number(n).toLocaleString());
+
+function tile(k, n, foot, cls){
+  return `<div class="card"><div class="k">${esc(k)}</div>
+    <div class="n ${cls||''}">${n}</div><div class="foot">${foot||''}</div></div>`;
+}
+
+function render(d){
+  document.getElementById('engdot').className = 'dot' + (d.enabled ? '' : ' off');
+  document.getElementById('engtxt').textContent = d.enabled ? 'Engine ON' : 'Engine OFF';
+
+  const sent = d.sent||0, replied = d.replied||0, rebooked = d.rebooked||0;
+  document.getElementById('tiles').innerHTML = [
+    tile('Queued to chase', '<span id="pendn">…</span>', 'no-shows waiting'),
+    tile('Chased', num(sent), 'messages sent'),
+    tile('Replied', num(replied), (d.reply_rate||0)+'% of chased', replied?'warn':''),
+    tile('Rebooked', num(rebooked), (d.rebook_rate||0)+'% of chased', rebooked?'good':'bad'),
+    tile('Reached by email', num(d.emailed||0), num(d.had_address||0)+' had an address',
+         (d.emailed||0)===0 && (d.had_address||0)>0 ? 'bad' : '')
+  ].join('');
+
+  // Diagnostics — say plainly why the campaign is or isn't converting.
+  const diag = [];
+  if ((d.emailed||0) === 0 && (d.had_address||0) > 0){
+    diag.push(`<div class="diag"><h4>Email channel is not sending</h4><p>
+      <b>${d.had_address}</b> of the prospects we chased had an email address on file, but
+      <b>0</b> emails went out — every chase was SMS-only. Lisa's mailbox must be a provisioned
+      <code>@digitalexpo.com.au</code> address in <code>LISA_MAILBOX</code>; until it is,
+      <code>send_email()</code> refuses the send and half the campaign's reach is missing.</p></div>`);
+  }
+  if (sent >= 10 && rebooked === 0){
+    diag.push(`<div class="diag warn"><h4>No rebookings yet from ${sent} chases</h4><p>
+      ${replied} replied (${d.reply_rate||0}%) and none rebooked. With SMS as the only live channel,
+      the message itself is the whole campaign — worth re-testing the copy and the send timing.</p></div>`);
+  }
+  if (!d.enabled){
+    diag.push(`<div class="diag"><h4>Engine is switched OFF</h4><p>
+      No-shows are not being chased at all. Turn it on from the Lisa console.</p></div>`);
+  }
+  document.getElementById('diagnostics').innerHTML = diag.join('');
+
+  // daily bars
+  const s = d.series||[];
+  const max = Math.max(1, ...s.map(x => x.sent||0));
+  document.getElementById('bars').innerHTML = s.length ? s.map(x => {
+    const h = Math.round(((x.sent||0)/max)*84);
+    const rb = (x.rebooked||0) > 0;
+    return `<div class="bar" title="${esc(x.d)} — ${x.sent} chased, ${x.replied||0} replied, ${x.rebooked||0} rebooked">
+      <div class="col ${rb?'rb':''}" style="height:${h}px"></div><div class="lb">${esc(x.d)}</div></div>`;
+  }).join('') : '<div class="empty">Nothing chased yet.</div>';
+
+  // table
+  const rows = d.recent||[];
+  document.getElementById('rows').innerHTML = rows.length ? rows.map(r => {
+    const st = r.rebooked ? 'rebooked' : (r.replied ? 'replied' : (r.recovery_status||'sent'));
+    return `<tr>
+      <td><b>${esc(r.company||('0'+(r.dest9||'')))}</b></td>
+      <td class="dim">${esc(r.sent_at||'—')}</td>
+      <td class="dim">${esc(r.channel||'sms')}</td>
+      <td><span class="pill p-${esc(st)}">${esc(st)}</span></td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="empty">Nobody has been chased yet.</td></tr>';
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/lisa/recovery/report',{credentials:'same-origin'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    render(await r.json());
+  }catch(e){
+    document.getElementById('rows').innerHTML =
+      `<tr><td colspan="4" class="empty">Could not load the campaign report — ${esc(e.message)}</td></tr>`;
+    return;
+  }
+  // the pending count is the slow half (a full targets scan) — fetch it after the funnel has painted
+  try{
+    const p = await fetch('/api/lisa/recovery/pending',{credentials:'same-origin'});
+    const j = await p.json();
+    const el = document.getElementById('pendn');
+    if (el) el.textContent = j.pending==null ? '—' : Number(j.pending).toLocaleString();
+  }catch(e){
+    const el = document.getElementById('pendn'); if (el) el.textContent = '—';
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

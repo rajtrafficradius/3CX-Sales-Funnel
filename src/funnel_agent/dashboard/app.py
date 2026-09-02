@@ -5169,14 +5169,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         NEVER auto-sent — the link is surfaced in the CRM for the closer to share manually."""
         if not _crm_allowed(request):
             raise HTTPException(403, "no access")
-        import re as _re, secrets, random
-        from ..quote import gen_quote_html
+        import re as _re, secrets, random, json as _json
+        from ..quote import gen_quote_html, normalise_items
         body = await request.json()
         d9 = _re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
         try:
             total = max(1, int(float(body.get("total") or 1000)))
         except Exception:
             total = 1000
+        # Closer-edited line items win over the ratio breakdown, and their sum IS the total.
+        # `items` absent = leave whatever is stored alone; `items: []` = explicitly clear back to
+        # the default weighted split. That distinction is why this reads body, not body.get(...) or [].
+        items = normalise_items(body.get("items")) if isinstance(body.get("items"), list) else None
+        clear_items = isinstance(body.get("items"), list) and not items
+        try:
+            hosting_mo = max(0, int(float(body.get("hosting_mo") or 100)))
+        except Exception:
+            hosting_mo = 100
+        attn = str(body.get("attn") or "").strip()[:120]
         who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
         if not d9:
             raise HTTPException(400, "bad dest9")
@@ -5187,7 +5197,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  "WHERE lc.dest9=%s ORDER BY lc.started_at DESC LIMIT 1", (d9,))
         company = (info[0].get("company") if info else None) or "your business"
         domain = (info[0].get("domain") if info else None) or ""
-        html = gen_quote_html(company, domain, total)
+        # Carry forward the stored edit when this call only changes the total (or nothing at all),
+        # so re-generating never silently reverts Alfred's pricing back to the ratio split.
+        prev = q("SELECT quote_items, quote_hosting_mo, quote_attn FROM booked_crm WHERE dest9=%s", (d9,))
+        prev = (prev[0] if prev else {}) or {}
+        if items is None and not clear_items:
+            items = normalise_items(prev.get("quote_items")) or None
+            if not body.get("hosting_mo") and prev.get("quote_hosting_mo"):
+                hosting_mo = int(prev["quote_hosting_mo"])
+            if not attn and prev.get("quote_attn"):
+                attn = str(prev["quote_attn"])
+        html = gen_quote_html(company, domain, total, hosting_mo=hosting_mo, attn=attn, items=items)
+        if items:                      # his lines are authoritative — the total follows them
+            total = sum(a for _, a, _ in items)
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT quote_token FROM booked_crm WHERE dest9=%s", (d9,))
             r = cur.fetchone()
@@ -5203,14 +5225,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 synth = "9" + "".join(str(random.randint(0, 9)) for _ in range(8))
                 cur.execute("INSERT INTO lisa4_sites (dest9,company,domain,html,status,share_token,kind,quote_total,built_at) "
                             "VALUES (%s,%s,%s,%s,'built',%s,'quote',%s,now())", (synth, company, domain, html, tok, total))
-            cur.execute("INSERT INTO booked_crm (dest9, quote_token, quote_total, updated_by, updated_at) "
-                        "VALUES (%s,%s,%s,%s,now()) ON CONFLICT (dest9) DO UPDATE SET "
+            # `items` already holds the carried-forward stored edit (see above), so this covers all
+            # three cases: edited -> store, cleared -> NULL, untouched -> re-store what was there.
+            items_json = _json.dumps(
+                [{"name": n, "amount": a, "desc": dsc} for (n, a, dsc) in items]) if items else None
+            cur.execute("INSERT INTO booked_crm (dest9, quote_token, quote_total, quote_items, "
+                        "                        quote_hosting_mo, quote_attn, updated_by, updated_at) "
+                        "VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,now()) ON CONFLICT (dest9) DO UPDATE SET "
                         "quote_token=EXCLUDED.quote_token, quote_total=EXCLUDED.quote_total, "
-                        "updated_by=EXCLUDED.updated_by, updated_at=now()", (d9, tok, total, who))
+                        "quote_items=EXCLUDED.quote_items, quote_hosting_mo=EXCLUDED.quote_hosting_mo, "
+                        "quote_attn=EXCLUDED.quote_attn, "
+                        "updated_by=EXCLUDED.updated_by, updated_at=now()",
+                        (d9, tok, total, items_json, hosting_mo, attn or None, who))
+            _note = (f"Quotation set to A${total:,} — {len(items)} custom line item(s) priced by {who}"
+                     if items else f"Quotation set to A${total:,}")
             cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
-                        (d9, f"Quotation set to A${total:,}", who))
+                        (d9, _note, who))
             conn.commit()
-        return JSONResponse({"ok": True, "quote_token": tok, "quote_total": total})
+        return JSONResponse({"ok": True, "quote_token": tok, "quote_total": total,
+                             "quote_items": [{"name": n, "amount": a, "desc": dsc}
+                                             for (n, a, dsc) in (items or [])],
+                             "quote_hosting_mo": hosting_mo, "quote_attn": attn})
 
     @app.post("/api/lisa/crm/audit")
     async def lisa_crm_audit(request: Request) -> JSONResponse:
@@ -5253,7 +5288,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not is_admin(u):
             raise HTTPException(403, "no access")
         from .. import noshow_recovery as _nsr
-        return JSONResponse(_nsr.report(pool))
+        # include_pending=False: the _targets() scan behind it measured 23s on live data, which is
+        # far too slow to block a page paint. /pending serves that number on its own.
+        return JSONResponse(_nsr.report(pool, include_pending=False))
+
+    @app.get("/api/lisa/recovery/pending")
+    def lisa_recovery_pending(request: Request) -> JSONResponse:
+        """How many no-shows are queued for a chase. Split out because it is the slow half of the
+        report (a full _targets scan) — the recovery page fetches it after the funnel has painted."""
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            raise HTTPException(403, "no access")
+        from .. import noshow_recovery as _nsr
+        try:
+            return JSONResponse({"pending": len(_nsr._targets(pool, 500))})
+        except Exception as exc:
+            return JSONResponse({"pending": None, "error": str(exc)[:160]})
+
+    @app.get("/noshow", response_class=HTMLResponse)
+    def noshow_page(request: Request):
+        u = getattr(request.state, "user", None) or {}
+        if not is_admin(u):
+            return RedirectResponse("/", status_code=302)
+        return HTMLResponse(_static("noshow.html"), headers=_NOCACHE)
 
     @app.get("/api/lisa/recovery/preview")
     def lisa_recovery_preview(request: Request) -> JSONResponse:

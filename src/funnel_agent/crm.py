@@ -29,6 +29,10 @@ def ensure_crm_tables(pool) -> None:
             ("next_action_at", "timestamptz"), ("outcome", "text"),
             ("contact_name", "text"), ("contact_email", "text"), ("created_at", "timestamptz DEFAULT now()"),
             ("quote_token", "text"), ("comparison_token", "text"), ("quote_total", "integer"),
+            # Closer-edited quote line items [{name, amount, desc}] — Alfred prices each prospect
+            # himself, so when this is set it REPLACES the ratio-derived breakdown and its sum is
+            # the total. NULL = the quote still uses the default weighted split.
+            ("quote_items", "jsonb"), ("quote_hosting_mo", "integer"), ("quote_attn", "text"),
             ("guideline_token", "text"),
             ("brand_intro_sent_at", "timestamptz"), ("brand_intro_sent_by", "text"),
             ("audit_token", "text"),
@@ -111,6 +115,7 @@ SELECT b.dest9, b.call_id, b.agreed_day_time, b.booked_at, b.inbound,
        bc.status AS crm_status, bc.stage, bc.owner, bc.next_action, bc.next_action_at, bc.outcome,
        bc.note AS crm_note, bc.updated_by AS crm_by, bc.updated_at AS crm_at,
        bc.quote_token, bc.comparison_token, bc.quote_total, bc.guideline_token,
+       bc.quote_items, bc.quote_hosting_mo, bc.quote_attn,
        bc.brand_intro_sent_at, bc.brand_intro_sent_by, bc.audit_token,
        (SELECT count(*) FROM calls c WHERE right(regexp_replace(COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=b.dest9
           AND c.bde_name = ANY(%(closers)s)) AS bde_attempts,

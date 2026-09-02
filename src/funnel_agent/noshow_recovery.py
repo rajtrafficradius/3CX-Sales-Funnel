@@ -300,14 +300,57 @@ def mark_reply(pool, dest9: str) -> None:
         pass
 
 
-def report(pool) -> dict:
-    """Campaign report for the Outbound Intelligence page."""
+def detect_rebookings(pool) -> int:
+    """Write recovery_rebooked_at for anyone who booked again AFTER we chased them.
+
+    This column was declared and READ by report() but written by NO code path (Raj flagged the
+    campaign as dead 2026-09-02), so the campaign's headline metric was structurally pinned to zero:
+    a genuine win could never have shown up. Detection is SET-BASED rather than event-hooked, so it
+    self-heals on every report() call and back-fills anything missed while this was broken.
+
+    A rebooking = a Lisa call with meeting_agreed, or an Emma meeting, dated after recovery_sent_at.
+    Returns the number of rows newly marked.
+    """
+    try:
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE booked_crm b SET "
+                "  recovery_rebooked_at = (SELECT max(t) FROM ("
+                "      SELECT max(x.created_at) t FROM lisa_calls x "
+                "        WHERE x.dest9=b.dest9 AND x.meeting_agreed "
+                "          AND x.created_at > b.recovery_sent_at "
+                "      UNION ALL "
+                "      SELECT max(y.booked_at) FROM emma_meetings y "
+                "        WHERE y.dest9=b.dest9 AND y.booked_at > b.recovery_sent_at) z), "
+                "  recovery_status = 'rebooked', updated_at = now() "
+                "WHERE b.recovery_sent_at IS NOT NULL AND b.recovery_rebooked_at IS NULL "
+                "  AND ( EXISTS (SELECT 1 FROM lisa_calls x WHERE x.dest9=b.dest9 AND x.meeting_agreed "
+                "                  AND x.created_at > b.recovery_sent_at) "
+                "     OR EXISTS (SELECT 1 FROM emma_meetings y WHERE y.dest9=b.dest9 "
+                "                  AND y.booked_at > b.recovery_sent_at) )")
+            n = cur.rowcount
+            conn.commit()
+            return n or 0
+    except Exception:
+        return 0
+
+
+def report(pool, include_pending: bool = True) -> dict:
+    """Campaign report for the Outbound Intelligence page + the dedicated /noshow page.
+
+    include_pending=False skips the _targets() scan, which measured 23s against live data — far too
+    slow to sit in a page load. The dedicated page fetches the pending count as a second request so
+    the funnel paints immediately.
+    """
     from . import lisa as _l
     ensure_recovery_columns(pool)
-    try:
-        pending = len(_targets(pool, 500))
-    except Exception:
-        pending = None
+    detect_rebookings(pool)          # keep the rebooked metric honest before we read it
+    pending = None
+    if include_pending:
+        try:
+            pending = len(_targets(pool, 500))
+        except Exception:
+            pending = None
     rows = _l._fetch(pool,
         "SELECT count(*) FILTER (WHERE recovery_sent_at IS NOT NULL) sent, "
         "       count(*) FILTER (WHERE recovery_reply_at IS NOT NULL) replied, "
@@ -320,11 +363,32 @@ def report(pool) -> dict:
         "SELECT b.dest9, "
         "  (SELECT lc.company_name FROM lisa_calls lc WHERE lc.dest9=b.dest9 "
         "     AND COALESCE(lc.company_name,'')<>'' ORDER BY lc.started_at DESC LIMIT 1) AS company, "
-        "  b.recovery_status, "
+        "  b.recovery_status, b.recovery_channel AS channel, "
         "  to_char(b.recovery_sent_at,'Mon DD HH24:MI') sent_at, "
         "  (b.recovery_reply_at IS NOT NULL) replied, (b.recovery_rebooked_at IS NOT NULL) rebooked "
         "FROM booked_crm b WHERE b.recovery_sent_at IS NOT NULL "
         "ORDER BY b.recovery_sent_at DESC LIMIT 50") or []
+    # CHANNEL REACH — the campaign's biggest silent hole. Email is meant to reinforce every SMS, but
+    # send_email() returns False unless LISA_MAILBOX is a provisioned @digitalexpo.com.au mailbox, so
+    # it has never fired (0 of 33 as at 2026-09-02). Surfacing "had an address" vs "actually emailed"
+    # makes that visible instead of it looking like we simply had no addresses.
+    chan = _l._fetch(pool,
+        "SELECT count(*) FILTER (WHERE recovery_channel LIKE '%%email%%') emailed, "
+        "       count(*) FILTER (WHERE recovery_channel = 'sms') sms_only, "
+        "       count(*) FILTER (WHERE COALESCE(contact_email,'') <> '') had_address "
+        "FROM booked_crm WHERE recovery_sent_at IS NOT NULL") or [{}]
+    chan = chan[0]
+    series = _l._fetch(pool,
+        "SELECT to_char(recovery_sent_at AT TIME ZONE 'Australia/Melbourne','MM-DD') d, "
+        "       count(*) sent, count(*) FILTER (WHERE recovery_reply_at IS NOT NULL) replied, "
+        "       count(*) FILTER (WHERE recovery_rebooked_at IS NOT NULL) rebooked "
+        "FROM booked_crm WHERE recovery_sent_at IS NOT NULL "
+        "GROUP BY 1 ORDER BY 1") or []
+    sent_n = r.get("sent") or 0
     return {"enabled": enabled(pool), "pending": pending,
-            "sent": r.get("sent") or 0, "replied": r.get("replied") or 0,
-            "rebooked": r.get("rebooked") or 0, "recent": recent}
+            "sent": sent_n, "replied": r.get("replied") or 0,
+            "rebooked": r.get("rebooked") or 0, "recent": recent,
+            "emailed": chan.get("emailed") or 0, "sms_only": chan.get("sms_only") or 0,
+            "had_address": chan.get("had_address") or 0, "series": series,
+            "reply_rate": round(100.0 * (r.get("replied") or 0) / sent_n, 1) if sent_n else 0.0,
+            "rebook_rate": round(100.0 * (r.get("rebooked") or 0) / sent_n, 1) if sent_n else 0.0}
