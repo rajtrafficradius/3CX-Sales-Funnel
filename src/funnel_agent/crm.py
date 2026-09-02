@@ -572,10 +572,16 @@ def _no_website_growth_audit(pool, settings, d9: str, company: str,
             return None
         slug = re.sub(r"[^a-z0-9]+", "-", (company or "audit").lower()).strip("-")[:24] or "audit"
         tok = f"{slug}-audit-" + secrets.token_urlsafe(8)
+        # lisa4_sites has a UNIQUE index (idx_lisa4_sites_active) on dest9 for active rows, so an audit
+        # CANNOT reuse the prospect's real dest9 when they already have a reveal row — which is exactly
+        # the case here (their site is id=1544). The quote/audit paths already solve this with a synthetic
+        # 9-prefixed dest9; the real prospect link is booked_crm.audit_token, set below.
+        import random as _rnd
+        synth = "9" + "".join(str(_rnd.randint(0, 9)) for _ in range(8))
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, kind, status, html, share_token, "
                         "built_at, created_at) VALUES (%s,NULL,%s,'audit','built',%s,%s,now(),now())",
-                        (d9, company or "", html, tok))
+                        (synth, company or "", html, tok))
             cur.execute("INSERT INTO booked_crm (dest9, audit_token, updated_by, updated_at) "
                         "VALUES (%s,%s,'no-website-audit',now()) ON CONFLICT (dest9) DO UPDATE SET "
                         "audit_token=EXCLUDED.audit_token, updated_at=now()", (d9, tok))
