@@ -570,7 +570,7 @@ def _no_website_growth_audit(pool, settings, d9: str, company: str,
         if not html:
             _log_no_site(d9, company, "generator returned nothing")
             return None
-        slug = _re.sub(r"[^a-z0-9]+", "-", (company or "audit").lower()).strip("-")[:24] or "audit"
+        slug = re.sub(r"[^a-z0-9]+", "-", (company or "audit").lower()).strip("-")[:24] or "audit"
         tok = f"{slug}-audit-" + secrets.token_urlsafe(8)
         with pool.connection() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO lisa4_sites (dest9, domain, company, kind, status, html, share_token, "
