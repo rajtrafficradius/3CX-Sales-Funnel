@@ -322,7 +322,12 @@ _L4X_AGENCY_TERMS = [
     r"\bmarketing\b", r"\bmedia\b", r"\bcreative\b",
     r"\bdigital\s+agenc", r"\bad\s+agenc", r"\badvertis",
     r"\bseo\b", r"\bsearch\s+engine\s+optimi",
-    r"\bweb\s*(site)?\s*design", r"\bweb\s*(site)?\s*develop", r"\bweb\s+dev\b",
+    # 'desig'/'develop' as PREFIXES so stylised plurals land too (designz, designs, designers).
+    r"\bweb\s*(site)?\s*desig", r"\bweb\s*(site)?\s*develop", r"\bweb\s+dev\b",
+    # Stylised names put a filler token between the two words — "Web E Designz" (called twice on
+    # 2026-09-02) sailed through because the pattern above needs 'design' straight after 'web'.
+    # `\bweb\b` (web as its own word) keeps "Weber Design", a joinery/building name, out of it.
+    r"\bweb\b\s+\w{1,3}\s+desig", r"\bweb\b\s+\w{1,3}\s+develop",
     r"\bbranding\b", r"\bppc\b", r"\blead\s*gen(eration)?\b",
 ]
 _L4X_REALESTATE_TERMS = [
