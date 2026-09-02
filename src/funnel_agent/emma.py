@@ -337,7 +337,7 @@ def ensure_emma_tables(pool: ConnectionPool, force: bool = False) -> None:
             "CREATE TABLE IF NOT EXISTS emma_meetings ("
             "  id bigserial PRIMARY KEY,"
             "  dest9 text UNIQUE NOT NULL,"           # prospect identity (trailing-9), matches booked_crm
-            "  source text,"                          # 'lisa1' | 'lisa4' | 'bde'
+            "  source text,"                          # 'lisa1' | 'lisa4' | 'lisa5' | 'bde'
             "  bde text,"                             # booking BDE (source='bde') — drives private-BDE hiding
             "  call_id text,"                         # the booking call
             "  company text, contact_name text, domain text,"
@@ -491,7 +491,7 @@ def sync_queue(pool: ConnectionPool, settings: Settings, *, min_interval_seconds
             + nf_cols + [_clean("b.prospect_name"), "'0'||b.dest9"]) + ")"
         # Line attribution: match against the FULL Lisa-4 caller-ID registry (all lines Lisa-4 has ever owned),
         # not just the original 0256 — otherwise the newer L4 lines (Buraq/ZS etc.) mis-tag as lisa1.
-        from .lisa4 import L4_LINE_RX, _N091513_SWITCH  # single source of truth for the Lisa-4 line set
+        from .lisa4 import L4_LINE_RX, L5_LINE_RX, _N091513_SWITCH  # single source of truth for the line sets
         lisa = _exec(pool, f"""
         WITH booked AS (
           SELECT DISTINCT ON (dest9) dest9, call_id, company_name, prospect_name,
@@ -503,13 +503,24 @@ def sync_queue(pool: ConnectionPool, settings: Settings, *, min_interval_seconds
                  ((COALESCE(from_number,'') ~ '{L4_LINE_RX}'
                   OR COALESCE(to_number,'') ~ '{L4_LINE_RX}')
                   AND NOT ((COALESCE(from_number,'') ~ '468091513' OR COALESCE(to_number,'') ~ '468091513')
-                           AND created_at >= {_N091513_SWITCH})) AS is_lisa4
+                           AND created_at >= {_N091513_SWITCH})) AS is_lisa4,
+                 -- Lisa-5 (D&B audit line) has her OWN caller IDs. Without this she fell into the ELSE
+                 -- branch and every one of her bookings was stamped 'lisa1' — an agent that is switched
+                 -- off — so Lisa-5 read as zero bookings on every surface keyed on source (Raj flagged
+                 -- 2026-09-02: 36 of 37 bookings mis-stamped). Same either-leg + date-aware 091513 rule
+                 -- as the floor cards, imported from lisa4.py so the two can never disagree.
+                 ((COALESCE(from_number,'') ~ '{L5_LINE_RX}'
+                   OR COALESCE(to_number,'') ~ '{L5_LINE_RX}')
+                  OR ((COALESCE(from_number,'') ~ '468091513' OR COALESCE(to_number,'') ~ '468091513')
+                      AND created_at >= {_N091513_SWITCH})) AS is_lisa5
           FROM lisa_calls
           WHERE COALESCE(meeting_agreed,false) AND dest9 IS NOT NULL
             AND created_at > now() - interval '60 days'
           ORDER BY dest9, created_at ASC),
         src AS (
-          SELECT b.dest9, CASE WHEN b.is_lisa4 THEN 'lisa4' ELSE 'lisa1' END AS source, b.call_id,
+          SELECT b.dest9, CASE WHEN b.is_lisa4 THEN 'lisa4'
+                               WHEN b.is_lisa5 THEN 'lisa5'
+                               ELSE 'lisa1' END AS source, b.call_id,
                  {lisa_company} AS company,
                  NULLIF(b.prospect_name,'') AS contact_name,
                  COALESCE(lp.domain, lb.domain) AS domain,

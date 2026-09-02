@@ -139,11 +139,12 @@
   a.co:hover{color:var(--vio-2)}
   .badges{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 
-  /* source badges — colors mirror the sales-floor reps (Lisa 1 violet, Lisa 4 teal, humans amber) */
+  /* source badges — colors mirror the sales-floor reps (Lisa 1 violet, Lisa 4 teal, Lisa 5 rose, humans amber) */
   .pill{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:750;letter-spacing:.05em;
     text-transform:uppercase;padding:4px 9px;border-radius:var(--r-pill);border:1px solid;white-space:nowrap}
   .src-l1{color:var(--vio-2);background:var(--accent-soft);border-color:rgba(124,108,255,.42)}
   .src-l4{color:var(--teal);background:rgba(45,212,191,.12);border-color:rgba(45,212,191,.4)}
+  .src-l5{color:#f472b6;background:rgba(244,114,182,.12);border-color:rgba(244,114,182,.4)}
   .src-bde{color:var(--warn);background:var(--warn-d);border-color:rgba(251,191,36,.4)}
 
   /* status chips with a signal dot */
@@ -445,6 +446,7 @@
     <select id="fSrc" title="Source">
       <option value="all">All sources</option>
       <option value="lisa4">Lisa 4 — Websites</option>
+      <option value="lisa5">Lisa 5 — Growth audit</option>
       <option value="lisa1">Lisa 1 — Marketing</option>
       <option value="bde">Human BDEs</option>
     </select>
@@ -490,6 +492,7 @@ function dayLabel(ds){
 }
 function srcBadge(r){
   if(r.source==='lisa4')return '<span class="pill src-l4">Lisa 4 &middot; Website</span>';
+  if(r.source==='lisa5')return '<span class="pill src-l5">Lisa 5 &middot; Growth audit</span>';
   if(r.source==='lisa1')return '<span class="pill src-l1">Lisa 1 &middot; Marketing</span>';
   return '<span class="pill src-bde">BDE'+(r.bde?(' &middot; '+esc(r.bde)):'')+'</span>';
 }
@@ -719,7 +722,7 @@ function renderPanel(d){
   if(m.contact_name)kv.push(['Contact','<b>'+esc(m.contact_name)+'</b>']);
   if(m.dest9)kv.push(['Phone','0'+esc(m.dest9)]);
   if(m.agreed_text)kv.push(['Agreed on call','&ldquo;'+esc(m.agreed_text)+'&rdquo;']);
-  kv.push(['Source',(m.source==='lisa4'?'Lisa 4 · Website reveal':m.source==='lisa1'?'Lisa 1 · Marketing':('Human BDE'+(m.bde?' · '+esc(m.bde):'')))]);
+  kv.push(['Source',(m.source==='lisa4'?'Lisa 4 · Website reveal':m.source==='lisa5'?'Lisa 5 · Growth audit':m.source==='lisa1'?'Lisa 1 · Marketing':('Human BDE'+(m.bde?' · '+esc(m.bde):'')))]);
   kv.push(['Booked',esc(fdt(m.booked_at))||'&mdash;']);
   if(m.approved_by)kv.push(['Approved','by '+esc(m.approved_by)+' &middot; '+esc(fdt(m.approved_at))]);
   if(m.teams_join_url)kv.push(['Teams','<a href="'+esc(m.teams_join_url)+'" target="_blank" rel="noopener">Join link &#8599;</a>']);
