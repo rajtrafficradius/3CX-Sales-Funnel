@@ -43,6 +43,30 @@ def _structural(html: str) -> list[dict]:
     return checks
 
 
+def _images(html: str) -> list[dict]:
+    """A reveal whose hero renders as a grey box is worse than no reveal at all — the prospect is
+    looking at it on a screen-share. Bodyoncall shipped on 2026-09-01 with `<img src="">` in the
+    hero and still scored qa_passed=True, because nothing here looked at images.
+
+    no-broken-images is HARD (an empty/missing src is unambiguous breakage). has-content-image is
+    advisory — a design can legitimately carry all its imagery in CSS backgrounds.
+    """
+    h = html or ""
+    tags = _re.findall(r"<img\b[^>]*>", h, _re.I)
+    broken = [t for t in tags
+              if not _re.search(r"""\bsrc\s*=\s*["'][^"']+["']""", t, _re.I)
+              or _re.search(r"""\bsrc\s*=\s*["']\s*["']""", t, _re.I)
+              or _re.search(r"""\bsrc\s*=\s*["']#["']""", t, _re.I)]
+    usable = len(tags) - len(broken)
+    has_css_bg = bool(_re.search(r"background(-image)?\s*:[^;}]*url\(\s*['\"]?(?!data:image/svg)", h, _re.I))
+    return [
+        {"name": "no-broken-images", "pass": not broken,
+         "note": ("clean" if not broken else f"{len(broken)} of {len(tags)} <img> have an empty/missing src")},
+        {"name": "has-content-image", "pass": bool(usable or has_css_bg), "advisory": True,
+         "note": f"{usable} rendering <img>" + (" + css background" if has_css_bg else "")},
+    ]
+
+
 def _content(html: str, company: str, phone: str | None) -> list[dict]:
     low = (html or "").lower()
     checks = []
@@ -151,7 +175,7 @@ def qa_check(pool, settings, dest9: str, *, force: bool = False, deep: bool = Tr
         html = r.get("html") or ""
         company = r.get("company") or ""
         phone = None
-        checks = (_structural(html) + _content(html, company, phone) + _placeholder(html)
+        checks = (_structural(html) + _images(html) + _content(html, company, phone) + _placeholder(html)
                   + _brand_safe(html) + _reachable(token))
         # Advisory checks (network-side reachability, brand-token heuristic) are reported but never
         # block QA — a Cloudflare bot-challenge or a stylised brand name must not stop us sending a
