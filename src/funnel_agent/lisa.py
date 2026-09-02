@@ -3506,7 +3506,7 @@ def _llm_json_anthropic(settings: Settings, system: str, user: str,
     client = Anthropic(api_key=key)
     model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
     msg = client.messages.create(
-        model=model, max_tokens=1500, temperature=0.2,
+        model=model, max_tokens=1500,
         system=system + "\n\nOutput ONLY a single valid JSON object — no prose, no code fences.",
         messages=[{"role": "user", "content": user[:24000]}])
     txt = "".join(getattr(b, "text", "") for b in (msg.content or []) if getattr(b, "type", None) == "text").strip()

@@ -68,7 +68,7 @@ class AnthropicBackend(LLMBackend):
         msg = self._client.messages.create(
             model=model,
             max_tokens=1024,
-            temperature=0,
+
             system=system,
             messages=[{"role": "user", "content": user}],
             tools=[

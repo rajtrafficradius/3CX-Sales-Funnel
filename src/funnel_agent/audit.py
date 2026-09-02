@@ -170,7 +170,7 @@ def _relevance_drop_set(settings, name, industry, sub_industry, suburb, state, k
         usr = (f"Business: {name or '?'}\nTrade/industry: {industry or '?'} / {sub_industry or '?'}\n"
                f"Located: {loc}\n\nKeywords:\n" + "\n".join(kws))
         r = anthropic.Anthropic(api_key=key).messages.create(
-            model=model, max_tokens=4000, temperature=0,
+            model=model, max_tokens=4000,
             system=sys_p, messages=[{"role": "user", "content": usr}])
         txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
         m = re.search(r"\[.*\]", txt, re.S)

@@ -1104,7 +1104,7 @@ def _niche_image_queries(settings, company, industry_hint=""):
                 "coffee']). No brand or location words. Output ONLY a JSON array of 2-3 lowercase strings.")
         usr = f"Business: {company}\nIndustry: {industry_hint or '(infer from the name)'}"
         r = anthropic.Anthropic(api_key=key).messages.create(
-            model=model, max_tokens=120, temperature=0, system=sysp,
+            model=model, max_tokens=120, system=sysp,
             messages=[{"role": "user", "content": usr}])
         txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
         m = _re2.search(r"\[.*\]", txt, _re2.S)

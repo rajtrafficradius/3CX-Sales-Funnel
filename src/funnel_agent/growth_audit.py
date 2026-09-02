@@ -233,7 +233,7 @@ def service_seeds(settings, company, industry=None, sub_industry=None, limit=14)
             f"{limit} lowercase strings.")
         usr = f"Business name: {company or '?'}\nIndustry: {industry or '?'} / {sub_industry or '?'}"
         r = anthropic.Anthropic(api_key=key).messages.create(
-            model=model, max_tokens=400, temperature=0,
+            model=model, max_tokens=400,
             system=sys_p, messages=[{"role": "user", "content": usr}])
         txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
         mobj = _re.search(r"\[.*\]", txt, _re.S)
@@ -273,7 +273,7 @@ def estimate_avg_ticket(settings, company, industry=None, sub_industry=None, ser
                f"Services / notes: {services_hint or '(infer from the name/industry)'}\n"
                f"Location: {location or 'Australia'}")
         r = anthropic.Anthropic(api_key=key).messages.create(
-            model=model, max_tokens=200, temperature=0,
+            model=model, max_tokens=200,
             system=sys_p, messages=[{"role": "user", "content": usr}])
         txt = "".join(getattr(b, "text", "") for b in r.content if getattr(b, "type", None) == "text")
         mobj = _re.search(r"\{.*\}", txt, _re.S)
