@@ -792,6 +792,28 @@ def _collect_image_urls(html: str, page_url: str) -> list:
     return out
 
 
+def _upgrade_cdn_image_url(url: str) -> str:
+    """Site builders inline a TINY lazy-load placeholder in the HTML and swap the real photo in with
+    JavaScript. Scraping the raw HTML therefore yields a 50x50 thumbnail, not the business's photo.
+
+    Bodyoncall (2026-09-02) is the case that exposed this: every image on the Wix source site was
+    served as `...~mv2.jpg/v1/fit/w_50,h_50,q_80,usm_0...`. Stripping the transform returns the real
+    1024x768 original, so the rebuild can carry the client's actual photos across (the content-parity
+    rule). Unknown hosts are returned untouched.
+    """
+    try:
+        if "wixstatic.com/" in url:                      # /media/<file>~mv2.jpg/v1/fit/w_50,h_50,...
+            return re.sub(r"/v1/[^?#]*", "", url.split("?")[0])
+        if "squarespace-cdn.com" in url:                 # ?format=100w -> largest offered
+            return re.sub(r"format=\d+w", "format=2500w", url)
+        if "cdn.shopify.com" in url:                     # foo_50x50.jpg / foo_small.jpg -> foo.jpg
+            return re.sub(r"_(?:\d+x\d*|small|medium|large|compact|grande)(?=\.\w+(?:$|\?))", "", url)
+        # WordPress/generic resized derivative: foo-150x150.jpg -> foo.jpg
+        return re.sub(r"-\d{2,4}x\d{2,4}(?=\.(?:jpe?g|png|webp)(?:$|\?))", "", url, flags=re.I)
+    except Exception:
+        return url
+
+
 def _is_noncontent_image_url(url: str) -> bool:
     """URL-level reject: SVGs, logos, icons/sprites/spacers/pixels/favicons/badges, tracking pixels."""
     path = urlparse(url).path.lower()
@@ -956,6 +978,9 @@ def scrape_site_media(domain: str, timeout: float = 15.0, max_images: int = 18) 
         candidates, seen_url = [], set()
         for purl, phtml in pages:
             for iu in _collect_image_urls(phtml, purl):
+                # Upgrade builder lazy-load placeholders to the real photo BEFORE dedup/download,
+                # else we carry a 50x50 thumbnail across instead of the client's own image.
+                iu = _upgrade_cdn_image_url(iu)
                 key = iu.split("#")[0]
                 if key in seen_url:
                     continue
