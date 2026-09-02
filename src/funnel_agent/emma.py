@@ -486,8 +486,22 @@ def sync_queue(pool: ConnectionPool, settings: Settings, *, min_interval_seconds
         # companies/prospects/classifications lookups → the CONTACT NAME (a person's name
         # beats '(unknown)') → the dialled number itself as the absolute last resort.
         nf_join, nf_cols = _company_fallbacks(pool, "b.dest9", "COALESCE(lp.domain, lb.domain)")
+        # b.company_name is sometimes the prospect site's scraped <title>, not a business name — two
+        # bookings for 2026-09-03 reached the queue as "your domain is expired" (really Melbourne
+        # Fencing and Landscaping Experts) and "professional tiling website" (really Western Sydney
+        # Tiling Pty Ltd). Both are real prospects who talked for 90-113s and agreed to a meeting;
+        # Alfred would have opened the card with no idea who he was meeting.
+        # The correct name was in lisa4_pool.company all along, and the scraped title in
+        # lisa4_pool.title — so when the call's name IS that title, skip it and fall through. Exact
+        # match only (no heuristics), and only when a real pool company name exists to fall back to.
+        _call_company = (
+            "CASE WHEN lower(btrim(COALESCE(b.company_name,''))) IN " + _JUNK_NAMES + " THEN NULL "
+            "     WHEN NULLIF(btrim(COALESCE(lp.title,'')),'') IS NOT NULL "
+            "      AND lower(btrim(COALESCE(b.company_name,''))) = lower(btrim(lp.title)) "
+            "      AND NULLIF(btrim(COALESCE(lp.company,'')),'') IS NOT NULL THEN NULL "
+            "     ELSE btrim(b.company_name) END")
         lisa_company = "COALESCE(" + ", ".join(
-            [_clean("b.company_name"), _clean("lp.company"), _clean("lb.company_name")]
+            [_call_company, _clean("lp.company"), _clean("lb.company_name")]
             + nf_cols + [_clean("b.prospect_name"), "'0'||b.dest9"]) + ")"
         # Line attribution: match against the FULL Lisa-4 caller-ID registry (all lines Lisa-4 has ever owned),
         # not just the original 0256 — otherwise the newer L4 lines (Buraq/ZS etc.) mis-tag as lisa1.
