@@ -462,12 +462,20 @@ def assemble_audit(pool, domain: str, *, avg_ticket: float | None = None,
     comp_traffic = sum((c.get("est_traffic") or 0) for c in comps)
     our_traffic = est_org_traffic or org.get("etv") or 0
     sov = round(100 * our_traffic / max(1, our_traffic + comp_traffic), 1) if (our_traffic or comp_traffic) else None
-    # ---- REALISTICALLY CAPTURABLE gap value (fix ~20x inflation: capture-CTR × CPC, not full volume) ----
-    for k in (ca.get("keyword_gap") or []):
-        k["cap_value"] = round((k.get("est_capture_traffic") or 0) * (k.get("cpc") or 0))
-    for k in (ca.get("outranked") or []):
+    # ---- REALISTICALLY CAPTURABLE gap value ----
+    # These rows ARE the report's evidence table, and the cover claims a monthly figure built as
+    #   addressable_traffic × VISITOR_TO_LEAD × LEAD_TO_SALE × avg_ticket   (rev_monthly, below).
+    # Valuing a row at capture-traffic × CPC prices an ad CLICK while the headline prices a WON JOB, so
+    # the two could never reconcile: RB Tile's cover said A$25,961/mo over a table totalling A$1,500 —
+    # a 17x self-contradiction that the accuracy gate (correctly) refused to publish, blocking most
+    # audits for any high-ticket trade. Value each row through the SAME funnel as the headline so the
+    # table adds up to the claim. The click view is kept alongside for the paid-search section.
+    for k in list(ca.get("keyword_gap") or []) + list(ca.get("outranked") or []):
         cap_t = k.get("est_capture_traffic") or round((k.get("volume") or 0) * _ctr(5))
-        k["cap_value"] = round(cap_t * (k.get("cpc") or 0))
+        k["est_capture_traffic"] = cap_t
+        k["click_value"] = round(cap_t * (k.get("cpc") or 0))
+        k["cap_value"] = (round(cap_t * VISITOR_TO_LEAD * LEAD_TO_SALE * avg_ticket)
+                          if avg_ticket else k["click_value"])
     gap_capturable = sum(k.get("cap_value") or 0 for k in (ca.get("keyword_gap") or []))
     health = _health_scores(est_org_value, seo_tot, ads_m, sov, geo, len(comps))
     diagnosis = _diagnosis(name, running_ads, ads_m, quickwin_value, gap_capturable, sov, geo, comps)
