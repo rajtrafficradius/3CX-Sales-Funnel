@@ -76,9 +76,12 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
     issued_s = today.strftime("%d %b %Y")
     valid_s = (today + timedelta(days=30)).strftime("%d %b %Y")
     qno = "DE-" + today.strftime("%Y%m%d")
+    # data-qi/data-amt are stable hooks for the closer's in-document editor (/quote/{dest9}/edit).
+    # They change nothing visually and are inert for the prospect — the edit layer is only ever
+    # injected on the authenticated edit route, never on the public share link.
     items_html = "".join(
-        f'''<div class="li"><div class="li-n">{i+1:02d}</div><div class="li-b"><div class="li-t">{_h.escape(n)}</div>
-        <div class="li-d">{_h.escape(desc)}</div></div><div class="li-p">{_money(p)}</div></div>'''
+        f'''<div class="li" data-qi="{i}"><div class="li-n">{i+1:02d}</div><div class="li-b"><div class="li-t">{_h.escape(n)}</div>
+        <div class="li-d">{_h.escape(desc)}</div></div><div class="li-p" data-amt="{p}">{_money(p)}</div></div>'''
         for i, (n, p, desc) in enumerate(rows))
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/><title>Quotation — {c}</title>
@@ -160,9 +163,9 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
    <div class="sh"><span class="n">01</span><h2>Investment breakdown</h2></div>
    <div class="items">
      {items_html}
-     <div class="subrow"><span>Subtotal — website build (one-off)</span><b>{_money(total)}</b></div>
-     <div class="subrow"><span>GST (10%)</span><b>{_money(gst)}</b></div>
-     <div class="totalrow"><div class="l">Total — inc GST<span>Complete website, designed, engineered &amp; launched</span></div><div class="amt">{_money(grand)}</div></div>
+     <div class="subrow"><span>Subtotal — website build (one-off)</span><b data-q="sub">{_money(total)}</b></div>
+     <div class="subrow"><span>GST (10%)</span><b data-q="gst">{_money(gst)}</b></div>
+     <div class="totalrow"><div class="l">Total — inc GST<span>Complete website, designed, engineered &amp; launched</span></div><div class="amt" data-q="grand">{_money(grand)}</div></div>
    </div>
    <div class="note">All prices in AUD, inclusive of 10% GST.</div>
 

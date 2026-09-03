@@ -5077,6 +5077,156 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
         return HTMLResponse(_static("crm-record.html"), headers=_NOCACHE)
 
+    # Injected ONLY on the authenticated /quote/{dest9}/edit route — never on the public share link.
+    _QUOTE_EDIT_LAYER = """
+<style>
+ .qe-bar{position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#17150f;color:#faf8f2;
+   display:flex;align-items:center;gap:14px;padding:11px 16px;font:14px/1.4 ui-sans-serif,system-ui,Arial;
+   box-shadow:0 -6px 24px rgba(0,0,0,.28)}
+ .qe-bar b{font-size:15px} .qe-sp{margin-left:auto;display:flex;gap:9px}
+ .qe-btn{border:1px solid #4a463c;background:#26231a;color:#faf8f2;border-radius:6px;padding:8px 14px;
+   font:600 13px ui-sans-serif,system-ui,Arial;cursor:pointer}
+ .qe-btn.p{background:#dc4632;border-color:#dc4632} .qe-btn:disabled{opacity:.5;cursor:default}
+ body{padding-bottom:76px !important}
+ [data-qe-edit]{outline:1px dashed rgba(220,70,50,.45);outline-offset:3px;border-radius:3px;min-width:26px}
+ [data-qe-edit]:focus{outline:2px solid #dc4632;background:#fff}
+ .qe-del{position:absolute;right:-30px;top:50%;transform:translateY(-50%);border:1px solid #d8cfc0;
+   background:#fff;color:#a33;border-radius:50%;width:23px;height:23px;line-height:1;cursor:pointer;
+   font:700 14px ui-sans-serif,system-ui,Arial;padding:0}
+ .li{position:relative} .qe-hint{font-size:12.5px;opacity:.75}
+ @media print{.qe-bar,.qe-del{display:none}[data-qe-edit]{outline:none}}
+</style>
+<script>
+(function(){
+  var D9="__D9__";
+  var money=function(n){return "A$"+Math.round(n||0).toLocaleString();};
+  function amtOf(li){var p=li.querySelector(".li-p");if(!p)return 0;
+    var t=(p.textContent||"").replace(/[^0-9.\\-]/g,"");return parseFloat(t||"0")||0;}
+  function recalc(){
+    var sub=0;document.querySelectorAll(".li").forEach(function(li){sub+=amtOf(li);});
+    var gst=Math.round(sub*0.10);
+    var s=document.querySelector('[data-q="sub"]'),g=document.querySelector('[data-q="gst"]'),
+        t=document.querySelector('[data-q="grand"]');
+    if(s)s.textContent=money(sub); if(g)g.textContent=money(gst); if(t)t.textContent=money(sub+gst);
+    var b=document.getElementById("qeSum"); if(b)b.textContent=money(sub)+" + GST = "+money(sub+gst);
+    document.querySelectorAll(".li").forEach(function(li,i){
+      var n=li.querySelector(".li-n"); if(n)n.textContent=("0"+(i+1)).slice(-2);});
+  }
+  function wire(li){
+    ["li-t","li-d","li-p"].forEach(function(c){
+      var el=li.querySelector("."+c); if(!el)return;
+      el.setAttribute("contenteditable","true"); el.setAttribute("data-qe-edit","1");
+      el.addEventListener("input",recalc);
+      el.addEventListener("blur",function(){
+        if(c==="li-p"){var v=(el.textContent||"").replace(/[^0-9.\\-]/g,"");
+          el.textContent=money(parseFloat(v||"0")||0); recalc();}});
+    });
+    if(!li.querySelector(".qe-del")){
+      var d=document.createElement("button"); d.className="qe-del"; d.type="button";
+      d.title="Remove this line"; d.textContent="\\u00d7";
+      d.onclick=function(){li.remove();recalc();}; li.appendChild(d);
+    }
+  }
+  document.querySelectorAll(".li").forEach(wire);
+  recalc();
+  var bar=document.createElement("div"); bar.className="qe-bar";
+  bar.innerHTML='<b>Editing this quotation</b><span class="qe-hint">Click any name, description or '+
+    'amount to change it &middot; &times; removes a line</span>'+
+    '<span class="qe-sp"><button class="qe-btn" id="qeAdd" type="button">+ Add line</button>'+
+    '<span id="qeSum" style="align-self:center;font-weight:700"></span>'+
+    '<button class="qe-btn" id="qeCancel" type="button">Back</button>'+
+    '<button class="qe-btn p" id="qeSave" type="button">Save &amp; publish</button></span>';
+  document.body.appendChild(bar); recalc();
+  document.getElementById("qeAdd").onclick=function(){
+    var list=document.querySelectorAll(".li"); if(!list.length)return;
+    var li=list[list.length-1].cloneNode(true);
+    var t=li.querySelector(".li-t"),d=li.querySelector(".li-d"),p=li.querySelector(".li-p");
+    if(t)t.textContent="New item"; if(d)d.textContent=""; if(p)p.textContent="A$0";
+    var old=li.querySelector(".qe-del"); if(old)old.remove();
+    list[list.length-1].parentNode.appendChild(li); wire(li); recalc();
+    if(t){t.focus();document.execCommand&&document.execCommand("selectAll",false,null);}
+  };
+  document.getElementById("qeCancel").onclick=function(){location.href="/lisa-crm/"+D9;};
+  document.getElementById("qeSave").onclick=function(){
+    var btn=this; var items=[];
+    document.querySelectorAll(".li").forEach(function(li){
+      var n=(li.querySelector(".li-t")||{}).textContent||"";
+      var d=(li.querySelector(".li-d")||{}).textContent||"";
+      var a=amtOf(li);
+      n=n.trim(); d=d.trim();
+      if(n||a>0)items.push({name:n,desc:d,amount:Math.round(a)});
+    });
+    if(!items.length){alert("Add at least one line before saving.");return;}
+    btn.disabled=true; btn.textContent="Saving\\u2026";
+    fetch("/api/lisa/crm/quote",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({dest9:D9,items:items})})
+      .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
+      .then(function(){location.reload();})
+      .catch(function(e){alert("Could not save: "+e.message);btn.disabled=false;
+        btn.textContent="Save & publish";});
+  };
+})();
+</script>
+"""
+
+    @app.get("/quote/{dest9}/edit", response_class=HTMLResponse)
+    def quote_edit_page(dest9: str, request: Request):
+        """Edit the quotation INSIDE the document itself (Raj: the closer must be able to change every
+        field and delete breakdown lines, not just the headline total).
+
+        Serves the REAL published quote with an editing layer injected: every item name, description and
+        amount becomes editable in place, each line gets a remove control, lines can be added, and the
+        subtotal/GST/total recompute live. Saving posts the lines to /api/lisa/crm/quote, which
+        regenerates the quote and republishes it to the SAME share link the prospect already has.
+
+        Deliberately a SEPARATE authenticated route: the public /site/public/{token} link stays a clean,
+        non-editable document, so nothing here is ever exposed to a prospect.
+        """
+        if not _crm_allowed(request):
+            return HTMLResponse(_LISA_NOACCESS, status_code=403, headers=_NOCACHE)
+        import html as _h
+        d9 = re.sub(r"[^0-9]", "", dest9 or "")[-9:]
+        rows = q("SELECT quote_token FROM booked_crm WHERE dest9=%s", (d9,))
+        tok = (rows[0].get("quote_token") if rows else None) or ""
+        html = ""
+        if tok:
+            h = q("SELECT html FROM lisa4_sites WHERE share_token=%s AND kind='quote'", (tok,))
+            html = (h[0].get("html") if h else "") or ""
+        if not html:
+            return HTMLResponse(
+                "<body style='font:15px system-ui;padding:40px;max-width:640px;margin:auto'>"
+                "<h2>No quotation yet</h2><p>Generate one from the booking record first, then come "
+                f"back here to price it line by line.</p><p><a href='/lisa-crm/{_h.escape(d9)}'>"
+                "&larr; Back to the record</a></p></body>", status_code=404, headers=_NOCACHE)
+        # Quotes published BEFORE the editor hooks existed have no data-q/data-amt anchors, so their
+        # subtotal/GST/total could not update as he types. Re-render those once from the stored figures
+        # (same total, same custom lines) so every existing quote is editable, not just new ones.
+        if 'data-q="sub"' not in html:
+            try:
+                from ..quote import gen_quote_html as _gq, normalise_items as _ni
+                _r = q("SELECT quote_total, quote_items, quote_hosting_mo, quote_attn, "
+                       "       (SELECT company FROM lisa4_sites WHERE share_token=%s) company, "
+                       "       (SELECT domain FROM lisa4_sites WHERE share_token=%s) domain "
+                       "FROM booked_crm WHERE dest9=%s", (tok, tok, d9))
+                _r = (_r[0] if _r else {}) or {}
+                _items = _ni(_r.get("quote_items")) or None
+                _html2 = _gq(_r.get("company") or "your business", _r.get("domain") or "",
+                             int(_r.get("quote_total") or 1000),
+                             hosting_mo=int(_r.get("quote_hosting_mo") or 100),
+                             attn=_r.get("quote_attn") or "", items=_items)
+                if _html2 and 'data-q="sub"' in _html2:
+                    with pool.connection() as _cn, _cn.cursor() as _cur:
+                        _cur.execute("UPDATE lisa4_sites SET html=%s WHERE share_token=%s AND kind='quote'",
+                                     (_html2, tok))
+                        _cn.commit()
+                    html = _html2
+            except Exception:
+                pass   # an un-upgraded quote is still editable; only the live totals stay static
+        layer = _QUOTE_EDIT_LAYER.replace("__D9__", _h.escape(d9))
+        k = html.lower().rfind("</body>")
+        html = (html[:k] + layer + html[k:]) if k >= 0 else (html + layer)
+        return HTMLResponse(html, headers=_NOCACHE)
+
     @app.get("/api/lisa/crm")
     def lisa_crm_data(request: Request) -> JSONResponse:
         """Booked-prospects CRM (single source of truth): one enriched row per prospect that has ever
