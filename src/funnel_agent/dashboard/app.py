@@ -5138,6 +5138,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     }
   }
   document.querySelectorAll(".li").forEach(wire);
+  // EVERY SECTION EDITABLE — not just the line items. Raj: "every section of the quotation must be
+  // able to edit", including the contact details. Each text block on the sheet becomes editable in
+  // place, and each removable block gets its own delete control.
+  var SEL=".sheet h1,.sheet h2,.sheet h3,.sheet p,.sheet li,.sheet td,.sheet th,"+
+          ".eyebrow,.subline,.k,.v,.logo b,.foot,.tot-l,.l,.amt,.subrow span,.subrow b,.hd div,.meta div";
+  document.querySelectorAll(SEL).forEach(function(el){
+    if(el.closest(".qe-bar"))return;
+    if(el.querySelector(SEL))return;                 // only innermost text blocks
+    if(el.classList.contains("li-t")||el.classList.contains("li-d")||el.classList.contains("li-p"))return;
+    el.setAttribute("contenteditable","true"); el.setAttribute("data-qe-edit","1");
+    el.addEventListener("input",recalc);
+  });
+  // removable blocks: any whole row/section the closer wants gone
+  document.querySelectorAll(".sheet .row,.sheet .subrow,.sheet .inc li,.sheet .kv,.sheet .two > div")
+    .forEach(function(sec){
+      if(sec.closest(".qe-bar")||sec.querySelector(".qe-del"))return;
+      sec.style.position=sec.style.position||"relative";
+      var d=document.createElement("button"); d.className="qe-del"; d.type="button";
+      d.title="Remove this section"; d.textContent="\\u00d7";
+      d.onclick=function(){sec.remove();recalc();}; sec.appendChild(d);
+    });
   recalc();
   var bar=document.createElement("div"); bar.className="qe-bar";
   bar.innerHTML='<b>Editing this quotation</b><span class="qe-hint">Click any name, description or '+
@@ -5166,10 +5187,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
       n=n.trim(); d=d.trim();
       if(n||a>0)items.push({name:n,desc:d,amount:Math.round(a)});
     });
-    if(!items.length){alert("Add at least one line before saving.");return;}
     btn.disabled=true; btn.textContent="Saving\\u2026";
-    fetch("/api/lisa/crm/quote",{method:"POST",credentials:"same-origin",
-      headers:{"Content-Type":"application/json"},body:JSON.stringify({dest9:D9,items:items})})
+    // Save the WHOLE edited document, so headings, intro, terms, contact details and footer are kept
+    // exactly as written — a structured items-only save would regenerate over his wording.
+    // Amounts are re-stamped into data-amt first so the server can recompute the stored total.
+    document.querySelectorAll(".li").forEach(function(li){
+      var p=li.querySelector(".li-p"); if(p)p.setAttribute("data-amt",String(Math.round(amtOf(li))));
+    });
+    var clone=document.documentElement.cloneNode(true);
+    clone.querySelectorAll(".qe-bar,.qe-del,style#qe-style").forEach(function(n){n.remove();});
+    clone.querySelectorAll("[contenteditable]").forEach(function(n){
+      n.removeAttribute("contenteditable"); n.removeAttribute("data-qe-edit");});
+    clone.querySelectorAll("script").forEach(function(n){n.remove();});
+    var full="<!doctype html>"+clone.outerHTML;
+    fetch("/api/lisa/crm/quote/html",{method:"POST",credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({dest9:D9,html:full})})
       .then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})
       .then(function(){location.reload();})
       .catch(function(e){alert("Could not save: "+e.message);btn.disabled=false;
@@ -5406,6 +5438,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              "quote_items": [{"name": n, "amount": a, "desc": dsc}
                                              for (n, a, dsc) in (items or [])],
                              "quote_hosting_mo": hosting_mo, "quote_attn": attn})
+
+    @app.post("/api/lisa/crm/quote/html")
+    async def lisa_crm_quote_html(request: Request) -> JSONResponse:
+        """Save the quotation EXACTLY as the closer edited it, section by section.
+
+        The structured endpoint above only understands line items, so headings, the intro, terms,
+        timeline, contact details and the footer could not be touched (Raj, 2026-09-03: "every section
+        of the quotation must be able to edit"). Here the whole document is edited in place and stored
+        verbatim, so nothing is regenerated over the top of his wording.
+
+        Sanitised before storage: this HTML is served to PROSPECTS from a public link, so scripts,
+        event handlers and javascript: URLs are stripped even though only staff can reach this route.
+        """
+        if not _crm_allowed(request):
+            raise HTTPException(403, "no access")
+        body = await request.json()
+        d9 = re.sub(r"[^0-9]", "", str(body.get("dest9") or ""))[-9:]
+        html = str(body.get("html") or "")
+        who = ((getattr(request.state, "user", None) or {}).get("email") or "?")[:80]
+        if not d9 or len(html) < 400:
+            raise HTTPException(400, "bad payload")
+        if len(html) > 4_000_000:
+            raise HTTPException(413, "quote too large")
+        html = re.sub(r"(?is)<script\b.*?</script\s*>", "", html)
+        html = re.sub(r"(?is)<iframe\b.*?</iframe\s*>", "", html)
+        html = re.sub(r"""(?is)\son[a-z]+\s*=\s*(".*?"|'.*?'|[^\s>]+)""", "", html)
+        html = re.sub(r"""(?is)(href|src)\s*=\s*(['"])\s*javascript:[^'"]*\2""", r'\1="#"', html)
+        # the editor's own chrome must never be stored into the published document
+        html = re.sub(r"(?is)<div class=\"qe-bar\".*?</div>\s*$", "", html)
+        html = re.sub(r"""(?is)<button[^>]*class=["'][^"']*qe-del[^"']*["'][^>]*>.*?</button>""", "", html)
+        html = re.sub(r"""\s(contenteditable|data-qe-edit)=(["'])[^"']*\2""", "", html, flags=re.I)
+        _crm.ensure_crm_tables(pool)
+        rows = q("SELECT quote_token FROM booked_crm WHERE dest9=%s", (d9,))
+        tok = (rows[0].get("quote_token") if rows else None) or ""
+        if not tok:
+            raise HTTPException(404, "no quotation to update")
+        # keep quote_total in step with whatever the edited document now totals
+        _tot = None
+        try:
+            _m = re.findall(r'data-amt="(\d+)"', html)
+            if _m:
+                _tot = sum(int(x) for x in _m)
+        except Exception:
+            _tot = None
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE lisa4_sites SET html=%s, built_at=now() WHERE share_token=%s AND kind='quote'",
+                        (html, tok))
+            if not cur.rowcount:
+                raise HTTPException(404, "quotation row missing")
+            if _tot:
+                cur.execute("UPDATE booked_crm SET quote_total=%s, updated_by=%s, updated_at=now() "
+                            "WHERE dest9=%s", (_tot, who, d9))
+            cur.execute("INSERT INTO crm_activity (dest9, kind, body, author) VALUES (%s,'system',%s,%s)",
+                        (d9, "Quotation edited in-document" + (f" · now A${_tot:,}" if _tot else ""), who))
+            conn.commit()
+        return JSONResponse({"ok": True, "quote_token": tok, "quote_total": _tot})
 
     @app.post("/api/lisa/crm/audit")
     async def lisa_crm_audit(request: Request) -> JSONResponse:

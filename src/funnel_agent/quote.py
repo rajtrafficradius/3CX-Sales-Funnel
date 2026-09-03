@@ -4,7 +4,10 @@ rebranded to Digital Expo / DE Group (NO Traffic Radius). The TOTAL drives a 6-i
 Usage: gen_quote_html(company, domain, total) -> html string.
 """
 import html as _h
+import re as _re
 from datetime import datetime, timedelta, timezone
+
+_re_tel = _re.compile(r"[^0-9+]")   # tel: href — keep digits and a leading +
 
 ITEMS = [
     ("UX/UI Design & Art Direction", 0.22, "Bespoke identity, layout system, type scale & colour — unique to your brand, not a theme."),
@@ -54,12 +57,29 @@ def normalise_items(items) -> list[tuple[str, int, str]]:
 
 def _money(n): return f"A${n:,.0f}"
 
+# The closer whose name and contact go on the quote. Overridable per-quote from the CRM (rep_* args)
+# so it is never wrong when someone else runs the meeting. Vysakh, 2026-09-03: the prospect must be
+# able to reach the person they actually met, not a generic office line — and Traffic Radius is named
+# as the parent brand (this supersedes the earlier "NO Traffic Radius on the quote" rule).
+DEFAULT_REP_NAME = "Alfred"
+DEFAULT_REP_PHONE = "(03) 7020 9196"
+DEFAULT_REP_EMAIL = "alfred@trafficradiusdigital.com.au"
+
+
 def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int = 100,
-                   attn: str = "", issued=None, items=None) -> str:
+                   attn: str = "", issued=None, items=None,
+                   rep_name: str = "", rep_phone: str = "", rep_email: str = "") -> str:
     """items: optional closer-edited line items (see normalise_items). When supplied they REPLACE the
     weighted default breakdown and their sum becomes the total — Alfred prices each prospect himself,
-    so his figures win over the ratio model."""
+    so his figures win over the ratio model.
+
+    rep_name/rep_phone/rep_email put the CLOSER's own contact details on the quote instead of a generic
+    office line; blank falls back to the DEFAULT_REP_* constants above."""
     c = _h.escape(company or "your business"); d = _h.escape(domain or ""); at = _h.escape(attn or "")
+    rep_n = _h.escape((rep_name or DEFAULT_REP_NAME).strip())
+    rep_p = _h.escape((rep_phone or DEFAULT_REP_PHONE).strip())
+    rep_e = _h.escape((rep_email or DEFAULT_REP_EMAIL).strip())
+    rep_t = _h.escape(_re_tel.sub("", rep_phone or DEFAULT_REP_PHONE))   # tel: needs digits only
     custom = normalise_items(items)
     if custom:
         rows = custom
@@ -186,11 +206,13 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
      <div class="k">Timeline</div><div class="v">Your site is already built. Live on your domain within 24–48 hours of go-ahead.</div>
      <div class="k">Deliverables</div><div class="v">Live website, all source files, and full ownership transferred on final payment.</div>
      <div class="k">Terms</div><div class="v">{_money(grand)} (inc GST) build due on go-live; web + email hosting &amp; server {_money(hosting_mo)}/month + GST, billed monthly or annually from launch.</div>
-     <div class="k">Questions</div><div class="v">Call us on (03) 7020 9196 or email hello@digitalexpo.com.au — happy to walk you through it.</div>
+     <div class="k">Questions</div><div class="v">Talk to <b>{rep_n}</b> on <a href="tel:{rep_t}">{rep_p}</a> or email
+       <a href="mailto:{rep_e}">{rep_e}</a> — happy to walk you through it.</div>
    </div>
 
    <div class="foot"><b>Digital Expo · DE Group</b> — Web Design &amp; Digital Marketing · Melbourne, Australia<br>
-     (03) 7020 9196 · hello@digitalexpo.com.au · digitalexpo.com.au · ABN 90 134 920 228</div>
+     {rep_n} · {rep_p} · {rep_e} · ABN 90 134 920 228<br>
+     <span style="color:var(--faint)">Digital Expo is part of the <b>Traffic Radius</b> group.</span></div>
  </div></div>
 </body></html>'''
 
