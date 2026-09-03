@@ -240,6 +240,24 @@ def _norm_domain(s: str | None) -> str:
     return d.split("/")[0].strip()
 
 
+def domain_for_column(s: str | None) -> str | None:
+    """A brief value that is safe to store in a DOMAIN column — None when it isn't a real domain.
+
+    The brief doubles as Lisa's SPEECH script, so every field has a human-readable fallback and
+    prospect_website reads "your website" when we don't know their site. That is right for speech and
+    catastrophic as data: the phrase was being written straight into lisa_briefs.domain and
+    lisa_calls.domain, then flowed on into classifications.prospect_website and the prospects master,
+    where it merged 2,289 unrelated prospects under one bogus "your website" record. Every one of
+    their prospect pages then showed ~3,200 calls belonging to other businesses (Raj, 2026-09-03).
+
+    A real domain has a dot, a 2+ char alphabetic TLD, and no whitespace or apostrophes.
+    """
+    d = _norm_domain(s)
+    if not d or " " in d or "'" in d or "{" in d:
+        return None
+    return d if re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9-]+)*\.[a-z]{2,}", d) else None
+
+
 # Phrases that mean the prospect asked for something IN WRITING (report / proposal / "just email me").
 # We don't email — so this is what triggers the audit view-link SMS instead.
 _REPORT_WORDS = ("send me an email", "send an email", "email me", "email it", "email that", "email through",
@@ -1024,8 +1042,10 @@ def build_and_store_brief(pool: ConnectionPool, settings: Settings, *, dest9: st
             "VALUES (%s,%s,%s,%s,%s,now(),now()) "
             "ON CONFLICT (dest9) DO UPDATE SET domain=EXCLUDED.domain, prospect_name=EXCLUDED.prospect_name, "
             "  company_name=EXCLUDED.company_name, brief=EXCLUDED.brief, updated_at=now()",
-            (d9, brief.get("prospect_website"), brief.get("prospect_name"), brief.get("company_name"),
-             json.dumps(brief)))
+            # domain COLUMN gets a real domain or NULL — never the brief's "your website" speech
+            # placeholder (see domain_for_column). The brief JSON keeps the phrase for Lisa to say.
+            (d9, domain_for_column(brief.get("prospect_website")), brief.get("prospect_name"),
+             brief.get("company_name"), json.dumps(brief)))
         conn.commit()
     return brief
 
@@ -1321,7 +1341,8 @@ def start_call(pool: ConnectionPool, settings: Settings, *, to_number: str, dest
                 "  company_name, domain, prospect_email, status, brief) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'ongoing',%s) ON CONFLICT (call_id) DO NOTHING",
                 (cid, d9, to_number, frm, brief.get("prospect_name"), brief.get("company_name"),
-                 brief.get("prospect_website"), brief.get("prospect_email"), json.dumps(brief)))
+                 domain_for_column(brief.get("prospect_website")),   # never the speech placeholder
+                 brief.get("prospect_email"), json.dumps(brief)))
             conn.commit()
     return r
 

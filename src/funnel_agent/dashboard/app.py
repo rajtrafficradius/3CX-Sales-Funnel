@@ -2971,6 +2971,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        "COALESCE(c.dest_number,''),'[^0-9]','','g'),9)=%s "
                        "ORDER BY c.started_at DESC LIMIT 1", (norm,))
                 domain = cw[0]["prospect_website"] if cw else None
+        # BELT AND BRACES: a non-domain value here becomes a JOIN KEY for the prospect page, so one
+        # bad string silently pulls in every unrelated call that shares it. "your website" — Lisa's
+        # speech placeholder — had merged 2,289 prospects under a single master row and put ~3,200
+        # other businesses' calls on each of their pages (Raj, 2026-09-03). Refuse anything that is
+        # not a real domain, and drop the master row with it (its phones_norm is the same bad merge).
+        from ..lisa import domain_for_column as _dfc
+        if domain and not _dfc(domain):
+            if master and (master.get("domain") or "") == domain:
+                master = None
+            domain = None
         return master, domain, norm
 
     _whois_inflight: set = set()
