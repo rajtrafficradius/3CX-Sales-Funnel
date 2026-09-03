@@ -285,7 +285,13 @@ def capture_called_prospects(pool: ConnectionPool) -> dict:
     with pool.connection() as conn, conn.cursor() as cur:
         for r in candidates:
             dest9 = r["dest9"]
-            domain = clean_domain(r["website"]) if r["website"] else None
+            # A non-domain here is a MERGE KEY: the lookup below attaches this number to whatever row
+            # already holds that string, so one bad value swallows every prospect that shares it.
+            # Lisa's speech placeholder "your website" did exactly that — 2,289 unrelated prospects
+            # merged into a single record (Raj, 2026-09-03). Reject anything that isn't a real domain;
+            # the prospect is still created, just keyed on its phone alone.
+            from .lisa import domain_for_column as _dfc
+            domain = _dfc(clean_domain(r["website"])) if r["website"] else None
             name = (r["company"] or "").strip() or None
             if domain:
                 cur.execute("SELECT id FROM prospects WHERE domain=%s", (domain,))
