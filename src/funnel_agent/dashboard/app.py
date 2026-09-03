@@ -5150,15 +5150,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     el.setAttribute("contenteditable","true"); el.setAttribute("data-qe-edit","1");
     el.addEventListener("input",recalc);
   });
-  // removable blocks: any whole row/section the closer wants gone
-  document.querySelectorAll(".sheet .row,.sheet .subrow,.sheet .inc li,.sheet .kv,.sheet .two > div")
-    .forEach(function(sec){
-      if(sec.closest(".qe-bar")||sec.querySelector(".qe-del"))return;
-      sec.style.position=sec.style.position||"relative";
+  // Renumber the 01/02/03 section markers after any section is removed — a quote that jumps
+  // from 02 to 04 reads like a mistake to the prospect.
+  function renumber(){
+    var i=0;
+    document.querySelectorAll(".sheet .sh .n").forEach(function(n){ i++;
+      n.textContent=("0"+i).slice(-2); });
+  }
+  function addDel(host, target, title){
+    if(!host||host.querySelector(":scope > .qe-del"))return;
+    if(getComputedStyle(host).position==="static")host.style.position="relative";
+    var d=document.createElement("button"); d.className="qe-del"; d.type="button";
+    d.title=title||"Remove"; d.textContent="\\u00d7";
+    d.onclick=function(){ (target||host).remove(); renumber(); recalc(); };
+    host.appendChild(d);
+  }
+  // WHOLE SECTIONS — heading + its content together (e.g. "03 Web + email hosting & server")
+  document.querySelectorAll(".sheet .qsec").forEach(function(sec){
+    var h=sec.querySelector(".sh");
+    addDel(h||sec, sec, "Remove this whole section");
+  });
+  // individual blocks inside a section
+  document.querySelectorAll(".sheet .host,.sheet .inc li,.sheet .subrow,.sheet .row,.sheet .note")
+    .forEach(function(el){ addDel(el, el, "Remove this block"); });
+  // THE DETAILS grid is flat (.k then .v) — removing "Terms" must take its value with it
+  document.querySelectorAll(".sheet .det .k").forEach(function(k){
+    var v=k.nextElementSibling;
+    if(!k.querySelector(":scope > .qe-del")){
+      if(getComputedStyle(k).position==="static")k.style.position="relative";
       var d=document.createElement("button"); d.className="qe-del"; d.type="button";
-      d.title="Remove this section"; d.textContent="\\u00d7";
-      d.onclick=function(){sec.remove();recalc();}; sec.appendChild(d);
-    });
+      d.title="Remove this row"; d.textContent="\\u00d7";
+      d.onclick=function(){ if(v&&v.classList.contains("v"))v.remove(); k.remove(); recalc(); };
+      k.appendChild(d);
+    }
+  });
   recalc();
   var bar=document.createElement("div"); bar.className="qe-bar";
   bar.innerHTML='<b>Editing this quotation</b><span class="qe-hint">Click any name, description or '+
@@ -5243,7 +5268,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Quotes published BEFORE the editor hooks existed have no data-q/data-amt anchors, so their
         # subtotal/GST/total could not update as he types. Re-render those once from the stored figures
         # (same total, same custom lines) so every existing quote is editable, not just new ones.
-        if 'data-q="sub"' not in html:
+        from ..quote import QUOTE_TEMPLATE_VERSION as _QV
+        if f'data-qv="{_QV}"' not in html:
             try:
                 from ..quote import gen_quote_html as _gq, normalise_items as _ni
                 _r = q("SELECT quote_total, quote_items, quote_hosting_mo, quote_attn, "
@@ -5256,7 +5282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                              int(_r.get("quote_total") or 1000),
                              hosting_mo=int(_r.get("quote_hosting_mo") or 100),
                              attn=_r.get("quote_attn") or "", items=_items)
-                if _html2 and 'data-q="sub"' in _html2:
+                if _html2 and f'data-qv="{_QV}"' in _html2:
                     with pool.connection() as _cn, _cn.cursor() as _cur:
                         _cur.execute("UPDATE lisa4_sites SET html=%s WHERE share_token=%s AND kind='quote'",
                                      (_html2, tok))

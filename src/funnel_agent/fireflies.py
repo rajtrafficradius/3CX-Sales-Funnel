@@ -122,6 +122,84 @@ def _match_prospect(pool, dest9s: list[str], caller_d9: str | None = None):
     return None, None, None
 
 
+def _company_fragment(title: str) -> str:
+    """The business name out of a Teams meeting title.
+
+    'Teams Meeting: Traffic Radius with Citytile Team' -> 'citytile'
+    '2nd Teams Meeting: Traffic Radius with Glowsaunas Team' -> 'glowsaunas'
+    """
+    import re as _r
+    t = _r.sub(r"^.*?\bwith\s+", "", title or "", flags=_r.I)
+    t = _r.sub(r"\s+Team\b.*$", "", t, flags=_r.I)
+    return _r.sub(r"[^a-z0-9]", "", t.lower())
+
+
+def match_meeting_by_company(pool, title: str):
+    """Resolve a TEAMS meeting to a booked prospect by business name — returns (dest9, company) or
+    (None, None).
+
+    _match_prospect() only matches on phone numbers pulled out of the title. That works for Alfred's
+    confirmation calls ('Alfred Marion [+61 4xx] <> +61 4xx') but a Teams meeting title carries no
+    number, so every real reveal meeting was left with dest9 NULL — unlinkable to the prospect, absent
+    from their CRM record, and invisible to the held-meeting count (Raj, 2026-09-03).
+
+    Matches against EVERY name we hold for the prospect — the booking call's company_name, the
+    lisa4/lisa5 pool name, and the domain stem. The pool name matters: a prospect whose call name was
+    the scraped page title ('tiling contractors melbourne') only matches under its real pool name
+    ('City Tiles & Stone') or its domain ('citytile').
+    """
+    import re as _r
+    frag = _company_fragment(title)
+    if len(frag) < 5:
+        return (None, None)
+    try:
+        rows = _fetch(pool, """
+            SELECT b.dest9,
+              (SELECT x.company_name FROM lisa_calls x WHERE x.dest9=b.dest9
+                 AND COALESCE(x.company_name,'')<>'' ORDER BY x.started_at DESC LIMIT 1) call_name,
+              (SELECT x.domain FROM lisa_calls x WHERE x.dest9=b.dest9
+                 AND COALESCE(x.domain,'')<>'' ORDER BY x.started_at DESC LIMIT 1) call_dom,
+              p4.company p4, p4.domain p4d, p5.company p5
+            FROM (SELECT DISTINCT dest9 FROM lisa_calls WHERE meeting_agreed) b
+            LEFT JOIN lisa4_pool p4 ON p4.dest9=b.dest9
+            LEFT JOIN lisa5_pool p5 ON p5.dest9=b.dest9""") or []
+    except Exception:
+        return (None, None)
+    norm = lambda s: _r.sub(r"[^a-z0-9]", "", (s or "").lower())
+    for r in rows:
+        names = [r.get("call_name"), r.get("p4"), r.get("p5"),
+                 (r.get("p4d") or "").split(".")[0],
+                 (r.get("call_dom") or "").replace("www.", "").split(".")[0]]
+        for cand in names:
+            n = norm(cand)
+            if len(n) >= 5 and (frag in n or n in frag):
+                return (r["dest9"], r.get("call_name") or r.get("p4") or r.get("p5"))
+    return (None, None)
+
+
+def backfill_meeting_matches(pool, limit: int = 500) -> int:
+    """Attach already-stored Teams meetings to their prospect. Idempotent; returns rows updated."""
+    n = 0
+    try:
+        rows = _fetch(pool,
+            "SELECT id, title FROM fireflies_meetings "
+            "WHERE COALESCE(dest9,'')='' AND COALESCE(title,'') NOT LIKE '%%<>%%' "
+            "ORDER BY meeting_date DESC LIMIT %s", (int(limit),)) or []
+        for r in rows:
+            d9, co = match_meeting_by_company(pool, r.get("title") or "")
+            if not d9:
+                continue
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("UPDATE fireflies_meetings SET dest9=%s, matched_company=%s, "
+                            "matched_by=COALESCE(matched_by,'company_name') WHERE id=%s",
+                            (d9, co, r["id"]))
+                conn.commit()
+            n += 1
+    except Exception:
+        pass
+    return n
+
+
 def _classify_callback(pool, settings, title, summary, action_items, transcript_excerpt):
     """Small Opus call: normalise the meeting into a structured callback/outcome. Returns a dict or {}.
     Uses the crm_config funded key. Guarded."""

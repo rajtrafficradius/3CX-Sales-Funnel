@@ -61,6 +61,12 @@ def _money(n): return f"A${n:,.0f}"
 # so it is never wrong when someone else runs the meeting. Vysakh, 2026-09-03: the prospect must be
 # able to reach the person they actually met, not a generic office line — and Traffic Radius is named
 # as the parent brand (this supersedes the earlier "NO Traffic Radius on the quote" rule).
+# Bump when the template's STRUCTURE or standing content changes. A quote published under an older
+# version is re-rendered once when the closer opens the editor, so an existing quote picks up the new
+# contact block, the parent-brand line and the removable-section wrappers instead of staying frozen
+# on whatever shipped the day it was generated.
+QUOTE_TEMPLATE_VERSION = 3
+
 DEFAULT_REP_NAME = "Alfred"
 DEFAULT_REP_PHONE = "(03) 7020 9196"
 DEFAULT_REP_EMAIL = "alfred@trafficradiusdigital.com.au"
@@ -159,7 +165,7 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
  .det{{display:grid;grid-template-columns:130px 1fr;gap:10px 18px;font-size:14px;margin-top:14px}} .det .k{{color:var(--accent);font-weight:800;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;padding-top:3px}} .det .v{{color:var(--ink2);line-height:1.6}}
  .foot{{border-top:1px solid var(--line);margin-top:36px;padding-top:20px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.8}} .foot b{{color:var(--ink)}}
 </style></head><body>
- <div class="sheet"><div class="pad">
+ <div class="sheet" data-qv="{QUOTE_TEMPLATE_VERSION}"><div class="pad">
    <div class="hd">
      <div class="logo"><span class="mark"><i></i><i></i><i></i></span><b>Digital&nbsp;Expo <span>· DE Group</span></b></div>
      <span class="qpill">Quotation</span>
@@ -180,35 +186,35 @@ def gen_quote_html(company: str, domain: str, total: int = 1000, hosting_mo: int
    <h1 class="hl">A website built to <em>earn its place.</em></h1>
    <p class="intro">Not a template. A bespoke, hand-engineered site with its own identity, deep content on every page, and motion that makes it feel alive — built on modern web technology to load fast and convert the people who land on it.</p>
 
-   <div class="sh"><span class="n">01</span><h2>Investment breakdown</h2></div>
+   <section class="qsec"><div class="sh"><span class="n">01</span><h2>Investment breakdown</h2></div>
    <div class="items">
      {items_html}
      <div class="subrow"><span>Subtotal — website build (one-off)</span><b data-q="sub">{_money(total)}</b></div>
      <div class="subrow"><span>GST (10%)</span><b data-q="gst">{_money(gst)}</b></div>
      <div class="totalrow"><div class="l">Total — inc GST<span>Complete website, designed, engineered &amp; launched</span></div><div class="amt" data-q="grand">{_money(grand)}</div></div>
    </div>
-   <div class="note">All prices in AUD, inclusive of 10% GST.</div>
+   <div class="note">All prices in AUD, inclusive of 10% GST.</div></section>
 
-   <div class="sh"><span class="n">02</span><h2>Included — no extra cost</h2></div>
+   <section class="qsec"><div class="sh"><span class="n">02</span><h2>Included — no extra cost</h2></div>
    <ul class="inc">
      <li>Working contact form — enquiries delivered straight to your inbox.</li>
      <li>On-page SEO + Google Analytics — meta, titles &amp; visitor tracking set up.</li>
      <li>Domain connection &amp; SSL — we point {d or 'your domain'} to the site &amp; secure it.</li>
      <li>Two rounds of revisions — refinements after your first review, included.</li>
-   </ul>
+   </ul></section>
 
-   <div class="sh"><span class="n">03</span><h2>Web + email hosting &amp; server</h2></div>
+   <section class="qsec"><div class="sh"><span class="n">03</span><h2>Web + email hosting &amp; server</h2></div>
    <div class="host"><div><b>Ongoing hosting</b><div class="d">Managed website hosting · business email hosting · managed server · SSL &amp; CDN · daily backups · 99.9% uptime · security patching · up to 30 min of edits / month</div></div>
-     <div class="price">{_money(hosting_mo)}<span>/month + GST</span><br><span style="font-size:12px">or {_money(host_yr)}/year — two months free</span></div></div>
+     <div class="price">{_money(hosting_mo)}<span>/month + GST</span><br><span style="font-size:12px">or {_money(host_yr)}/year — two months free</span></div></div></section>
 
-   <div class="sh"><span class="n">04</span><h2>The details</h2></div>
+   <section class="qsec"><div class="sh"><span class="n">04</span><h2>The details</h2></div>
    <div class="det">
      <div class="k">Timeline</div><div class="v">Your site is already built. Live on your domain within 24–48 hours of go-ahead.</div>
      <div class="k">Deliverables</div><div class="v">Live website, all source files, and full ownership transferred on final payment.</div>
      <div class="k">Terms</div><div class="v">{_money(grand)} (inc GST) build due on go-live; web + email hosting &amp; server {_money(hosting_mo)}/month + GST, billed monthly or annually from launch.</div>
      <div class="k">Questions</div><div class="v">Talk to <b>{rep_n}</b> on <a href="tel:{rep_t}">{rep_p}</a> or email
        <a href="mailto:{rep_e}">{rep_e}</a> — happy to walk you through it.</div>
-   </div>
+   </div></section>
 
    <div class="foot"><b>Digital Expo · DE Group</b> — Web Design &amp; Digital Marketing · Melbourne, Australia<br>
      {rep_n} · {rep_p} · {rep_e} · ABN 90 134 920 228<br>
