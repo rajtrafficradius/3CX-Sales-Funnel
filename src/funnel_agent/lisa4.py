@@ -1369,8 +1369,32 @@ def _looks_like_logo_photo(data_uri: str) -> bool:
         return False
 
 
+def _reveal_already_shown(pool, dest9: str) -> str | None:
+    """Has this prospect ALREADY been shown their site? Returns a human reason, or None.
+
+    Once a client has seen the reveal, that exact page is the thing they reacted to and the thing the
+    closer is selling. Rebuilding it silently replaces the design they approved. That happened to
+    Bodyoncall on 2026-09-03: their stage was already 'revealed', a rebuild was queued to fix a broken
+    hero image, and the version the client had liked in the meeting disappeared from the share link.
+
+    Signals, either is enough: the CRM stage says the reveal/close happened, or a booked meeting for
+    this prospect has already started.
+    """
+    try:
+        r = _fetch(pool, "SELECT lower(COALESCE(stage,'')) stage FROM booked_crm WHERE dest9=%s", (dest9,))
+        stage = (r[0].get("stage") if r else "") or ""
+        if stage in ("revealed", "won", "quoted", "negotiating", "closed"):
+            return f"the reveal already happened (CRM stage '{stage}')"
+        m = _fetch(pool, "SELECT 1 FROM emma_meetings WHERE dest9=%s AND start_at < now() LIMIT 1", (dest9,))
+        if m:
+            return "their booked meeting has already taken place"
+    except Exception:
+        return None      # never block a build just because the check itself failed
+    return None
+
+
 def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_run: bool = False,
-                  archetype_idx: int | None = None) -> dict:
+                  archetype_idx: int | None = None, force_after_reveal: bool = False) -> dict:
     """AI designer: generate the prospect's website with Claude, store the HTML in lisa4_sites (status
     'built'). Called when a reveal is booked. For critical-issue prospects we feed the scraped content of
     their existing site so the rebuild is faithful. Returns {status, id, bytes} or {error}.
@@ -1380,6 +1404,23 @@ def build_website(pool: ConnectionPool, settings: Settings, dest9: str, *, dry_r
     In dry_run the return also carries {html, archetype, images_used, images_provided}."""
     if not dry_run:
         ensure_lisa4_tables(pool)
+        # FREEZE AFTER THE REVEAL (Vysakh, firm): never change a site the client has already been shown.
+        # A queued row must not silently overwrite the design they reacted to in the meeting.
+        _shown = _reveal_already_shown(pool, dest9)
+        if _shown and not force_after_reveal:
+            log.warning("lisa4_build_frozen_after_reveal", dest9=dest9, reason=_shown)
+            try:
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE lisa4_sites SET status='built' "
+                                "WHERE dest9=%s AND status IN ('queued','building') AND html IS NOT NULL",
+                                (dest9,))
+                    cur.execute("UPDATE lisa4_sites SET status='error', "
+                                "error='frozen: reveal already shown — not rebuilt' "
+                                "WHERE dest9=%s AND status IN ('queued','building')", (dest9,))
+                    conn.commit()
+            except Exception:
+                pass
+            return {"error": "frozen after reveal", "reason": _shown, "dest9": dest9}
     r = _fetch(pool, "SELECT company, domain, bucket, issue FROM lisa4_pool WHERE dest9=%s", (dest9,))
     if r:
         p = dict(r[0])
