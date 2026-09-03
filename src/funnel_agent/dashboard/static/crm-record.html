@@ -555,6 +555,36 @@ function renderRecord(r){
         <label for="qTotal">Quote total (A$) — breakdown auto-adjusts</label>
         <div class="qrow"><input id="qTotal" type="number" min="1" step="50" value="${r.quote_total||1000}" />
           <button class="btn ghost" type="button" id="qBtn" style="width:auto;padding:8px 14px;white-space:nowrap">${r.quote_token?'Update':'Generate'}</button></div>
+        <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+          <label style="display:flex;align-items:center;gap:8px">
+            <span>Price it line by line</span>
+            <button class="btn ghost" type="button" id="qLinesToggle"
+              style="width:auto;padding:4px 10px;font-size:11.5px">${(r.quote_items&&r.quote_items.length)?'Edit lines':'Customise'}</button>
+            ${(r.quote_items&&r.quote_items.length)?'<span class="dim" style="font-size:11.5px">custom pricing in use</span>':''}
+          </label>
+          <div id="qLines" style="display:${(r.quote_items&&r.quote_items.length)?'block':'none'};margin-top:10px">
+            <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+              <thead><tr>
+                <th style="text-align:left;padding:0 6px 6px;color:var(--muted);font-weight:600">Item</th>
+                <th style="text-align:left;padding:0 6px 6px;color:var(--muted);font-weight:600">Description</th>
+                <th style="text-align:right;padding:0 6px 6px;color:var(--muted);font-weight:600;width:96px">A$</th>
+                <th style="width:30px"></th></tr></thead>
+              <tbody id="qBody"></tbody>
+              <tfoot><tr>
+                <td colspan="2" style="padding:8px 6px 0"><button class="btn ghost" type="button" id="qAdd"
+                  style="width:auto;padding:4px 10px;font-size:11.5px">+ Add line</button></td>
+                <td style="text-align:right;padding:8px 6px 0;font-weight:800" id="qSum">A$0</td><td></td></tr>
+                <tr><td colspan="4" style="padding:4px 6px 0;color:var(--muted);font-size:11.5px">
+                  Your prices are used exactly as entered — the total becomes their sum, and GST is added on the quote.</td></tr>
+              </tfoot>
+            </table>
+            <div class="qrow" style="margin-top:10px">
+              <button class="btn" type="button" id="qLinesSave" style="width:auto;padding:8px 14px">Save &amp; regenerate</button>
+              <button class="btn ghost" type="button" id="qLinesReset"
+                style="width:auto;padding:8px 14px;white-space:nowrap">Reset to standard</button>
+            </div>
+          </div>
+        </div>
       </div></div>
     </div>
     <div class="panel">
@@ -662,6 +692,74 @@ function wire(){
   if(qBtn)qBtn.onclick=async()=>{const t=parseInt(document.getElementById('qTotal').value||'1000',10)||1000;qBtn.disabled=true;
     try{await post('/api/lisa/crm/quote',{dest9:D9,total:t});toast('Quotation updated · A$'+t.toLocaleString());await loadRecord();}
     catch(e){toast('Failed: '+e.message,true);qBtn.disabled=false;}};
+
+  // ---- LINE-BY-LINE QUOTE PRICING (Alfred prices each prospect himself) ----------------------
+  // The 6-item ratio split is only a starting point. Whatever he types here is authoritative: the
+  // total becomes the sum of his lines and is never rescaled back to the standard weighting.
+  const DEFAULT_LINES=[
+    ['UX/UI Design & Art Direction','Bespoke identity, layout system, type scale & colour.'],
+    ['Front-End Engineering','Modern component build — responsive, fast, smooth routing.'],
+    ['Copywriting & Content Structuring','Professional copy and section architecture across all pages.'],
+    ['Motion & Interaction Design','Scroll reveals, kinetic type, page transitions.'],
+    ['Brand Asset Integration','Logo, embedded premium fonts & optimised imagery.'],
+    ['Testing, QA & Launch','Cross-device QA, accessibility & performance pass, go-live.']];
+  const qBody=document.getElementById('qBody');
+  if(qBody){
+    const fmt=n=>'A$'+(Number(n)||0).toLocaleString();
+    function sum(){let s=0;qBody.querySelectorAll('input.qamt').forEach(i=>{s+=parseFloat(i.value||'0')||0;});
+      const el=document.getElementById('qSum'); if(el)el.textContent=fmt(s); return s;}
+    function addRow(name,desc,amt){
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td style="padding:3px 6px"><input class="qname" style="width:100%" value=""></td>'
+        +'<td style="padding:3px 6px"><input class="qdesc" style="width:100%" value=""></td>'
+        +'<td style="padding:3px 6px"><input class="qamt" type="number" min="0" step="10" style="width:100%;text-align:right" value=""></td>'
+        +'<td style="padding:3px 2px"><button class="btn ghost qdel" type="button" title="Remove this line" '
+        +'style="width:auto;padding:2px 8px;font-size:13px;line-height:1">&times;</button></td>';
+      // set via .value (never innerHTML) so a quote line can't inject markup
+      tr.querySelector('.qname').value=name||''; tr.querySelector('.qdesc').value=desc||'';
+      tr.querySelector('.qamt').value=(amt==null?'':amt);
+      tr.querySelector('.qdel').onclick=()=>{tr.remove();sum();};
+      tr.querySelectorAll('input').forEach(i=>i.addEventListener('input',sum));
+      qBody.appendChild(tr); sum();
+    }
+    function seed(){
+      qBody.innerHTML='';
+      const it=(REC&&REC.quote_items)||[];
+      if(it.length){ it.forEach(x=>addRow(x.name,x.desc,x.amount)); }
+      else{ // pre-fill with the standard split of the current total so he edits rather than types from scratch
+        const tot=parseInt((document.getElementById('qTotal')||{}).value||'1000',10)||1000;
+        const w=[0.22,0.30,0.17,0.14,0.07,0.10];
+        DEFAULT_LINES.forEach((l,i)=>addRow(l[0],l[1],Math.round(tot*w[i]/5)*5));
+      }
+      sum();
+    }
+    const tgl=document.getElementById('qLinesToggle'), box=document.getElementById('qLines');
+    if(tgl)tgl.onclick=()=>{const open=box.style.display!=='none';
+      box.style.display=open?'none':'block'; if(!open&&!qBody.children.length)seed();};
+    if(box.style.display!=='none')seed();
+    const add=document.getElementById('qAdd'); if(add)add.onclick=()=>addRow('','',0);
+    const save=document.getElementById('qLinesSave');
+    if(save)save.onclick=async()=>{
+      const items=[];
+      qBody.querySelectorAll('tr').forEach(tr=>{
+        const n=(tr.querySelector('.qname')||{}).value||'', d=(tr.querySelector('.qdesc')||{}).value||'';
+        const a=parseFloat((tr.querySelector('.qamt')||{}).value||'0')||0;
+        if(n.trim()||a>0) items.push({name:n.trim(),desc:d.trim(),amount:Math.round(a)});
+      });
+      if(!items.length){toast('Add at least one line, or use Reset to standard',true);return;}
+      save.disabled=true;
+      try{const res=await post('/api/lisa/crm/quote',{dest9:D9,items:items});
+        toast('Quotation repriced · '+fmt((res&&res.quote_total)||sum()));await loadRecord();}
+      catch(e){toast('Failed: '+e.message,true);save.disabled=false;}};
+    const rst=document.getElementById('qLinesReset');
+    if(rst)rst.onclick=async()=>{ // items:[] clears the custom pricing back to the standard split
+      if(!confirm('Clear your custom lines and go back to the standard 6-item split?'))return;
+      rst.disabled=true;
+      const t=parseInt((document.getElementById('qTotal')||{}).value||'1000',10)||1000;
+      try{await post('/api/lisa/crm/quote',{dest9:D9,total:t,items:[]});
+        toast('Reset to the standard breakdown');await loadRecord();}
+      catch(e){toast('Failed: '+e.message,true);rst.disabled=false;}};
+  }
   const seenBtn=document.getElementById('seenBtn');
   if(seenBtn)seenBtn.onclick=async()=>{try{await post('/api/lisa/crm/seen',{dest9:D9});await loadRecord();}catch(e){toast('Failed: '+e.message,true);}};
   const gaBtn=document.getElementById('gaBtn');
