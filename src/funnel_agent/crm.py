@@ -644,7 +644,20 @@ def ensure_growth_audit(pool, settings, dest9: str, domain: str, company: str,
             pass
         try:   # full SEO dataset (paid, idempotent), SEEDED with the business's real service terms so a
                # low-footprint domain still discovers keyword demand and the report isn't thin.
-            _seeds = _ga.service_seeds(settings, company or "", industry, sub_industry)
+            # Feed the seeder the site's OWN description of what it does. With only a company name to go
+            # on it mistakes the trade for the product: "RB Tile" (a commercial tiling CONTRACTOR) seeded
+            # 'terracotta tiles' / 'paver tiles' — retail shoppers who will never hire them — and the whole
+            # report was aimed at the wrong market (Raj, 2026-09-04).
+            _hint = ""
+            try:
+                from .enrichment.website import fetch_website_intel as _fwi
+                _intel = _fwi(dom, timeout=12.0, verify=False) or {}
+                _bits = [(_intel.get("title") or ""), (_intel.get("description") or "")]
+                _bits += [str(x) for x in (_intel.get("headings") or [])][:18]
+                _hint = " · ".join(b.strip() for b in _bits if b and b.strip())[:900]
+            except Exception:
+                _hint = ""
+            _seeds = _ga.service_seeds(settings, company or "", industry, sub_industry, services_hint=_hint)
             _a.ensure_audit_data(pool, settings, dom, company or "", extra_seeds=_seeds or None)
         except Exception:
             pass

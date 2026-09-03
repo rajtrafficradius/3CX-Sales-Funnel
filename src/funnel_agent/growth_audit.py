@@ -195,7 +195,7 @@ def default_avg_ticket(industry, sub_industry=None):
     return _default_ticket(industry, sub_industry)
 
 
-def service_seeds(settings, company, industry=None, sub_industry=None, limit=14):
+def service_seeds(settings, company, industry=None, sub_industry=None, limit=14, services_hint=""):
     """Derive the business's core buyer-intent SERVICE/PRODUCT search terms (AU market) so keyword-demand
     discovery ALWAYS has real seeds — even when the domain has no SEO footprint. This is the durable fix for
     THIN audits (a low-footprint builder/gardener/etc. otherwise discovers nothing and the report collapses).
@@ -226,12 +226,24 @@ def service_seeds(settings, company, industry=None, sub_industry=None, limit=14)
         model = getattr(settings, "anthropic_model_cheap", "") or "claude-haiku-4-5-20251001"
         sys_p = (
             "You are an SEO analyst for AUSTRALIAN small businesses. Given a business, list the SHORT, "
-            "buyer-intent SERVICE or PRODUCT search terms its customers actually type into Google. Rules: "
+            "buyer-intent search terms its customers actually type into Google. Rules: "
             "no brand names, no suburb/city/location words, no generic filler ('services', 'company', 'best'). "
             "Concrete services/products only (e.g. for a home builder: 'custom home builder', 'knockdown rebuild', "
-            "'home extensions', 'new home designs', 'duplex builder'). Output ONLY a JSON array of "
-            f"{limit} lowercase strings.")
-        usr = f"Business name: {company or '?'}\nIndustry: {industry or '?'} / {sub_industry or '?'}"
+            "'home extensions', 'new home designs', 'duplex builder').\n"
+            "CRITICAL — MATCH THE BUYER, NOT THE NOUN. If the business PERFORMS a service, return terms for "
+            "someone HIRING that service, never for someone BUYING the product it works with. A commercial "
+            "TILING CONTRACTOR is found by 'tiling contractor', 'wall and floor tiler', 'waterproofing "
+            "contractor', 'stone cladding installation' — NOT by 'terracotta tiles' or 'paver tiles', which "
+            "are retail shoppers who will never hire them. A print-equipment supplier is found by 'uv curing "
+            "system' and 'anilox roll', NOT 'commercial printing'. Getting this wrong points the whole report "
+            "at the wrong market, so prefer the hiring term every time.\n"
+            f"Output ONLY a JSON array of {limit} lowercase strings.")
+        # The business's OWN words about what it does — its site headings/services. Without this the model
+        # only has a company name to guess from, and a name like "RB Tile" reads as a tile shop rather than
+        # the commercial tiling contractor it is (Raj, 2026-09-04).
+        hint = (services_hint or "").strip()
+        usr = (f"Business name: {company or '?'}\nIndustry: {industry or '?'} / {sub_industry or '?'}"
+               + (f"\nWhat they say they do (from their own website): {hint[:900]}" if hint else ""))
         r = anthropic.Anthropic(api_key=key).messages.create(
             model=model, max_tokens=400,
             system=sys_p, messages=[{"role": "user", "content": usr}])
